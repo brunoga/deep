@@ -77,13 +77,26 @@ func TestCopy_Array(t *testing.T) {
 	doCopyAndCheck(t, [4]int{42, 43, 44, 45}, false)
 }
 
+func TestCopy_Array_Error(t *testing.T) {
+	doCopyAndCheck(t, [1]func(){func() {}}, true)
+}
+
 func TestCopy_Map(t *testing.T) {
 	doCopyAndCheck(t, map[int]string{42: "42", 43: "43", 44: "44", 45: "45"}, false)
+}
+
+func TestCopy_Map_Error(t *testing.T) {
+	doCopyAndCheck(t, map[int]func(){0: func() {}}, true)
 }
 
 func TestCopy_Ptr(t *testing.T) {
 	value := 42
 	doCopyAndCheck(t, &value, false)
+}
+
+func TestCopyPtr_Error(t *testing.T) {
+	value := func() {}
+	doCopyAndCheck(t, &value, true)
 }
 
 func TestCopy_Ptr_Nil(t *testing.T) {
@@ -93,6 +106,10 @@ func TestCopy_Ptr_Nil(t *testing.T) {
 
 func TestCopy_Slice(t *testing.T) {
 	doCopyAndCheck(t, []int{42, 43, 44, 45}, false)
+}
+
+func TestCopy_Slice_Error(t *testing.T) {
+	doCopyAndCheck(t, []func(){func() {}}, true)
 }
 
 func TestCopy_Struct(t *testing.T) {
@@ -125,6 +142,14 @@ func TestCopy_Struct_Unexported(t *testing.T) {
 	doCopyAndCheck(t, S{42, "42"}, false)
 }
 
+func TestCopy_Struct_Error(t *testing.T) {
+	type S struct {
+		A func()
+	}
+
+	doCopyAndCheck(t, S{A: func() {}}, true)
+}
+
 func TestCopy_Func_Error(t *testing.T) {
 	doCopyAndCheck(t, func() {}, true)
 }
@@ -141,6 +166,24 @@ func TestCopy_Interface_Nil(t *testing.T) {
 	}
 
 	doCopyAndCheck(t, A{}, false)
+}
+
+func TestMustCopy(t *testing.T) {
+	src := 42
+	dst := MustCopy(src)
+	if src != dst {
+		t.Errorf("MustCopy failed: expected %v, got %v", src, dst)
+	}
+}
+
+func TestMustCopy_Error(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("MustCopy did not panic")
+		}
+	}()
+
+	MustCopy(func() {})
 }
 
 func doCopyAndCheck[T any](t *testing.T, src T, expectError bool) {
