@@ -3,6 +3,8 @@ package deep
 import (
 	"reflect"
 	"testing"
+
+	"github.com/barkimedes/go-deepcopy"
 )
 
 func TestCopy_Bool(t *testing.T) {
@@ -201,7 +203,7 @@ func doCopyAndCheck[T any](t *testing.T, src T, expectError bool) {
 	}
 }
 
-func BenchmarkCopy(b *testing.B) {
+func BenchmarkCopy_Deep(b *testing.B) {
 	type InnerStruct struct {
 		Description string
 		ID          int
@@ -249,5 +251,56 @@ func BenchmarkCopy(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		MustCopy(src)
+	}
+}
+
+func BenchmarkCopy_DeepCopy(b *testing.B) {
+	type InnerStruct struct {
+		Description string
+		ID          int
+		Points      *InnerStruct
+	}
+
+	type NestedStruct struct {
+		Title     string
+		InnerData InnerStruct
+		MoreData  *NestedStruct
+	}
+
+	type ComplexStruct struct {
+		Name        string
+		Age         int
+		Data        map[string]interface{}
+		Nested      NestedStruct
+		Pointers    []*InnerStruct
+		IsAvailable bool
+	}
+
+	src := ComplexStruct{
+		Name:        "Complex Example",
+		Age:         42,
+		Data:        map[string]interface{}{"key1": "value1", "key2": 12345},
+		IsAvailable: true,
+	}
+
+	innerInstance := InnerStruct{
+		Description: "Inner struct instance",
+		ID:          1,
+	}
+
+	innerInstance.Points = &innerInstance // Cyclic reference
+
+	nestedInstance := NestedStruct{
+		Title:     "Nested Instance",
+		InnerData: innerInstance,
+	}
+
+	nestedInstance.MoreData = &nestedInstance // Cyclic reference
+
+	src.Nested = nestedInstance
+	src.Pointers = append(src.Pointers, &innerInstance)
+
+	for i := 0; i < b.N; i++ {
+		deepcopy.MustAnything(src)
 	}
 }
