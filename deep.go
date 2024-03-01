@@ -153,7 +153,10 @@ func recursiveCopyStruct(v reflect.Value, pointers map[uintptr]interface{}) (any
 		elem := v.Field(i)
 
 		// If the field is unexported, we need to disable read-only mode. If it
-		// is exported, doing this changes nothing so we just do it.
+		// is exported, doing this changes nothing so we just do it. We need to
+		// do this here not because we are writting to the field (this is the
+		// source), but because Interface() does not work if the read-only bits
+		// are set.
 		disableRO(&elem)
 
 		elemDst, err := recursiveCopy(elem.Interface(), pointers)
@@ -163,8 +166,8 @@ func recursiveCopyStruct(v reflect.Value, pointers map[uintptr]interface{}) (any
 
 		dstField := dst.Field(i)
 
-		// If the field is unexported, we need to disable read-only mode. If it
-		// is exported, doing this changes nothing so we just do it.
+		// If the field is unexported, we need to disable read-only mode so we
+		// can actually write to it.
 		disableRO(&dstField)
 
 		if dstField.Interface() == nil {
