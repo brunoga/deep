@@ -7,9 +7,7 @@ It should support most Go types. The main 2 that it does not support are functio
 
 I will continue working on this if I can find sane ways to deal with currently unsupported types.
 
-(*)
-
-In my machine (M2 MacBook Pro):
+(*) In my machine (8-Core Intel Atom NAS, running in a Linux conainer):
 
 go-deepcopy:
 
