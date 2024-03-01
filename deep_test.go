@@ -133,6 +133,16 @@ func TestCopy_Chan_Error(t *testing.T) {
 	doCopyAndCheck(t, make(chan struct{}), true)
 }
 
+func TestCopy_Interface_Nil(t *testing.T) {
+	type S any
+
+	type A struct {
+		Ptr S
+	}
+
+	doCopyAndCheck(t, A{}, false)
+}
+
 func doCopyAndCheck[T any](t *testing.T, src T, expectError bool) {
 	t.Helper()
 

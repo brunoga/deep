@@ -30,6 +30,10 @@ func MustCopy[T any](src T) T {
 }
 
 func recursiveCopy(src any, pointers map[uintptr]interface{}) (any, error) {
+	if src == nil {
+		return nil, nil
+	}
+
 	// Wrap src in an interface as we will need it below.
 	anySrc := any(src)
 
@@ -162,6 +166,11 @@ func recursiveCopyStruct(v reflect.Value, pointers map[uintptr]interface{}) (any
 		// If the field is unexported, we need to disable read-only mode. If it
 		// is exported, doing this changes nothing so we just do it.
 		disableRO(&dstField)
+
+		if dstField.Interface() == nil {
+			// Naked nil value, just continue.
+			continue
+		}
 
 		dstField.Set(reflect.ValueOf(elemDst))
 	}
