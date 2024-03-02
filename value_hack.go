@@ -23,13 +23,11 @@ func init() {
 
 			flagOffset = f.Offset
 
-			break
+			return
 		}
 	}
 
-	if flagOffset == 0 {
-		panic("deep: reflect.Value has no flag field")
-	}
+	panic("deep: reflect.Value has no flag field")
 }
 
 var flagOffset uintptr
