@@ -48,11 +48,8 @@ const (
 // versions of Go although we try to detect changes and panic immediatelly
 // during initialization.
 func disableRO(v *reflect.Value) {
-	// Get pointer to Value object as a uintptr.
-	vPtr := uintptr(unsafe.Pointer(v))
-
-	// Get pointer to flags field of Value object.
-	flags := (*uintptr)(unsafe.Pointer(vPtr + flagOffset))
+	// Get pointer to flags.
+	flags := (*uintptr)(unsafe.Pointer(uintptr(unsafe.Pointer(v)) + flagOffset))
 
 	// Clear the read-only flags.
 	*flags &^= flagRO
