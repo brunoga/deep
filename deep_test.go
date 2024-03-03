@@ -3,6 +3,7 @@ package deep
 import (
 	"reflect"
 	"testing"
+	"unsafe"
 
 	"github.com/barkimedes/go-deepcopy"
 )
@@ -168,6 +169,15 @@ func TestCopy_Chan_Nil(t *testing.T) {
 
 func TestCopy_Chan_Error(t *testing.T) {
 	doCopyAndCheck(t, make(chan struct{}), true)
+}
+
+func TestCopy_UnsafePointer_Nil(t *testing.T) {
+	var p unsafe.Pointer
+	doCopyAndCheck(t, p, false)
+}
+
+func TestCopy_UnsafePointer_Error(t *testing.T) {
+	doCopyAndCheck(t, unsafe.Pointer(t), true)
 }
 
 func TestCopy_Interface_Nil(t *testing.T) {

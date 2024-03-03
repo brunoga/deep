@@ -62,9 +62,10 @@ func recursiveCopy(src any, pointers map[uintptr]interface{}) (any, error) {
 		dst, err = recursiveCopySlice(v, pointers)
 	case reflect.Struct:
 		dst, err = recursiveCopyStruct(v, pointers)
-	case reflect.Func, reflect.Chan:
+	case reflect.Func, reflect.Chan, reflect.UnsafePointer:
 		if v.IsNil() {
-			// If we have a nil function or channel, then we can copy it.
+			// If we have a nil function, unsafe pointer or channel, then we
+			// can copy it.
 			dst = src
 		} else {
 			err = fmt.Errorf("unsuported non-nil value for type: %T", src)
