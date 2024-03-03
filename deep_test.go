@@ -152,8 +152,18 @@ func TestCopy_Struct_Error(t *testing.T) {
 	doCopyAndCheck(t, S{A: func() {}}, true)
 }
 
+func TestCopy_Func_Nil(t *testing.T) {
+	var f func()
+	doCopyAndCheck(t, f, false)
+}
+
 func TestCopy_Func_Error(t *testing.T) {
 	doCopyAndCheck(t, func() {}, true)
+}
+
+func TestCopy_Chan_Nil(t *testing.T) {
+	var c chan struct{}
+	doCopyAndCheck(t, c, false)
 }
 
 func TestCopy_Chan_Error(t *testing.T) {
@@ -223,6 +233,9 @@ func BenchmarkCopy_Deep(b *testing.B) {
 		Nested      NestedStruct
 		Pointers    []*InnerStruct
 		IsAvailable bool
+		// Both below can be copied if they are nil.
+		F func()
+		C chan struct{}
 	}
 
 	src := ComplexStruct{
