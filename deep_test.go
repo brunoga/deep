@@ -6,6 +6,7 @@ import (
 	"unsafe"
 
 	"github.com/barkimedes/go-deepcopy"
+	"github.com/mitchellh/copystructure"
 )
 
 func TestCopy_Bool(t *testing.T) {
@@ -325,5 +326,61 @@ func BenchmarkCopy_DeepCopy(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		deepcopy.MustAnything(src)
+	}
+}
+
+func BenchmarkCopy_CopyStructure(b *testing.B) {
+	type InnerStruct struct {
+		Description string
+		ID          int
+		Points      *InnerStruct
+	}
+
+	type NestedStruct struct {
+		Title     string
+		InnerData InnerStruct
+		MoreData  *NestedStruct
+	}
+
+	type ComplexStruct struct {
+		Name        string
+		Age         int
+		Data        map[string]interface{}
+		Nested      NestedStruct
+		Pointers    []*InnerStruct
+		IsAvailable bool
+		// Both below can be copied if they are nil.
+		F func()
+		C chan struct{}
+	}
+
+	src := ComplexStruct{
+		Name:        "Complex Example",
+		Age:         42,
+		Data:        map[string]interface{}{"key1": "value1", "key2": 12345},
+		IsAvailable: true,
+	}
+
+	innerInstance := InnerStruct{
+		Description: "Inner struct instance",
+		ID:          1,
+	}
+
+	// The copystructure library does not support cyclic references.
+	innerInstance.Points = nil
+
+	nestedInstance := NestedStruct{
+		Title:     "Nested Instance",
+		InnerData: innerInstance,
+	}
+
+	// The copystructure library does not support cyclic references.
+	nestedInstance.MoreData = nil
+
+	src.Nested = nestedInstance
+	src.Pointers = append(src.Pointers, &innerInstance)
+
+	for i := 0; i < b.N; i++ {
+		copystructure.Copy(src)
 	}
 }
