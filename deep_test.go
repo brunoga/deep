@@ -4,10 +4,10 @@ import (
 	"reflect"
 	"testing"
 	"unsafe"
-
-	"github.com/barkimedes/go-deepcopy"
-	"github.com/mitchellh/copystructure"
-)
+	/*
+		"github.com/barkimedes/go-deepcopy"
+		"github.com/mitchellh/copystructure"
+	*/)
 
 func TestCopy_Bool(t *testing.T) {
 	doCopyAndCheck(t, true, false)
@@ -278,6 +278,7 @@ func BenchmarkCopy_Deep(b *testing.B) {
 	}
 }
 
+/*
 func BenchmarkCopy_DeepCopy(b *testing.B) {
 	type InnerStruct struct {
 		Description string
@@ -384,3 +385,4 @@ func BenchmarkCopy_CopyStructure(b *testing.B) {
 		copystructure.Copy(src)
 	}
 }
+*/
