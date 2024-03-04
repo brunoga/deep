@@ -34,24 +34,19 @@ func recursiveCopy(src any, pointers map[uintptr]interface{}) (any, error) {
 		return nil, nil
 	}
 
-	// Wrap src in an interface as we will need it below.
-	anySrc := any(src)
-
-	// First we try to match types directly without reflection.
-	switch anySrc.(type) {
-	case bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32,
-		uint64, uintptr, float32, float64, complex64, complex128, string:
-		// Primitive type, just return it.
-		return anySrc, nil
-	}
-
-	// For the other types, we will need to use reflection.
+	// Get the reflect.Value associated with the source.
 	v := reflect.ValueOf(src)
 
 	var dst any
 	var err error
 
 	switch v.Kind() {
+	case reflect.Bool, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32,
+		reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32,
+		reflect.Uint64, reflect.Uintptr, reflect.Float32, reflect.Float64,
+		reflect.Complex64, reflect.Complex128, reflect.String:
+		// Primitive type, just copy it.
+		dst = src
 	case reflect.Array:
 		dst, err = recursiveCopyArray(v, pointers)
 	case reflect.Map:

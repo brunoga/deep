@@ -191,6 +191,11 @@ func TestCopy_Interface_Nil(t *testing.T) {
 	doCopyAndCheck(t, A{}, false)
 }
 
+func TestCopy_DerivedType(t *testing.T) {
+	type S int
+	doCopyAndCheck(t, S(42), false)
+}
+
 func TestMustCopy(t *testing.T) {
 	src := 42
 	dst := MustCopy(src)
