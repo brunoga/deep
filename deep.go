@@ -8,20 +8,21 @@ import (
 // Copy creates a deep copy of src. It returns the copy and a nil error in case
 // of success and the zero value for the type and a non-nil error on failure.
 func Copy[T any](src T) (T, error) {
-	var t T
-	pointers := make(map[uintptr]interface{})
-	dst, err := recursiveCopy(src, pointers)
-	if err != nil {
-		return t, err
-	}
+	return copy(src, false)
+}
 
-	return dst.(T), nil
+// CopySkipUnsupported creates a deep copy of src. It returns the copy and a nil
+// errorin case of success and the zero value for the type and a non-nil error
+// on failure. Unsupported types are skipped (the copy will have the zero value
+// for the type) instead of returning an error.
+func CopySkipUnsupported[T any](src T) (T, error) {
+	return copy(src, true)
 }
 
 // MustCopy creates a deep copy of src. It returns the copy on success or panics
 // in case of any failure.
 func MustCopy[T any](src T) T {
-	dst, err := Copy(src)
+	dst, err := copy(src, false)
 	if err != nil {
 		panic(err)
 	}
@@ -29,7 +30,19 @@ func MustCopy[T any](src T) T {
 	return dst
 }
 
-func recursiveCopy(src any, pointers map[uintptr]interface{}) (any, error) {
+func copy[T any](src T, skipUnsupported bool) (T, error) {
+	var t T
+	pointers := make(map[uintptr]interface{})
+	dst, err := recursiveCopy(src, pointers, skipUnsupported)
+	if err != nil {
+		return t, err
+	}
+
+	return dst.(T), nil
+}
+
+func recursiveCopy(src any, pointers map[uintptr]interface{},
+	skipUnsupported bool) (any, error) {
 	if src == nil {
 		return nil, nil
 	}
@@ -48,36 +61,45 @@ func recursiveCopy(src any, pointers map[uintptr]interface{}) (any, error) {
 		// Primitive type, just copy it.
 		dst = src
 	case reflect.Array:
-		dst, err = recursiveCopyArray(v, pointers)
+		dst, err = recursiveCopyArray(v, pointers, skipUnsupported)
 	case reflect.Map:
-		dst, err = recursiveCopyMap(v, pointers)
+		dst, err = recursiveCopyMap(v, pointers, skipUnsupported)
 	case reflect.Ptr:
-		dst, err = recursiveCopyPtr(v, pointers)
+		dst, err = recursiveCopyPtr(v, pointers, skipUnsupported)
 	case reflect.Slice:
-		dst, err = recursiveCopySlice(v, pointers)
+		dst, err = recursiveCopySlice(v, pointers, skipUnsupported)
 	case reflect.Struct:
-		dst, err = recursiveCopyStruct(v, pointers)
+		dst, err = recursiveCopyStruct(v, pointers, skipUnsupported)
 	case reflect.Func, reflect.Chan, reflect.UnsafePointer:
 		if v.IsNil() {
 			// If we have a nil function, unsafe pointer or channel, then we
 			// can copy it.
 			dst = src
 		} else {
-			err = fmt.Errorf("unsuported non-nil value for type: %T", src)
+			if skipUnsupported {
+				dst = getZero(v)
+			} else {
+				err = fmt.Errorf("unsuported non-nil value for type: %T", src)
+			}
 		}
 	default:
-		err = fmt.Errorf("unsuported type: %T", src)
+		if skipUnsupported {
+			dst = getZero(v)
+		} else {
+			err = fmt.Errorf("unsuported type: %T", src)
+		}
 	}
 
 	return dst, err
 }
 
-func recursiveCopyArray(v reflect.Value, pointers map[uintptr]interface{}) (any, error) {
+func recursiveCopyArray(v reflect.Value, pointers map[uintptr]interface{},
+	skipUnsupported bool) (any, error) {
 	dst := reflect.New(v.Type()).Elem()
 
 	for i := 0; i < v.Len(); i++ {
 		elem := v.Index(i)
-		elemDst, err := recursiveCopy(elem.Interface(), pointers)
+		elemDst, err := recursiveCopy(elem.Interface(), pointers, skipUnsupported)
 		if err != nil {
 			return nil, err
 		}
@@ -88,12 +110,14 @@ func recursiveCopyArray(v reflect.Value, pointers map[uintptr]interface{}) (any,
 	return dst.Interface(), nil
 }
 
-func recursiveCopyMap(v reflect.Value, pointers map[uintptr]interface{}) (any, error) {
+func recursiveCopyMap(v reflect.Value, pointers map[uintptr]interface{},
+	skipUnsupported bool) (any, error) {
 	dst := reflect.MakeMap(v.Type())
 
 	for _, key := range v.MapKeys() {
 		elem := v.MapIndex(key)
-		elemDst, err := recursiveCopy(elem.Interface(), pointers)
+		elemDst, err := recursiveCopy(elem.Interface(), pointers,
+			skipUnsupported)
 		if err != nil {
 			return nil, err
 		}
@@ -104,7 +128,8 @@ func recursiveCopyMap(v reflect.Value, pointers map[uintptr]interface{}) (any, e
 	return dst.Interface(), nil
 }
 
-func recursiveCopyPtr(v reflect.Value, pointers map[uintptr]interface{}) (any, error) {
+func recursiveCopyPtr(v reflect.Value, pointers map[uintptr]interface{},
+	skipUnsupported bool) (any, error) {
 	// If the pointer is nil, just return its zero value.
 	if v.IsNil() {
 		return reflect.Zero(v.Type()).Interface(), nil
@@ -122,7 +147,7 @@ func recursiveCopyPtr(v reflect.Value, pointers map[uintptr]interface{}) (any, e
 
 	// Proceed with the copy.
 	elem := v.Elem()
-	elemDst, err := recursiveCopy(elem.Interface(), pointers)
+	elemDst, err := recursiveCopy(elem.Interface(), pointers, skipUnsupported)
 	if err != nil {
 		return nil, err
 	}
@@ -132,12 +157,14 @@ func recursiveCopyPtr(v reflect.Value, pointers map[uintptr]interface{}) (any, e
 	return dst.Interface(), nil
 }
 
-func recursiveCopySlice(v reflect.Value, pointers map[uintptr]interface{}) (any, error) {
+func recursiveCopySlice(v reflect.Value, pointers map[uintptr]interface{},
+	skipUnsupported bool) (any, error) {
 	dst := reflect.MakeSlice(v.Type(), v.Len(), v.Cap())
 
 	for i := 0; i < v.Len(); i++ {
 		elem := v.Index(i)
-		elemDst, err := recursiveCopy(elem.Interface(), pointers)
+		elemDst, err := recursiveCopy(elem.Interface(), pointers,
+			skipUnsupported)
 		if err != nil {
 			return nil, err
 		}
@@ -148,7 +175,8 @@ func recursiveCopySlice(v reflect.Value, pointers map[uintptr]interface{}) (any,
 	return dst.Interface(), nil
 }
 
-func recursiveCopyStruct(v reflect.Value, pointers map[uintptr]interface{}) (any, error) {
+func recursiveCopyStruct(v reflect.Value, pointers map[uintptr]interface{},
+	skipUnsupported bool) (any, error) {
 	dst := reflect.New(v.Type()).Elem()
 
 	for i := 0; i < v.NumField(); i++ {
@@ -161,7 +189,8 @@ func recursiveCopyStruct(v reflect.Value, pointers map[uintptr]interface{}) (any
 		// are set.
 		disableRO(&elem)
 
-		elemDst, err := recursiveCopy(elem.Interface(), pointers)
+		elemDst, err := recursiveCopy(elem.Interface(), pointers,
+			skipUnsupported)
 		if err != nil {
 			return nil, err
 		}
@@ -181,4 +210,8 @@ func recursiveCopyStruct(v reflect.Value, pointers map[uintptr]interface{}) (any
 	}
 
 	return dst.Interface(), nil
+}
+
+func getZero(v reflect.Value) any {
+	return reflect.Zero(v.Type()).Interface()
 }

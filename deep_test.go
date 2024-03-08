@@ -196,6 +196,32 @@ func TestCopy_DerivedType(t *testing.T) {
 	doCopyAndCheck(t, S(42), false)
 }
 
+func TestCopySkipUnsupported(t *testing.T) {
+	type S struct {
+		A int
+		B func()
+		C int
+	}
+
+	src := S{A: 42, B: func() {}, C: 43}
+	dst, err := CopySkipUnsupported(src)
+	if err != nil {
+		t.Errorf("CopySkipUnsupported failed: %v", err)
+	}
+
+	if src.A != dst.A {
+		t.Errorf("CopySkipUnsupported failed: expected %v, got %v", src.A, dst.A)
+	}
+
+	if src.C != dst.C {
+		t.Errorf("CopySkipUnsupported failed: expected %v, got %v", src.C, dst.C)
+	}
+
+	if dst.B != nil {
+		t.Errorf("CopySkipUnsupported failed: expected nil, got non-nil")
+	}
+}
+
 func TestMustCopy(t *testing.T) {
 	src := 42
 	dst := MustCopy(src)
