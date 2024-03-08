@@ -117,7 +117,7 @@ func TestCopy_Slice_Error(t *testing.T) {
 }
 
 func TestCopy_Any_MapStringAny(t *testing.T) {
-	doCopyAndCheck(t, map[string]any{"key": 123}, false)
+	doCopyAndCheck(t, any(map[string]any{"key": 123}), false)
 }
 
 func TestCopy_Struct(t *testing.T) {
