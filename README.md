@@ -5,7 +5,7 @@ This is a from scratch implementation of the ideas from https://github.com/barki
 
 It should support most Go types. Specificaly, it does not support functions, channels and unsafe.Pointers unless they are nil. Also it might have weird interations with structs that includes any synchronization primitives (mutexes, for example. They should still be copied but if they are usable after that is left as an exercise to the user).
 
-(*) In my machine (8-Core Intel Atom NAS, running in a Linux conainer):
+(*) In my machine (8-Core Intel Atom NAS, running in a Linux container):
 
 go-deepcopy:
 
