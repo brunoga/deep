@@ -240,6 +240,22 @@ func TestMustCopy_Error(t *testing.T) {
 	MustCopy(func() {})
 }
 
+func TestCopyStructWithAnyField(t *testing.T) {
+	type S struct {
+		A any
+	}
+
+	src := S{A: map[string]interface{}{"key1": "value1", "key2": 12345}}
+	dst, err := Copy(src)
+	if err != nil {
+		t.Errorf("Copy failed: %v", err)
+	}
+
+	if !reflect.DeepEqual(src, dst) {
+		t.Errorf("Copy failed: expected %v, got %v", src, dst)
+	}
+}
+
 func doCopyAndCheck[T any](t *testing.T, src T, expectError bool) {
 	t.Helper()
 
