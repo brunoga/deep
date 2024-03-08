@@ -116,6 +116,10 @@ func TestCopy_Slice_Error(t *testing.T) {
 	doCopyAndCheck(t, []func(){func() {}}, true)
 }
 
+func TestCopy_Any_MapStringAny(t *testing.T) {
+	doCopyAndCheck(t, any(map[string]any{"key": 123}), false)
+}
+
 func TestCopy_Struct(t *testing.T) {
 	type S struct {
 		A int
@@ -194,6 +198,15 @@ func TestCopy_Interface_Nil(t *testing.T) {
 func TestCopy_DerivedType(t *testing.T) {
 	type S int
 	doCopyAndCheck(t, S(42), false)
+}
+
+func TestCopy_Struct_With_Any_Field(t *testing.T) {
+	type S struct {
+		A any
+	}
+
+	src := S{A: map[string]interface{}{"key1": "value1", "key2": 12345}}
+	doCopyAndCheck(t, src, false)
 }
 
 func TestCopySkipUnsupported(t *testing.T) {

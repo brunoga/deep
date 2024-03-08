@@ -201,7 +201,7 @@ func recursiveCopyStruct(v reflect.Value, pointers map[uintptr]interface{},
 		// can actually write to it.
 		disableRO(&dstField)
 
-		if dstField.Interface() == nil {
+		if elemDst == nil {
 			// Naked nil value, just continue.
 			continue
 		}
