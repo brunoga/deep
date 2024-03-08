@@ -1,3 +1,3 @@
 module github.com/brunoga/deep
 
-go 1.22.0
+go 1.20.0
