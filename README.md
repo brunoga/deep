@@ -5,12 +5,15 @@ This is a from scratch implementation of the ideas from https://github.com/barki
 
 It should support most Go types. Specificaly, it does not support functions, channels and unsafe.Pointers unless they are nil. Also it might have weird interations with structs that includes any synchronization primitives (mutexes, for example. They should still be copied but if they are usable after that is left as an exercise to the user).
 
-(*) In my machine (8-Core Intel Atom NAS, running in a Linux container):
+| Benchmark                          | Iterations | Time (ns/op) | Memory (B/op) | Allocations (allocs/op) |
+|------------------------------------|------------|--------------|---------------|-------------------------|
+| **BenchmarkCopy_Deep-10**          | **802910** | **1485**     | **1584**      | **28**                  |
+| BenchmarkCopy_DeepCopy-10 (1)      | 527125     | 2259         | 1912          | 50                      |
+| BenchmarkCopy_CopyStructure-10 (2) | 170715     | 7117         | 6392          | 168                     |
+| BenchmarkCopy_Clone-10 (3)         | 638623     | 1888         | 1656          | 22                      |
 
-go-deepcopy:
+(1) https://github.com/barkimedes/go-deepcopy (does not support unexported fields)
 
-`BenchmarkCopy-8 84931 21655 ns/op 1912 B/op 50 allocs/op`
+(2) https://github.com/mitchellh/copystructure (does not support cycles)
 
-deep:
-
-`BenchmarkCopy-8 104366 17450 ns/op 1824 B/op 43 allocs/op`
+(3) https://github.com/huandu/go-clone
