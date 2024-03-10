@@ -32,26 +32,21 @@ func MustCopy[T any](src T) T {
 
 func copy[T any](src T, skipUnsupported bool) (T, error) {
 	var t T
-	pointers := make(map[uintptr]interface{})
-	dst, err := recursiveCopy(src, pointers, skipUnsupported)
+	pointers := make(map[uintptr]reflect.Value)
+	v := reflect.ValueOf(src)
+	dst, err := recursiveCopy(v, pointers, skipUnsupported)
 	if err != nil {
 		return t, err
 	}
 
-	return dst.(T), nil
+	return dst.Interface().(T), nil
 }
 
-func recursiveCopy(src any, pointers map[uintptr]interface{},
-	skipUnsupported bool) (any, error) {
-	if src == nil {
-		return nil, nil
+func recursiveCopy(v reflect.Value, pointers map[uintptr]reflect.Value,
+	skipUnsupported bool) (reflect.Value, error) {
+	if !v.IsValid() {
+		return reflect.Value{}, nil
 	}
-
-	// Get the reflect.Value associated with the source.
-	v := reflect.ValueOf(src)
-
-	var dst any
-	var err error
 
 	switch v.Kind() {
 	case reflect.Bool, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32,
@@ -59,80 +54,90 @@ func recursiveCopy(src any, pointers map[uintptr]interface{},
 		reflect.Uint64, reflect.Uintptr, reflect.Float32, reflect.Float64,
 		reflect.Complex64, reflect.Complex128, reflect.String:
 		// Primitive type, just copy it.
-		dst = src
+		return v, nil
 	case reflect.Array:
-		dst, err = recursiveCopyArray(v, pointers, skipUnsupported)
+		return recursiveCopyArray(v, pointers, skipUnsupported)
+	case reflect.Interface:
+		return recursiveCopyInterface(v, pointers, skipUnsupported)
 	case reflect.Map:
-		dst, err = recursiveCopyMap(v, pointers, skipUnsupported)
+		return recursiveCopyMap(v, pointers, skipUnsupported)
 	case reflect.Ptr:
-		dst, err = recursiveCopyPtr(v, pointers, skipUnsupported)
+		return recursiveCopyPtr(v, pointers, skipUnsupported)
 	case reflect.Slice:
-		dst, err = recursiveCopySlice(v, pointers, skipUnsupported)
+		return recursiveCopySlice(v, pointers, skipUnsupported)
 	case reflect.Struct:
-		dst, err = recursiveCopyStruct(v, pointers, skipUnsupported)
+		return recursiveCopyStruct(v, pointers, skipUnsupported)
 	case reflect.Func, reflect.Chan, reflect.UnsafePointer:
 		if v.IsNil() {
 			// If we have a nil function, unsafe pointer or channel, then we
 			// can copy it.
-			dst = src
+			return v, nil
 		} else {
 			if skipUnsupported {
-				dst = getZero(v)
+				return reflect.Zero(v.Type()), nil
 			} else {
-				err = fmt.Errorf("unsuported non-nil value for type: %T", src)
+				return reflect.Value{}, fmt.Errorf("unsuported non-nil value for type: %s", v.Type())
 			}
 		}
 	default:
 		if skipUnsupported {
-			dst = getZero(v)
+			return reflect.Zero(v.Type()), nil
 		} else {
-			err = fmt.Errorf("unsuported type: %T", src)
+			return reflect.Value{}, fmt.Errorf("unsuported type: %s", v.Type())
 		}
 	}
-
-	return dst, err
 }
 
-func recursiveCopyArray(v reflect.Value, pointers map[uintptr]interface{},
-	skipUnsupported bool) (any, error) {
+func recursiveCopyArray(v reflect.Value, pointers map[uintptr]reflect.Value,
+	skipUnsupported bool) (reflect.Value, error) {
 	dst := reflect.New(v.Type()).Elem()
 
 	for i := 0; i < v.Len(); i++ {
 		elem := v.Index(i)
-		elemDst, err := recursiveCopy(elem.Interface(), pointers, skipUnsupported)
+		elemDst, err := recursiveCopy(elem, pointers, skipUnsupported)
 		if err != nil {
-			return nil, err
+			return reflect.Value{}, err
 		}
 
-		dst.Index(i).Set(reflect.ValueOf(elemDst))
+		dst.Index(i).Set(elemDst)
 	}
 
-	return dst.Interface(), nil
+	return dst, nil
 }
 
-func recursiveCopyMap(v reflect.Value, pointers map[uintptr]interface{},
-	skipUnsupported bool) (any, error) {
+func recursiveCopyInterface(v reflect.Value, pointers map[uintptr]reflect.Value,
+	skipUnsupported bool) (reflect.Value, error) {
+	if v.IsNil() {
+		// If the interface is nil, just return its zero value.
+		return reflect.Zero(v.Type()), nil
+	}
+
+	return recursiveCopy(v.Elem(), pointers, skipUnsupported)
+}
+
+func recursiveCopyMap(v reflect.Value, pointers map[uintptr]reflect.Value,
+	skipUnsupported bool) (reflect.Value, error) {
 	dst := reflect.MakeMap(v.Type())
 
 	for _, key := range v.MapKeys() {
 		elem := v.MapIndex(key)
-		elemDst, err := recursiveCopy(elem.Interface(), pointers,
+		elemDst, err := recursiveCopy(elem, pointers,
 			skipUnsupported)
 		if err != nil {
-			return nil, err
+			return reflect.Value{}, err
 		}
 
-		dst.SetMapIndex(key, reflect.ValueOf(elemDst))
+		dst.SetMapIndex(key, elemDst)
 	}
 
-	return dst.Interface(), nil
+	return dst, nil
 }
 
-func recursiveCopyPtr(v reflect.Value, pointers map[uintptr]interface{},
-	skipUnsupported bool) (any, error) {
+func recursiveCopyPtr(v reflect.Value, pointers map[uintptr]reflect.Value,
+	skipUnsupported bool) (reflect.Value, error) {
 	// If the pointer is nil, just return its zero value.
 	if v.IsNil() {
-		return reflect.Zero(v.Type()).Interface(), nil
+		return reflect.Zero(v.Type()), nil
 	}
 
 	// If the pointer is already in the pointers map, return it.
@@ -143,40 +148,40 @@ func recursiveCopyPtr(v reflect.Value, pointers map[uintptr]interface{},
 
 	// Otherwise, create a new pointer and add it to the pointers map.
 	dst := reflect.New(v.Type().Elem())
-	pointers[ptr] = dst.Interface()
+	pointers[ptr] = dst
 
 	// Proceed with the copy.
 	elem := v.Elem()
-	elemDst, err := recursiveCopy(elem.Interface(), pointers, skipUnsupported)
+	elemDst, err := recursiveCopy(elem, pointers, skipUnsupported)
 	if err != nil {
-		return nil, err
+		return reflect.Value{}, err
 	}
 
-	dst.Elem().Set(reflect.ValueOf(elemDst))
+	dst.Elem().Set(elemDst)
 
-	return dst.Interface(), nil
+	return dst, nil
 }
 
-func recursiveCopySlice(v reflect.Value, pointers map[uintptr]interface{},
-	skipUnsupported bool) (any, error) {
+func recursiveCopySlice(v reflect.Value, pointers map[uintptr]reflect.Value,
+	skipUnsupported bool) (reflect.Value, error) {
 	dst := reflect.MakeSlice(v.Type(), v.Len(), v.Cap())
 
 	for i := 0; i < v.Len(); i++ {
 		elem := v.Index(i)
-		elemDst, err := recursiveCopy(elem.Interface(), pointers,
+		elemDst, err := recursiveCopy(elem, pointers,
 			skipUnsupported)
 		if err != nil {
-			return nil, err
+			return reflect.Value{}, err
 		}
 
-		dst.Index(i).Set(reflect.ValueOf(elemDst))
+		dst.Index(i).Set(elemDst)
 	}
 
-	return dst.Interface(), nil
+	return dst, nil
 }
 
-func recursiveCopyStruct(v reflect.Value, pointers map[uintptr]interface{},
-	skipUnsupported bool) (any, error) {
+func recursiveCopyStruct(v reflect.Value, pointers map[uintptr]reflect.Value,
+	skipUnsupported bool) (reflect.Value, error) {
 	dst := reflect.New(v.Type()).Elem()
 
 	for i := 0; i < v.NumField(); i++ {
@@ -189,10 +194,10 @@ func recursiveCopyStruct(v reflect.Value, pointers map[uintptr]interface{},
 		// are set.
 		disableRO(&elem)
 
-		elemDst, err := recursiveCopy(elem.Interface(), pointers,
+		elemDst, err := recursiveCopy(elem, pointers,
 			skipUnsupported)
 		if err != nil {
-			return nil, err
+			return reflect.Value{}, err
 		}
 
 		dstField := dst.Field(i)
@@ -201,17 +206,13 @@ func recursiveCopyStruct(v reflect.Value, pointers map[uintptr]interface{},
 		// can actually write to it.
 		disableRO(&dstField)
 
-		if elemDst == nil {
+		if !elemDst.IsValid() {
 			// Naked nil value, just continue.
 			continue
 		}
 
-		dstField.Set(reflect.ValueOf(elemDst))
+		dstField.Set(elemDst)
 	}
 
-	return dst.Interface(), nil
-}
-
-func getZero(v reflect.Value) any {
-	return reflect.Zero(v.Type()).Interface()
+	return dst, nil
 }
