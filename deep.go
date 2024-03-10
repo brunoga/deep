@@ -31,11 +31,10 @@ func MustCopy[T any](src T) T {
 }
 
 func copy[T any](src T, skipUnsupported bool) (T, error) {
-	var t T
-	pointers := make(map[uintptr]reflect.Value)
-	v := reflect.ValueOf(src)
-	dst, err := recursiveCopy(v, pointers, skipUnsupported)
+	dst, err := recursiveCopy(reflect.ValueOf(src),
+		make(map[uintptr]reflect.Value), skipUnsupported)
 	if err != nil {
+		var t T
 		return t, err
 	}
 
@@ -49,7 +48,7 @@ func recursiveCopy(v reflect.Value, pointers map[uintptr]reflect.Value,
 		reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32,
 		reflect.Uint64, reflect.Uintptr, reflect.Float32, reflect.Float64,
 		reflect.Complex64, reflect.Complex128, reflect.String:
-		// Primitive type, just copy it.
+		// Direct type, just copy it.
 		return v, nil
 	case reflect.Array:
 		return recursiveCopyArray(v, pointers, skipUnsupported)
@@ -131,9 +130,9 @@ func recursiveCopyMap(v reflect.Value, pointers map[uintptr]reflect.Value,
 
 func recursiveCopyPtr(v reflect.Value, pointers map[uintptr]reflect.Value,
 	skipUnsupported bool) (reflect.Value, error) {
-	// If the pointer is nil, just return its zero value.
+	// If the pointer is nil, just return it.
 	if v.IsNil() {
-		return reflect.Zero(v.Type()), nil
+		return v, nil
 	}
 
 	// If the pointer is already in the pointers map, return it.
@@ -201,11 +200,6 @@ func recursiveCopyStruct(v reflect.Value, pointers map[uintptr]reflect.Value,
 		// If the field is unexported, we need to disable read-only mode so we
 		// can actually write to it.
 		disableRO(&dstField)
-
-		if !elemDst.IsValid() {
-			// Naked nil value, just continue.
-			continue
-		}
 
 		dstField.Set(elemDst)
 	}
