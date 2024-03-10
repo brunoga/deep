@@ -44,10 +44,6 @@ func copy[T any](src T, skipUnsupported bool) (T, error) {
 
 func recursiveCopy(v reflect.Value, pointers map[uintptr]reflect.Value,
 	skipUnsupported bool) (reflect.Value, error) {
-	if !v.IsValid() {
-		return reflect.Value{}, nil
-	}
-
 	switch v.Kind() {
 	case reflect.Bool, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32,
 		reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32,
