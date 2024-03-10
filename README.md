@@ -5,12 +5,12 @@ This is a from scratch implementation of the ideas from https://github.com/barki
 
 It should support most Go types. Specificaly, it does not support functions, channels and unsafe.Pointers unless they are nil. Also it might have weird interactions with structs that include any synchronization primitives (mutexes, for example. They should still be copied but if they are usable after that is left as an exercise to the reader).
 
-| Benchmark                          | Iterations | Time (ns/op) | Memory (B/op) | Allocations (allocs/op) |
-|------------------------------------|------------|--------------|---------------|-------------------------|
-| **BenchmarkCopy_Deep-10**          | **802910** | **1485**     | **1584**      | **28**                  |
-| BenchmarkCopy_DeepCopy-10 (1)      | 527125     | 2259         | 1912          | 50                      |
-| BenchmarkCopy_CopyStructure-10 (2) | 170715     | 7117         | 6392          | 168                     |
-| BenchmarkCopy_Clone-10 (3)         | 638623     | 1888         | 1656          | 22                      |
+| Benchmark                          | Iterations | Time           | Bytes Allocated | Allocations      |
+|------------------------------------|------------|----------------|-----------------|------------------|
+| **BenchmarkCopy_Deep-16**          | **830553** | **1273 ns/op** | **1264 B/op**   | **21 allocs/op** |
+| BenchmarkCopy_DeepCopy-16 (1)      | 458072     | 2466 ns/op     | 1912 B/op       | 50 allocs/op     |
+| BenchmarkCopy_CopyStructure-16 (2) | 149685     | 7836 ns/op     | 6392 B/op       | 168 allocs/op    |
+| BenchmarkCopy_Clone-16 (3)         | 510760     | 2188 ns/op     | 1656 B/op       | 22 allocs/op     |
 
 (1) https://github.com/barkimedes/go-deepcopy (does not support unexported fields)
 
