@@ -159,6 +159,11 @@ func recursiveCopyPtr(v reflect.Value, pointers map[uintptr]reflect.Value,
 
 func recursiveCopySlice(v reflect.Value, pointers map[uintptr]reflect.Value,
 	skipUnsupported bool) (reflect.Value, error) {
+	if v.IsNil() {
+		// If the slice is nil, just return it.
+		return v, nil
+	}
+
 	dst := reflect.MakeSlice(v.Type(), v.Len(), v.Cap())
 
 	for i := 0; i < v.Len(); i++ {

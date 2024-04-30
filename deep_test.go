@@ -109,6 +109,11 @@ func TestCopy_Slice(t *testing.T) {
 	doCopyAndCheck(t, []int{42, 43, 44, 45}, false)
 }
 
+func TestCopy_Slice_Nil(t *testing.T) {
+	var S []int
+	doCopyAndCheck(t, S, false)
+}
+
 func TestCopy_Slice_Error(t *testing.T) {
 	doCopyAndCheck(t, []func(){func() {}}, true)
 }
