@@ -90,6 +90,11 @@ func TestCopy_Map_Error(t *testing.T) {
 	doCopyAndCheck(t, map[int]func(){0: func() {}}, true)
 }
 
+func TestCopy_Map_Nil(t *testing.T) {
+	var m map[int]int
+	doCopyAndCheck(t, m, false)
+}
+
 func TestCopy_Ptr(t *testing.T) {
 	value := 42
 	doCopyAndCheck(t, &value, false)
