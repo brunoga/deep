@@ -112,6 +112,11 @@ func recursiveCopyInterface(v reflect.Value, pointers map[uintptr]reflect.Value,
 
 func recursiveCopyMap(v reflect.Value, pointers map[uintptr]reflect.Value,
 	skipUnsupported bool) (reflect.Value, error) {
+	if v.IsNil() {
+		// If the slice is nil, just return it.
+		return v, nil
+	}
+
 	dst := reflect.MakeMap(v.Type())
 
 	for _, key := range v.MapKeys() {
