@@ -31,19 +31,21 @@ func MustCopy[T any](src T) T {
 }
 
 func copy[T any](src T, skipUnsupported bool) (T, error) {
-	dst, err := recursiveCopy(reflect.ValueOf(src),
-		make(map[uintptr]reflect.Value), skipUnsupported)
-	if err != nil {
-		var t T
-		return t, err
-	}
+	v := reflect.ValueOf(src)
 
-	// The result might be an invalid value type (if src is the zero value), so
-	// we check for this here otherwise calling interface below might panic.
-	if !dst.IsValid() {
+	// We might have a zero value, so we check for this here otherwise
+	// calling interface below will panic.
+	if v.Kind() == reflect.Invalid {
 		// This amounts to returning the zero value for T.
 		var t T
 		return t, nil
+	}
+
+	dst, err := recursiveCopy(v, make(map[uintptr]reflect.Value),
+		skipUnsupported)
+	if err != nil {
+		var t T
+		return t, err
 	}
 
 	return dst.Interface().(T), nil
@@ -55,7 +57,7 @@ func recursiveCopy(v reflect.Value, pointers map[uintptr]reflect.Value,
 	case reflect.Bool, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32,
 		reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32,
 		reflect.Uint64, reflect.Uintptr, reflect.Float32, reflect.Float64,
-		reflect.Complex64, reflect.Complex128, reflect.String, reflect.Invalid:
+		reflect.Complex64, reflect.Complex128, reflect.String:
 		// Direct type, just copy it.
 		return v, nil
 	case reflect.Array:
@@ -111,8 +113,8 @@ func recursiveCopyArray(v reflect.Value, pointers map[uintptr]reflect.Value,
 func recursiveCopyInterface(v reflect.Value, pointers map[uintptr]reflect.Value,
 	skipUnsupported bool) (reflect.Value, error) {
 	if v.IsNil() {
-		// If the interface is nil, just return its zero value.
-		return reflect.Zero(v.Type()), nil
+		// If the interface is nil, just return it.
+		return v, nil
 	}
 
 	return recursiveCopy(v.Elem(), pointers, skipUnsupported)

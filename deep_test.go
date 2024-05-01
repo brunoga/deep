@@ -197,11 +197,21 @@ func TestCopy_Interface_Nil(t *testing.T) {
 	doCopyAndCheck(t, value, false)
 }
 
-func TestCopy_Interface_Recursive_Nil(t *testing.T) {
+func TestCopy_Interface_Struct_Recursive_Nil(t *testing.T) {
 	var s struct {
 		A any
 	}
 	doCopyAndCheck(t, s, false)
+}
+
+func TestCopy_Interface_Slice_Recursive_Nil(t *testing.T) {
+	value := []any{nil}
+	doCopyAndCheck(t, value, false)
+}
+
+func TestCopy_Interface_Map_Recursive_Nil(t *testing.T) {
+	value := map[string]any{"test": nil}
+	doCopyAndCheck(t, value, false)
 }
 
 func TestCopy_DerivedType(t *testing.T) {
