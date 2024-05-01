@@ -193,13 +193,15 @@ func TestCopy_UnsafePointer_Error(t *testing.T) {
 }
 
 func TestCopy_Interface_Nil(t *testing.T) {
-	type S any
+	var value any
+	doCopyAndCheck(t, value, false)
+}
 
-	type A struct {
-		Ptr S
+func TestCopy_Interface_Recursive_Nil(t *testing.T) {
+	var s struct {
+		A any
 	}
-
-	doCopyAndCheck(t, A{}, false)
+	doCopyAndCheck(t, s, false)
 }
 
 func TestCopy_DerivedType(t *testing.T) {

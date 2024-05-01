@@ -38,6 +38,14 @@ func copy[T any](src T, skipUnsupported bool) (T, error) {
 		return t, err
 	}
 
+	// The result might be an invalid value type (if src is the zero value), so
+	// we check for this here otherwise calling interface below might panic.
+	if !dst.IsValid() {
+		// This amounts to returning the zero value for T.
+		var t T
+		return t, nil
+	}
+
 	return dst.Interface().(T), nil
 }
 
@@ -47,7 +55,7 @@ func recursiveCopy(v reflect.Value, pointers map[uintptr]reflect.Value,
 	case reflect.Bool, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32,
 		reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32,
 		reflect.Uint64, reflect.Uintptr, reflect.Float32, reflect.Float64,
-		reflect.Complex64, reflect.Complex128, reflect.String:
+		reflect.Complex64, reflect.Complex128, reflect.String, reflect.Invalid:
 		// Direct type, just copy it.
 		return v, nil
 	case reflect.Array:
