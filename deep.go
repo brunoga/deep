@@ -31,8 +31,18 @@ func MustCopy[T any](src T) T {
 }
 
 func copy[T any](src T, skipUnsupported bool) (T, error) {
-	dst, err := recursiveCopy(reflect.ValueOf(src),
-		make(map[uintptr]reflect.Value), skipUnsupported)
+	v := reflect.ValueOf(src)
+
+	// We might have a zero value, so we check for this here otherwise
+	// calling interface below will panic.
+	if v.Kind() == reflect.Invalid {
+		// This amounts to returning the zero value for T.
+		var t T
+		return t, nil
+	}
+
+	dst, err := recursiveCopy(v, make(map[uintptr]reflect.Value),
+		skipUnsupported)
 	if err != nil {
 		var t T
 		return t, err
@@ -103,8 +113,8 @@ func recursiveCopyArray(v reflect.Value, pointers map[uintptr]reflect.Value,
 func recursiveCopyInterface(v reflect.Value, pointers map[uintptr]reflect.Value,
 	skipUnsupported bool) (reflect.Value, error) {
 	if v.IsNil() {
-		// If the interface is nil, just return its zero value.
-		return reflect.Zero(v.Type()), nil
+		// If the interface is nil, just return it.
+		return v, nil
 	}
 
 	return recursiveCopy(v.Elem(), pointers, skipUnsupported)
