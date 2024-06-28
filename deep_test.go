@@ -340,3 +340,18 @@ func BenchmarkCopy_Deep(b *testing.B) {
 		MustCopy(src)
 	}
 }
+
+func TestTrickyMemberPointer(t *testing.T) {
+	type Foo struct {
+		N int
+	}
+	type Bar struct {
+		F *Foo
+		P *int
+	}
+
+	foo := Foo{N: 1}
+	bar := Bar{F: &foo, P: &foo.N}
+
+	doCopyAndCheck(t, bar, false)
+}
