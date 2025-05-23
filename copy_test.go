@@ -1,6 +1,7 @@
 package deep
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 	"unsafe"
@@ -354,4 +355,120 @@ func TestTrickyMemberPointer(t *testing.T) {
 	bar := Bar{F: &foo, P: &foo.N}
 
 	doCopyAndCheck(t, bar, false)
+}
+
+type CustomTypeForCopier struct {
+	Value int
+	F     func() // Normally unsupported if non-nil.
+}
+
+var (
+	customTypeCopyCalled    bool
+	customTypeCopyErrored   bool
+	customPtrTypeCopyCalled bool
+)
+
+func (ct CustomTypeForCopier) Copy() (CustomTypeForCopier, error) {
+	customTypeCopyCalled = true
+	if ct.F != nil && ct.Value == -1 { // Special case to return error
+		customTypeCopyErrored = true
+		return CustomTypeForCopier{}, fmt.Errorf("custom copy error for F")
+	}
+	// Example custom logic: double value, share function pointer
+	return CustomTypeForCopier{Value: ct.Value * 2, F: ct.F}, nil
+}
+
+func TestCopy_CustomCopier_ValueReceiver(t *testing.T) {
+	customTypeCopyCalled = false
+	customTypeCopyErrored = false
+	src := CustomTypeForCopier{Value: 10, F: func() {}}
+
+	dst, err := Copy(src)
+
+	if err != nil {
+		t.Fatalf("Copy failed for CustomCopier: %v", err)
+	}
+	if !customTypeCopyCalled {
+		t.Errorf("Custom Copier method was not called")
+	}
+	if customTypeCopyErrored {
+		t.Errorf("Custom Copier method unexpectedly errored")
+	}
+	if dst.Value != 20 { // As per custom logic
+		t.Errorf("Expected dst.Value to be 20, got %d", dst.Value)
+	}
+	if reflect.ValueOf(dst.F).Pointer() != reflect.ValueOf(src.F).Pointer() {
+		t.Errorf("Expected func to be shallow copied (shared) by custom copier")
+	}
+}
+
+func TestCopy_CustomCopier_ErrorCase(t *testing.T) {
+	customTypeCopyCalled = false
+	customTypeCopyErrored = false
+	// Trigger error condition in custom copier
+	src := CustomTypeForCopier{Value: -1, F: func() {}}
+
+	_, err := Copy(src)
+
+	if err == nil {
+		t.Fatalf("Expected error from custom copier, got nil")
+	}
+	if !customTypeCopyCalled {
+		t.Errorf("Custom Copier method was not called (for error case)")
+	}
+	if !customTypeCopyErrored {
+		t.Errorf("Custom Copier method did not flag error internally")
+	}
+	expectedErrorMsg := "custom copy error for F"
+	if err.Error() != expectedErrorMsg {
+		t.Errorf("Expected error message '%s', got '%s'", expectedErrorMsg, err.Error())
+	}
+}
+
+type CustomPtrTypeForCopier struct {
+	Value int
+}
+
+func (cpt *CustomPtrTypeForCopier) Copy() (*CustomPtrTypeForCopier, error) {
+	customPtrTypeCopyCalled = true
+	if cpt == nil {
+		// This case should ideally not be hit if the main Copy function guards against it.
+		return nil, fmt.Errorf("custom Copy() called on nil CustomPtrTypeForCopier receiver")
+	}
+	return &CustomPtrTypeForCopier{Value: cpt.Value * 3}, nil
+}
+
+func TestCopy_CustomCopier_PointerReceiver(t *testing.T) {
+	customPtrTypeCopyCalled = false
+	src := &CustomPtrTypeForCopier{Value: 5} // T is *CustomPtrTypeForCopier
+
+	dst, err := Copy(src)
+
+	if err != nil {
+		t.Fatalf("Copy failed for CustomCopier with pointer receiver: %v", err)
+	}
+	if !customPtrTypeCopyCalled {
+		t.Errorf("Custom Copier method (ptr receiver) was not called")
+	}
+	if dst.Value != 15 {
+		t.Errorf("Expected dst.Value to be 15, got %d", dst.Value)
+	}
+	if dst == src {
+		t.Errorf("Expected a new pointer from custom copier, got the same pointer")
+	}
+
+	// Test that a nil pointer of a type that implements Copier still results in a nil copy
+	// and does not call the custom Copy method.
+	customPtrTypeCopyCalled = false
+	var nilSrc *CustomPtrTypeForCopier
+	dstNil, errNil := Copy(nilSrc)
+	if errNil != nil {
+		t.Fatalf("Copy failed for nil CustomPtrTypeForCopier: %v", errNil)
+	}
+	if customPtrTypeCopyCalled {
+		t.Errorf("Custom Copier method (ptr receiver) was called for nil input, but should not have been")
+	}
+	if dstNil != nil {
+		t.Errorf("Expected nil for copied nil pointer of custom type, got %v", dstNil)
+	}
 }
