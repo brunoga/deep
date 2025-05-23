@@ -5,24 +5,31 @@ import (
 	"reflect"
 )
 
+// Copier is an interface that types can implement to provide their own
+// custom deep copy logic. The type T in Copy() (T, error) must be the
+// same concrete type as the receiver that implements this interface.
+type Copier[T any] interface {
+	Copy() (T, error)
+}
+
 // Copy creates a deep copy of src. It returns the copy and a nil error in case
 // of success and the zero value for the type and a non-nil error on failure.
 func Copy[T any](src T) (T, error) {
-	return copy(src, false)
+	return copyInternal(src, false)
 }
 
 // CopySkipUnsupported creates a deep copy of src. It returns the copy and a nil
-// errorin case of success and the zero value for the type and a non-nil error
+// error in case of success and the zero value for the type and a non-nil error
 // on failure. Unsupported types are skipped (the copy will have the zero value
 // for the type) instead of returning an error.
 func CopySkipUnsupported[T any](src T) (T, error) {
-	return copy(src, true)
+	return copyInternal(src, true)
 }
 
 // MustCopy creates a deep copy of src. It returns the copy on success or panics
 // in case of any failure.
 func MustCopy[T any](src T) T {
-	dst, err := copy(src, false)
+	dst, err := copyInternal(src, false)
 	if err != nil {
 		panic(err)
 	}
@@ -36,15 +43,56 @@ type pointersMapKey struct {
 }
 type pointersMap map[pointersMapKey]reflect.Value
 
-func copy[T any](src T, skipUnsupported bool) (T, error) {
+func copyInternal[T any](src T, skipUnsupported bool) (T, error) {
 	v := reflect.ValueOf(src)
 
-	// We might have a zero value, so we check for this here otherwise
-	// calling interface below will panic.
-	if v.Kind() == reflect.Invalid {
+	// If src is the zero value for its type (e.g. an uninitialized interface,
+	// or if T is 'any' and src is its zero value), v will be invalid.
+	if !v.IsValid() {
 		// This amounts to returning the zero value for T.
 		var t T
 		return t, nil
+	}
+
+	// Attempt to use Copier interface if src is suitable:
+	// - A value type (struct, int, etc.)
+	// - A non-nil pointer type
+	// - A non-nil interface type
+	// This logic avoids trying to call Copy() on a nil receiver if T itself
+	// is a pointer or interface type that is nil.
+	attemptCopier := false
+	srcKind := v.Kind()
+	if srcKind != reflect.Interface && srcKind != reflect.Ptr {
+		attemptCopier = true
+	} else {
+		// Pointers or interface types are candidates only if they are not nil
+		if !v.IsNil() {
+			attemptCopier = true
+		}
+	}
+
+	if attemptCopier {
+		srcType := v.Type()
+
+		// If T is an interface or pointer type, converting src to 'any' is generally
+		// non-allocating for src's underlying data.
+		if srcKind == reflect.Interface || srcKind == reflect.Ptr {
+			if copier, ok := any(src).(Copier[T]); ok {
+				return copier.Copy()
+			}
+		} else {
+			// T is a value type (e.g. struct, array, basic type).
+			// The any(src) conversion might allocate.
+			// Check Implements first to avoid this allocation if T doesn't implement Copier[T].
+			copierInterfaceType := reflect.TypeOf((*Copier[T])(nil)).Elem()
+			if srcType.Implements(copierInterfaceType) {
+				// T implements Copier[T]. Now the type assertion (and potential allocation)
+				// is justified as we expect to call the custom method.
+				if copier, ok := any(src).(Copier[T]); ok {
+					return copier.Copy()
+				}
+			}
+		}
 	}
 
 	dst, err := recursiveCopy(v, make(pointersMap),
