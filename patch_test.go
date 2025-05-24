@@ -236,22 +236,22 @@ func TestPatchRoundTrip(t *testing.T) {
 
 // Define a concrete type for complex testing
 type ComplexStruct struct {
-	Meta     map[string]interface{}
-	Items    []map[string]interface{}
+	Meta     map[string]any
+	Items    []map[string]any
 	Pointers []*TestPerson
 }
 
 func TestComplexPatching(t *testing.T) {
 	// Test patching with complex nested structures
 	src := ComplexStruct{
-		Meta: map[string]interface{}{
+		Meta: map[string]any{
 			"version": 1,
-			"config": map[string]interface{}{
+			"config": map[string]any{
 				"enabled": true,
 				"limits":  []int{10, 20, 30},
 			},
 		},
-		Items: []map[string]interface{}{
+		Items: []map[string]any{
 			{"id": 1, "name": "first"},
 			{"id": 2, "name": "second"},
 		},
@@ -266,13 +266,13 @@ func TestComplexPatching(t *testing.T) {
 	p = p.Replace("/Meta/version", 2)
 
 	// Replace the entire config map instead of just the limits array
-	p = p.Replace("/Meta/config", map[string]interface{}{
+	p = p.Replace("/Meta/config", map[string]any{
 		"enabled": true,
 		"limits":  []int{10, 20, 30, 40},
 	})
 
 	p = p.Replace("/Items/1/name", "updated")
-	p = p.Add("/Items/-", map[string]interface{}{"id": 3, "name": "third"})
+	p = p.Add("/Items/-", map[string]any{"id": 3, "name": "third"})
 	p = p.Replace("/Pointers/0/Age", 26)
 
 	// Apply the patch
@@ -287,7 +287,7 @@ func TestComplexPatching(t *testing.T) {
 		t.Errorf("Meta.version = %v, want 2", resultMeta["version"])
 	}
 
-	configMap := resultMeta["config"].(map[string]interface{})
+	configMap := resultMeta["config"].(map[string]any)
 	limits := configMap["limits"].([]int)
 	if len(limits) != 4 || limits[3] != 40 {
 		t.Errorf("Meta.config.limits = %v, want [10, 20, 30, 40]", limits)

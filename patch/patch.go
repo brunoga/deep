@@ -470,7 +470,7 @@ func getParentAndLastSegment(v reflect.Value, path string) (reflect.Value, strin
 }
 
 // applyAdd implements the "add" operation.
-func applyAdd(target reflect.Value, path string, value interface{}) error {
+func applyAdd(target reflect.Value, path string, value any) error {
 	// Handle special case for appending to arrays
 	if strings.HasSuffix(path, "/-") {
 		parentPath := path[:len(path)-2]
@@ -685,7 +685,7 @@ func applyRemove(target reflect.Value, path string) error {
 }
 
 // applyReplace implements the "replace" operation.
-func applyReplace(target reflect.Value, path string, value interface{}) error {
+func applyReplace(target reflect.Value, path string, value any) error {
 	// Special case for root path
 	if path == "" || path == "/" {
 		valueVal := reflect.ValueOf(value)
@@ -828,7 +828,7 @@ func applyCopy(target reflect.Value, from, to string) error {
 }
 
 // applyTest implements the "test" operation.
-func applyTest(target reflect.Value, path string, value interface{}) error {
+func applyTest(target reflect.Value, path string, value any) error {
 	valueVal := reflect.ValueOf(value)
 
 	// Special case for root path

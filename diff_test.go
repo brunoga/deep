@@ -11,7 +11,7 @@ type Person struct {
 	Age      int
 	Address  *Address
 	Tags     []string
-	Metadata map[string]interface{}
+	Metadata map[string]any
 }
 
 type Address struct {
@@ -80,8 +80,8 @@ func TestDiff(t *testing.T) {
 			},
 			{
 				name:      "Map changes",
-				src:       Person{Metadata: map[string]interface{}{"key1": "val1", "key2": 2}},
-				dst:       Person{Metadata: map[string]interface{}{"key1": "val1", "key3": "val3"}},
+				src:       Person{Metadata: map[string]any{"key1": "val1", "key2": 2}},
+				dst:       Person{Metadata: map[string]any{"key1": "val1", "key3": "val3"}},
 				wantOps:   2,
 				wantPaths: []string{"/Metadata/key2", "/Metadata/key3"},
 			},

@@ -225,7 +225,7 @@ func TestCopy_Struct_With_Any_Field(t *testing.T) {
 		A any
 	}
 
-	src := S{A: map[string]interface{}{"key1": "value1", "key2": 12345}}
+	src := S{A: map[string]any{"key1": "value1", "key2": 12345}}
 	doCopyAndCheck(t, src, false)
 }
 
@@ -304,7 +304,7 @@ func BenchmarkCopy_Deep(b *testing.B) {
 	type ComplexStruct struct {
 		Name        string
 		Age         int
-		Data        map[string]interface{}
+		Data        map[string]any
 		Nested      NestedStruct
 		Pointers    []*InnerStruct
 		IsAvailable bool
@@ -316,7 +316,7 @@ func BenchmarkCopy_Deep(b *testing.B) {
 	src := ComplexStruct{
 		Name:        "Complex Example",
 		Age:         42,
-		Data:        map[string]interface{}{"key1": "value1", "key2": 12345},
+		Data:        map[string]any{"key1": "value1", "key2": 12345},
 		IsAvailable: true,
 	}
 

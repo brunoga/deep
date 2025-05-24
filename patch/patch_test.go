@@ -29,7 +29,7 @@ type ComplexStruct struct {
 	BoolMap   map[bool]string
 	Nested    NestedStruct
 	NestedPtr *NestedStruct
-	Interface interface{}
+	Interface any
 	PtrSlice  []*SimpleStruct
 	Array     [3]int
 }
@@ -487,8 +487,8 @@ func TestPatch_ComplexApply(t *testing.T) {
 	// Check results
 	checks := []struct {
 		name     string
-		got      interface{}
-		expected interface{}
+		got      any
+		expected any
 	}{
 		{"Int", target.Int, 42},
 		{"String", target.String, ""},
