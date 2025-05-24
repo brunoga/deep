@@ -9,26 +9,6 @@ import (
 	"github.com/brunoga/deep/internal"
 )
 
-// OperationType defines the allowed JSON Patch operation types.
-type OperationType string
-
-const (
-	OperationTypeAdd     OperationType = "add"
-	OperationTypeRemove  OperationType = "remove"
-	OperationTypeReplace OperationType = "replace"
-	OperationTypeMove    OperationType = "move"
-	OperationTypeCopy    OperationType = "copy"
-	OperationTypeTest    OperationType = "test"
-)
-
-// Operation represents a single operation in a JSON Patch.
-type Operation struct {
-	Op    OperationType `json:"op"`
-	Path  string        `json:"path"`            // JSON Pointer (RFC 6901)
-	Value any           `json:"value,omitempty"` // Used for "add", "replace", "test"
-	From  string        `json:"from,omitempty"`  // Used for "move", "copy"
-}
-
 // Patch is a slice of Operations that represents a patch.
 type Patch[T any] []Operation
 
@@ -37,9 +17,10 @@ func New[T any]() Patch[T] {
 	return Patch[T]{}
 }
 
-// validatePath validates if a JSON pointer path is valid for type T.
-// If valueType is not nil, it also checks if the type at the path can accept a value of valueType.
-// Returns the reflect.Type at the specified path or an error if validation fails.
+// validatePath validates if a path is valid for type T. If valueType is not
+// nil, it also checks if the type at the path can accept a value of valueType.
+// Returns the reflect.Type at the specified path or an error if validation
+// fails.
 func validatePath[T any](path string, valueType reflect.Type) (reflect.Type, error) {
 	rootType := reflect.TypeOf((*T)(nil)).Elem()
 
@@ -51,7 +32,7 @@ func validatePath[T any](path string, valueType reflect.Type) (reflect.Type, err
 		return rootType, nil
 	}
 
-	// Split the path into segments and decode JSON pointer escaping
+	// Split the path into segments and decode escaping.
 	segments := strings.Split(strings.TrimPrefix(path, "/"), "/")
 	for i := range segments {
 		segments[i] = strings.ReplaceAll(segments[i], "~1", "/")
