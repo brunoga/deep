@@ -45,7 +45,7 @@ const (
 //
 // DANGER! HERE BE DRAGONS! This is brittle and depends on internal state of a
 // reflect.Value object. It is not guaranteed to work in future (or previous)
-// versions of Go although we try to detect changes and panic immediatelly
+// versions of Go although we try to detect changes and panic immediately
 // during initialization.
 func disableRO(v *reflect.Value) {
 	// Get pointer to flags.
