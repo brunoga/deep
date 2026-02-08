@@ -303,7 +303,7 @@ func TestApplyChecked_Comprehensive(t *testing.T) {
 	// ApplyChecked should succeed on 'a'
 	// We use a copy to keep 'a' pure
 	aCopy, _ := Copy(a)
-	
+
 	if err := patch.ApplyChecked(&aCopy); err != nil {
 		t.Fatalf("ApplyChecked failed: %v", err)
 	}
@@ -316,9 +316,9 @@ func TestApplyChecked_Comprehensive(t *testing.T) {
 func TestPatch_Reverse_Array(t *testing.T) {
 	a := [3]int{1, 2, 3}
 	b := [3]int{1, 20, 3}
-	
+
 	patch := Diff(a, b)
-	
+
 	// Test Format
 	s := patch.String()
 	if !strings.Contains(s, "Array{") || !strings.Contains(s, "[1]: 2 -> 20") {
@@ -326,13 +326,13 @@ func TestPatch_Reverse_Array(t *testing.T) {
 	}
 
 	rev := patch.Reverse()
-	
+
 	target := a
 	patch.Apply(&target)
 	if target != b {
 		t.Fatalf("Forward patch failed")
 	}
-	
+
 	rev.Apply(&target)
 	if target != a {
 		t.Errorf("Reverse failed: got %v, want %v", target, a)
@@ -368,4 +368,3 @@ func TestInterfaceContentPatch(t *testing.T) {
 		t.Errorf("Result mismatch: got %v, want %v", aCopy, b)
 	}
 }
-

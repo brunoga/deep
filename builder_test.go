@@ -150,7 +150,7 @@ func TestBuilder_Elem(t *testing.T) {
 
 	b := NewBuilder[*S]()
 	root := b.Root()
-	
+
 	// Drill down through pointer
 	node, err := root.Elem().Field("Val")
 	if err != nil {

@@ -300,29 +300,29 @@ func TestDiff_Cycle(t *testing.T) {
 		Val  int
 		Next *Node
 	}
-	
+
 	// a: 1 -> 2 -> 1
 	n1 := &Node{Val: 1}
 	n2 := &Node{Val: 2}
 	n1.Next = n2
 	n2.Next = n1
-	
+
 	// b: 1 -> 3 -> 1 (mod n2.Val to 3)
 	m1 := &Node{Val: 1}
 	m2 := &Node{Val: 3}
 	m1.Next = m2
 	m2.Next = m1
-	
+
 	// Diff should detect cycle and stop infinite recursion, producing patch for Val
 	patch := Diff(n1, m1)
-	
+
 	if patch == nil {
 		t.Fatal("Expected patch")
 	}
-	
+
 	// Apply
 	patch.Apply(&n1)
-	
+
 	if n1.Next.Val != 3 {
 		t.Errorf("Cycle update failed: expected 3, got %d", n1.Next.Val)
 	}

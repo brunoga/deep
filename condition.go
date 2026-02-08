@@ -28,7 +28,7 @@ func (p Path) resolve(v reflect.Value) (reflect.Value, error) {
 		if !current.IsValid() {
 			return reflect.Value{}, fmt.Errorf("path traversal failed: nil value at intermediate step")
 		}
-		
+
 		// Automatically dereference pointers and interfaces.
 		for current.Kind() == reflect.Ptr || current.Kind() == reflect.Interface {
 			if current.IsNil() {
@@ -59,7 +59,7 @@ func (p Path) resolve(v reflect.Value) (reflect.Value, error) {
 			} else {
 				return reflect.Value{}, fmt.Errorf("unsupported map key type for path: %v", keyType)
 			}
-			
+
 			val := current.MapIndex(keyVal)
 			if !val.IsValid() {
 				return reflect.Value{}, nil
@@ -69,7 +69,7 @@ func (p Path) resolve(v reflect.Value) (reflect.Value, error) {
 			if current.Kind() != reflect.Struct {
 				return reflect.Value{}, fmt.Errorf("cannot access field %s on %v", part.key, current.Type())
 			}
-			
+
 			// We use FieldByName and disableRO to support unexported fields.
 			f := current.FieldByName(part.key)
 			if !f.IsValid() {
@@ -187,7 +187,7 @@ func (c CompareCondition[T]) Evaluate(v *T) (bool, error) {
 	tVal := target.Interface()
 	v1 := reflect.ValueOf(tVal)
 	v2 := convertValue(reflect.ValueOf(c.Val), v1.Type())
-	
+
 	if v1.Kind() != v2.Kind() {
 		return false, nil
 	}
@@ -196,37 +196,53 @@ func (c CompareCondition[T]) Evaluate(v *T) (bool, error) {
 		i1 := v1.Int()
 		i2 := v2.Int()
 		switch c.Op {
-		case ">": return i1 > i2, nil
-		case "<": return i1 < i2, nil
-		case ">=": return i1 >= i2, nil
-		case "<=": return i1 <= i2, nil
+		case ">":
+			return i1 > i2, nil
+		case "<":
+			return i1 < i2, nil
+		case ">=":
+			return i1 >= i2, nil
+		case "<=":
+			return i1 <= i2, nil
 		}
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
 		u1 := v1.Uint()
 		u2 := v2.Uint()
 		switch c.Op {
-		case ">": return u1 > u2, nil
-		case "<": return u1 < u2, nil
-		case ">=": return u1 >= u2, nil
-		case "<=": return u1 <= u2, nil
+		case ">":
+			return u1 > u2, nil
+		case "<":
+			return u1 < u2, nil
+		case ">=":
+			return u1 >= u2, nil
+		case "<=":
+			return u1 <= u2, nil
 		}
 	case reflect.Float32, reflect.Float64:
 		f1 := v1.Float()
 		f2 := v2.Float()
 		switch c.Op {
-		case ">": return f1 > f2, nil
-		case "<": return f1 < f2, nil
-		case ">=": return f1 >= f2, nil
-		case "<=": return f1 <= f2, nil
+		case ">":
+			return f1 > f2, nil
+		case "<":
+			return f1 < f2, nil
+		case ">=":
+			return f1 >= f2, nil
+		case "<=":
+			return f1 <= f2, nil
 		}
 	case reflect.String:
 		s1 := v1.String()
 		s2 := v2.String()
 		switch c.Op {
-		case ">": return s1 > s2, nil
-		case "<": return s1 < s2, nil
-		case ">=": return s1 >= s2, nil
-		case "<=": return s1 <= s2, nil
+		case ">":
+			return s1 > s2, nil
+		case "<":
+			return s1 < s2, nil
+		case ">=":
+			return s1 >= s2, nil
+		case "<=":
+			return s1 <= s2, nil
 		}
 	}
 	return false, fmt.Errorf("unsupported comparison for kind %v", v1.Kind())
