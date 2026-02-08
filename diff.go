@@ -9,9 +9,9 @@ import (
 // Diff compares two values a and b and returns a Patch that can be applied
 // to a to make it equal to b.
 //
-// It uses a combination of Myers' Diff algorithm for slices and recursive 
+// It uses a combination of Myers' Diff algorithm for slices and recursive
 // type-specific comparison for structs, maps, and pointers.
-// 
+//
 // If a and b are deeply equal, it returns nil.
 func Diff[T any](a, b T) Patch[T] {
 	// We take the address of a and b to ensure that if T is an interface,

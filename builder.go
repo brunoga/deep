@@ -90,7 +90,7 @@ func (n *Node) Field(name string) (*Node, error) {
 		n.current = sp
 	}
 	return &Node{
-		typ:     field.Type,
+		typ: field.Type,
 		update: func(p diffPatch) {
 			sp.fields[name] = p
 		},
@@ -118,7 +118,7 @@ func (n *Node) Index(i int) (*Node, error) {
 			n.current = ap
 		}
 		return &Node{
-			typ:     n.typ.Elem(),
+			typ: n.typ.Elem(),
 			update: func(p diffPatch) {
 				ap.indices[i] = p
 			},
@@ -146,7 +146,7 @@ func (n *Node) Index(i int) (*Node, error) {
 		modOp = &sp.ops[len(sp.ops)-1]
 	}
 	return &Node{
-		typ:     n.typ.Elem(),
+		typ: n.typ.Elem(),
 		update: func(p diffPatch) {
 			modOp.Patch = p
 		},
@@ -178,7 +178,7 @@ func (n *Node) MapKey(key any) (*Node, error) {
 		n.current = mp
 	}
 	return &Node{
-		typ:     n.typ.Elem(),
+		typ: n.typ.Elem(),
 		update: func(p diffPatch) {
 			mp.modified[key] = p
 		},
