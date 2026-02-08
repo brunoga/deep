@@ -143,4 +143,4 @@ The library uses `unsafe` operations to read and write unexported fields. This i
 
 ## License
 
-MIT
+Apache 2.0
