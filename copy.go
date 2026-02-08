@@ -3,6 +3,8 @@ package deep
 import (
 	"fmt"
 	"reflect"
+
+	"github.com/brunoga/deep/internal/unsafe"
 )
 
 // Copier is an interface that types can implement to provide their own
@@ -265,7 +267,7 @@ func recursiveCopyStruct(v reflect.Value, pointers pointersMap,
 		// do this here not because we are writting to the field (this is the
 		// source), but because Interface() does not work if the read-only bits
 		// are set.
-		disableRO(&elem)
+		unsafe.DisableRO(&elem)
 
 		elemDst, err := recursiveCopy(elem, pointers,
 			skipUnsupported)
@@ -277,10 +279,21 @@ func recursiveCopyStruct(v reflect.Value, pointers pointersMap,
 
 		// If the field is unexported, we need to disable read-only mode so we
 		// can actually write to it.
-		disableRO(&dstField)
+		unsafe.DisableRO(&dstField)
 
 		dstField.Set(elemDst)
 	}
 
 	return dst, nil
+}
+
+func deepCopyValue(v reflect.Value) reflect.Value {
+	if !v.IsValid() {
+		return reflect.Value{}
+	}
+	copied, err := recursiveCopy(v, make(pointersMap), false)
+	if err != nil {
+		return v
+	}
+	return copied
 }
