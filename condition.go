@@ -1,6 +1,8 @@
 package deep
 
 import (
+	"encoding/gob"
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"strconv"
@@ -135,7 +137,9 @@ func (c EqualCondition[T]) Evaluate(v *T) (bool, error) {
 	if !target.IsValid() {
 		return c.Value == nil, nil
 	}
-	return reflect.DeepEqual(target.Interface(), c.Value), nil
+	targetVal := target.Interface()
+	convertedVal := convertValue(reflect.ValueOf(c.Value), reflect.TypeOf(targetVal)).Interface()
+	return reflect.DeepEqual(targetVal, convertedVal), nil
 }
 
 func Equal[T any](path string, val any) Condition[T] {
@@ -156,7 +160,9 @@ func (c NotEqualCondition[T]) Evaluate(v *T) (bool, error) {
 	if !target.IsValid() {
 		return c.Value != nil, nil
 	}
-	return !reflect.DeepEqual(target.Interface(), c.Value), nil
+	targetVal := target.Interface()
+	convertedVal := convertValue(reflect.ValueOf(c.Value), reflect.TypeOf(targetVal)).Interface()
+	return !reflect.DeepEqual(targetVal, convertedVal), nil
 }
 
 func NotEqual[T any](path string, val any) Condition[T] {
@@ -180,7 +186,8 @@ func (c CompareCondition[T]) Evaluate(v *T) (bool, error) {
 	}
 	tVal := target.Interface()
 	v1 := reflect.ValueOf(tVal)
-	v2 := reflect.ValueOf(c.Val)
+	v2 := convertValue(reflect.ValueOf(c.Val), v1.Type())
+	
 	if v1.Kind() != v2.Kind() {
 		return false, nil
 	}
@@ -556,4 +563,152 @@ func (p *parser[T]) parseComparison() (Condition[T], error) {
 		return LessEqual[T](path, val), nil
 	}
 	return nil, fmt.Errorf("unsupported operator")
+}
+
+func init() {
+	gob.Register(&condSurrogate{})
+}
+
+type condSurrogate struct {
+	Kind string `json:"k" gob:"k"`
+	Data any    `json:"d,omitempty" gob:"d,omitempty"`
+}
+
+func marshalCondition[T any](c Condition[T]) (any, error) {
+	if c == nil {
+		return nil, nil
+	}
+	switch v := c.(type) {
+	case EqualCondition[T]:
+		return &condSurrogate{
+			Kind: "equal",
+			Data: map[string]any{
+				"p": string(v.Path),
+				"v": v.Value,
+			},
+		}, nil
+	case NotEqualCondition[T]:
+		return &condSurrogate{
+			Kind: "not_equal",
+			Data: map[string]any{
+				"p": string(v.Path),
+				"v": v.Value,
+			},
+		}, nil
+	case CompareCondition[T]:
+		return &condSurrogate{
+			Kind: "compare",
+			Data: map[string]any{
+				"p": string(v.Path),
+				"v": v.Val,
+				"o": v.Op,
+			},
+		}, nil
+	case AndCondition[T]:
+		conds := make([]any, 0, len(v.Conditions))
+		for _, sub := range v.Conditions {
+			s, err := marshalCondition(sub)
+			if err != nil {
+				return nil, err
+			}
+			conds = append(conds, s)
+		}
+		return &condSurrogate{
+			Kind: "and",
+			Data: conds,
+		}, nil
+	case OrCondition[T]:
+		conds := make([]any, 0, len(v.Conditions))
+		for _, sub := range v.Conditions {
+			s, err := marshalCondition(sub)
+			if err != nil {
+				return nil, err
+			}
+			conds = append(conds, s)
+		}
+		return &condSurrogate{
+			Kind: "or",
+			Data: conds,
+		}, nil
+	case NotCondition[T]:
+		sub, err := marshalCondition(v.C)
+		if err != nil {
+			return nil, err
+		}
+		return &condSurrogate{
+			Kind: "not",
+			Data: sub,
+		}, nil
+	}
+	return nil, fmt.Errorf("unknown condition type: %T", c)
+}
+
+func unmarshalCondition[T any](data []byte) (Condition[T], error) {
+	var s condSurrogate
+	if err := json.Unmarshal(data, &s); err != nil {
+		return nil, err
+	}
+	return convertFromCondSurrogate[T](&s)
+}
+
+func convertFromCondSurrogate[T any](s any) (Condition[T], error) {
+	if s == nil {
+		return nil, nil
+	}
+
+	var kind string
+	var data any
+
+	switch v := s.(type) {
+	case *condSurrogate:
+		kind = v.Kind
+		data = v.Data
+	case map[string]any:
+		kind = v["k"].(string)
+		data = v["d"]
+	default:
+		return nil, fmt.Errorf("invalid condition surrogate type: %T", s)
+	}
+
+	switch kind {
+	case "equal":
+		d := data.(map[string]any)
+		return EqualCondition[T]{Path: Path(d["p"].(string)), Value: d["v"]}, nil
+	case "not_equal":
+		d := data.(map[string]any)
+		return NotEqualCondition[T]{Path: Path(d["p"].(string)), Value: d["v"]}, nil
+	case "compare":
+		d := data.(map[string]any)
+		return CompareCondition[T]{Path: Path(d["p"].(string)), Val: d["v"], Op: d["o"].(string)}, nil
+	case "and":
+		d := data.([]any)
+		conds := make([]Condition[T], 0, len(d))
+		for _, subData := range d {
+			sub, err := convertFromCondSurrogate[T](subData)
+			if err != nil {
+				return nil, err
+			}
+			conds = append(conds, sub)
+		}
+		return AndCondition[T]{Conditions: conds}, nil
+	case "or":
+		d := data.([]any)
+		conds := make([]Condition[T], 0, len(d))
+		for _, subData := range d {
+			sub, err := convertFromCondSurrogate[T](subData)
+			if err != nil {
+				return nil, err
+			}
+			conds = append(conds, sub)
+		}
+		return OrCondition[T]{Conditions: conds}, nil
+	case "not":
+		sub, err := convertFromCondSurrogate[T](data)
+		if err != nil {
+			return nil, err
+		}
+		return NotCondition[T]{C: sub}, nil
+	}
+
+	return nil, fmt.Errorf("unknown condition kind: %s", kind)
 }

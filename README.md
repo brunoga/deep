@@ -88,6 +88,38 @@ err = patchWithCond.ApplyChecked(&target)
 *   **Logic**: `AND`, `OR`, `NOT`, `(...)`
 *   **Paths**: `Field`, `Field.SubField`, `Slice[0]`, `Map.Key`
 
+### Patch Serialization
+
+Patches can be serialized to JSON or Gob format for storage or transmission over the network.
+
+#### JSON Serialization
+
+```go
+// Marshal
+data, err := json.Marshal(patch)
+
+// Unmarshal
+newPatch := deep.NewPatch[Config]()
+err = json.Unmarshal(data, newPatch)
+```
+
+#### Gob Serialization
+
+When using Gob, you must register the `Patch` implementation for your type.
+
+```go
+// Register type once (e.g. in init())
+deep.Register[Config]()
+
+// Marshal
+var buf bytes.Buffer
+err := gob.NewEncoder(&buf).Encode(&patch)
+
+// Unmarshal
+newPatch := deep.NewPatch[Config]()
+err = gob.NewDecoder(&buf).Decode(&newPatch)
+```
+
 ### Manual Patch Builder
 
 Construct patches programmatically without having two objects to compare.
