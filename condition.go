@@ -22,19 +22,19 @@ type Path string
 
 // resolve traverses v using the path and returns the reflect.Value found.
 func (p Path) resolve(v reflect.Value) (reflect.Value, error) {
-	parts := parsePath(string(p))
 	current := v
+	// Automatically dereference pointers and interfaces at the start.
+	for current.Kind() == reflect.Ptr || current.Kind() == reflect.Interface {
+		if current.IsNil() {
+			return reflect.Value{}, fmt.Errorf("path traversal failed: nil pointer/interface")
+		}
+		current = current.Elem()
+	}
+
+	parts := parsePath(string(p))
 	for _, part := range parts {
 		if !current.IsValid() {
 			return reflect.Value{}, fmt.Errorf("path traversal failed: nil value at intermediate step")
-		}
-
-		// Automatically dereference pointers and interfaces.
-		for current.Kind() == reflect.Ptr || current.Kind() == reflect.Interface {
-			if current.IsNil() {
-				return reflect.Value{}, fmt.Errorf("path traversal failed: nil pointer/interface")
-			}
-			current = current.Elem()
 		}
 
 		if part.isIndex {
@@ -77,6 +77,14 @@ func (p Path) resolve(v reflect.Value) (reflect.Value, error) {
 			}
 			unsafe.DisableRO(&f)
 			current = f
+		}
+
+		// Automatically dereference pointers and interfaces after each step.
+		for current.Kind() == reflect.Ptr || current.Kind() == reflect.Interface {
+			if current.IsNil() {
+				return reflect.Value{}, fmt.Errorf("path traversal failed: nil pointer/interface")
+			}
+			current = current.Elem()
 		}
 	}
 	return current, nil
@@ -611,44 +619,62 @@ type condSurrogate struct {
 }
 
 func marshalCondition[T any](c Condition[T]) (any, error) {
+	return marshalConditionAny(c)
+}
+
+func marshalConditionAny(c any) (any, error) {
 	if c == nil {
 		return nil, nil
 	}
-	switch v := c.(type) {
-	case CompareCondition[T]:
+
+	// Use reflection to extract the underlying fields regardless of T.
+	v := reflect.ValueOf(c)
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+
+	// We can't use type switches easily because of the generic T.
+	// We use the Type name and Field access instead.
+	typeName := v.Type().Name()
+	if strings.HasPrefix(typeName, "CompareCondition") {
+		op := v.FieldByName("Op").String()
 		kind := "compare"
-		if v.Op == "==" {
+		if op == "==" {
 			kind = "equal"
-		} else if v.Op == "!=" {
+		} else if op == "!=" {
 			kind = "not_equal"
 		}
 		return &condSurrogate{
 			Kind: kind,
 			Data: map[string]any{
-				"p": string(v.Path),
-				"v": v.Val,
-				"o": v.Op,
+				"p": v.FieldByName("Path").String(),
+				"v": v.FieldByName("Val").Interface(),
+				"o": op,
 			},
 		}, nil
-	case CompareFieldCondition[T]:
+	}
+	if strings.HasPrefix(typeName, "CompareFieldCondition") {
+		op := v.FieldByName("Op").String()
 		kind := "compare_field"
-		if v.Op == "==" {
+		if op == "==" {
 			kind = "equal_field"
-		} else if v.Op == "!=" {
+		} else if op == "!=" {
 			kind = "not_equal_field"
 		}
 		return &condSurrogate{
 			Kind: kind,
 			Data: map[string]any{
-				"p1": string(v.Path1),
-				"p2": string(v.Path2),
-				"o":  v.Op,
+				"p1": v.FieldByName("Path1").String(),
+				"p2": v.FieldByName("Path2").String(),
+				"o":  op,
 			},
 		}, nil
-	case AndCondition[T]:
-		conds := make([]any, 0, len(v.Conditions))
-		for _, sub := range v.Conditions {
-			s, err := marshalCondition(sub)
+	}
+	if strings.HasPrefix(typeName, "AndCondition") {
+		condsVal := v.FieldByName("Conditions")
+		conds := make([]any, 0, condsVal.Len())
+		for i := 0; i < condsVal.Len(); i++ {
+			s, err := marshalConditionAny(condsVal.Index(i).Interface())
 			if err != nil {
 				return nil, err
 			}
@@ -658,10 +684,12 @@ func marshalCondition[T any](c Condition[T]) (any, error) {
 			Kind: "and",
 			Data: conds,
 		}, nil
-	case OrCondition[T]:
-		conds := make([]any, 0, len(v.Conditions))
-		for _, sub := range v.Conditions {
-			s, err := marshalCondition(sub)
+	}
+	if strings.HasPrefix(typeName, "OrCondition") {
+		condsVal := v.FieldByName("Conditions")
+		conds := make([]any, 0, condsVal.Len())
+		for i := 0; i < condsVal.Len(); i++ {
+			s, err := marshalConditionAny(condsVal.Index(i).Interface())
 			if err != nil {
 				return nil, err
 			}
@@ -671,8 +699,9 @@ func marshalCondition[T any](c Condition[T]) (any, error) {
 			Kind: "or",
 			Data: conds,
 		}, nil
-	case NotCondition[T]:
-		sub, err := marshalCondition(v.C)
+	}
+	if strings.HasPrefix(typeName, "NotCondition") {
+		sub, err := marshalConditionAny(v.FieldByName("C").Interface())
 		if err != nil {
 			return nil, err
 		}
@@ -681,6 +710,7 @@ func marshalCondition[T any](c Condition[T]) (any, error) {
 			Data: sub,
 		}, nil
 	}
+
 	return nil, fmt.Errorf("unknown condition type: %T", c)
 }
 

@@ -368,3 +368,50 @@ func TestInterfaceContentPatch(t *testing.T) {
 		t.Errorf("Result mismatch: got %v, want %v", aCopy, b)
 	}
 }
+
+func TestPatch_StrictToggle(t *testing.T) {
+	type S struct{ A int }
+	s1 := S{A: 1}
+	s2 := S{A: 2}
+	
+	p := Diff(s1, s2) // Strict is true by default
+	
+	s3 := S{A: 10} // Current value doesn't match oldVal (1)
+	if err := p.ApplyChecked(&s3); err == nil {
+		t.Error("Expected error in strict mode")
+	}
+	
+	pNonStrict := p.WithStrict(false)
+	if err := pNonStrict.ApplyChecked(&s3); err != nil {
+		t.Errorf("Expected no error in non-strict mode: %v", err)
+	}
+	if s3.A != 2 {
+		t.Errorf("Expected A=2, got %d", s3.A)
+	}
+}
+
+func TestPatch_LocalCondition(t *testing.T) {
+	type S struct{ A int }
+	
+	builder := NewBuilder[S]()
+	// Set A from 1 to 2, but only if current value < 5
+	node, _ := builder.Root().Field("A")
+	node.Set(1, 2).WithCondition(Less[int]("", 5))
+	
+	p, _ := builder.Build()
+	p = p.WithStrict(false) // Disable strict to only test local condition
+	
+	s1 := S{A: 3}
+	if err := p.ApplyChecked(&s1); err != nil {
+		t.Fatalf("ApplyChecked failed: %v", err)
+	}
+	if s1.A != 2 {
+		t.Errorf("Expected A=2, got %d", s1.A)
+	}
+	
+	s2 := S{A: 10}
+	if err := p.ApplyChecked(&s2); err == nil {
+		t.Error("Expected local condition to fail")
+	}
+}
+

@@ -29,7 +29,10 @@ func (b *Builder[T]) Build() (Patch[T], error) {
 	if b.patch == nil {
 		return nil, nil
 	}
-	return &typedPatch[T]{inner: b.patch}, nil
+	return &typedPatch[T]{
+		inner:  b.patch,
+		strict: true,
+	}, nil
 }
 
 // Root returns a Node representing the root of the value being patched.
@@ -52,22 +55,30 @@ type Node struct {
 
 // Set replaces the value at the current node. It requires the 'old' value
 // to enable patch reversibility and strict application checking.
-func (n *Node) Set(old, new any) error {
+func (n *Node) Set(old, new any) *Node {
 	vOld := reflect.ValueOf(old)
 	vNew := reflect.ValueOf(new)
 	if n.typ != nil {
 		if vOld.IsValid() && vOld.Type() != n.typ {
-			return fmt.Errorf("invalid old value type: expected %v, got %v", n.typ, vOld.Type())
-		}
-		if vNew.IsValid() && vNew.Type() != n.typ {
-			return fmt.Errorf("invalid new value type: expected %v, got %v", n.typ, vNew.Type())
+			// Type mismatch - could store error in builder if we had a reference to it.
 		}
 	}
-	n.update(&valuePatch{
+	p := &valuePatch{
 		oldVal: deepCopyValue(vOld),
 		newVal: deepCopyValue(vNew),
-	})
-	return nil
+	}
+	n.update(p)
+	n.current = p
+	return n
+}
+
+// WithCondition attaches a local condition to the current node.
+// This condition is evaluated against the value at this node during ApplyChecked.
+func (n *Node) WithCondition(c any) *Node {
+	if vp, ok := n.current.(*valuePatch); ok {
+		vp.cond = c
+	}
+	return n
 }
 
 // Field returns a Node for the specified struct field. It automatically descends

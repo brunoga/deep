@@ -20,11 +20,15 @@ type Patch[T any] interface {
 
 	// ApplyChecked applies the patch only if specific conditions are met.
 	// 1. If the patch has a global Condition, it must evaluate to true.
-	// 2. For every modification, the target value must match the 'oldVal' recorded in the patch.
+	// 2. If Strict mode is enabled, every modification must match the 'oldVal' recorded in the patch.
+	// 3. Any local per-field conditions must evaluate to true.
 	ApplyChecked(v *T) error
 
-	// WithCondition returns a new Patch with the given condition attached.
+	// WithCondition returns a new Patch with the given global condition attached.
 	WithCondition(c Condition[T]) Patch[T]
+
+	// WithStrict returns a new Patch with the strict consistency check enabled or disabled.
+	WithStrict(strict bool) Patch[T]
 
 	// Reverse returns a new Patch that undoes the changes in this patch.
 	Reverse() Patch[T]
@@ -42,8 +46,9 @@ func Register[T any]() {
 }
 
 type typedPatch[T any] struct {
-	inner diffPatch
-	cond  Condition[T]
+	inner  diffPatch
+	cond   Condition[T]
+	strict bool
 }
 
 func (p *typedPatch[T]) Apply(v *T) {
@@ -70,13 +75,22 @@ func (p *typedPatch[T]) ApplyChecked(v *T) error {
 	}
 
 	rv := reflect.ValueOf(v).Elem()
-	return p.inner.applyChecked(rv)
+	return p.inner.applyChecked(v, rv, p.strict)
 }
 
 func (p *typedPatch[T]) WithCondition(c Condition[T]) Patch[T] {
 	return &typedPatch[T]{
-		inner: p.inner,
-		cond:  c,
+		inner:  p.inner,
+		cond:   c,
+		strict: p.strict,
+	}
+}
+
+func (p *typedPatch[T]) WithStrict(strict bool) Patch[T] {
+	return &typedPatch[T]{
+		inner:  p.inner,
+		cond:   p.cond,
+		strict: strict,
 	}
 }
 
@@ -84,7 +98,10 @@ func (p *typedPatch[T]) Reverse() Patch[T] {
 	if p.inner == nil {
 		return &typedPatch[T]{}
 	}
-	return &typedPatch[T]{inner: p.inner.reverse()}
+	return &typedPatch[T]{
+		inner:  p.inner.reverse(),
+		strict: p.strict,
+	}
 }
 
 func (p *typedPatch[T]) String() string {
@@ -104,8 +121,9 @@ func (p *typedPatch[T]) MarshalJSON() ([]byte, error) {
 		return nil, err
 	}
 	return json.Marshal(map[string]any{
-		"inner": inner,
-		"cond":  cond,
+		"inner":  inner,
+		"cond":   cond,
+		"strict": p.strict,
 	})
 }
 
@@ -122,11 +140,16 @@ func (p *typedPatch[T]) UnmarshalJSON(data []byte) error {
 		p.inner = inner
 	}
 	if condData, ok := m["cond"]; ok && len(condData) > 0 && string(condData) != "null" {
+		// We don't know T here for unmarshalCondition[T] easily without more context,
+		// but typedPatch is generic so it works.
 		cond, err := unmarshalCondition[T](condData)
 		if err != nil {
 			return err
 		}
 		p.cond = cond
+	}
+	if strictData, ok := m["strict"]; ok {
+		json.Unmarshal(strictData, &p.strict)
 	}
 	return nil
 }
@@ -143,8 +166,9 @@ func (p *typedPatch[T]) GobEncode() ([]byte, error) {
 	var buf strings.Builder
 	enc := gob.NewEncoder(&buf)
 	if err := enc.Encode(map[string]any{
-		"inner": inner,
-		"cond":  cond,
+		"inner":  inner,
+		"cond":   cond,
+		"strict": p.strict,
 	}); err != nil {
 		return nil, err
 	}
@@ -158,8 +182,6 @@ func (p *typedPatch[T]) GobDecode(data []byte) error {
 		return err
 	}
 	if innerData, ok := m["inner"]; ok && innerData != nil {
-		// If it's Gob, innerData might already be the right type if registered,
-		// but we use our surrogate for consistency.
 		inner, err := convertFromSurrogate(innerData)
 		if err != nil {
 			return err
@@ -173,13 +195,16 @@ func (p *typedPatch[T]) GobDecode(data []byte) error {
 		}
 		p.cond = cond
 	}
+	if strict, ok := m["strict"].(bool); ok {
+		p.strict = strict
+	}
 	return nil
 }
 
 // diffPatch is the internal recursive interface for all patch types.
 type diffPatch interface {
 	apply(v reflect.Value)
-	applyChecked(v reflect.Value) error
+	applyChecked(root any, v reflect.Value, strict bool) error
 	reverse() diffPatch
 	format(indent int) string
 }
@@ -188,6 +213,7 @@ type diffPatch interface {
 type valuePatch struct {
 	oldVal reflect.Value
 	newVal reflect.Value
+	cond   any // Internal: stored as any to avoid complex generics in diffPatch, cast at runtime.
 }
 
 func (p *valuePatch) apply(v reflect.Value) {
@@ -204,8 +230,8 @@ func init() {
 	gob.Register([]map[string]any{})
 }
 
-func (p *valuePatch) applyChecked(v reflect.Value) error {
-	if p.oldVal.IsValid() {
+func (p *valuePatch) applyChecked(root any, v reflect.Value, strict bool) error {
+	if strict && p.oldVal.IsValid() {
 		if v.IsValid() {
 			convertedOldVal := convertValue(p.oldVal, v.Type())
 			if !reflect.DeepEqual(v.Interface(), convertedOldVal.Interface()) {
@@ -215,12 +241,31 @@ func (p *valuePatch) applyChecked(v reflect.Value) error {
 			return fmt.Errorf("value mismatch: expected %v, got invalid", p.oldVal)
 		}
 	}
+
+	// Local condition evaluation
+	if p.cond != nil {
+		method := reflect.ValueOf(p.cond).MethodByName("Evaluate")
+		if method.IsValid() {
+			ptr := reflect.New(v.Type())
+			ptr.Elem().Set(v)
+			results := method.Call([]reflect.Value{ptr})
+			if !results[1].IsNil() {
+				return results[1].Interface().(error)
+			}
+			if !results[0].Bool() {
+				return fmt.Errorf("local condition failed for value %v", v.Interface())
+			}
+		} else {
+			return fmt.Errorf("local condition: method Evaluate not found on %T", p.cond)
+		}
+	}
+
 	p.apply(v)
 	return nil
 }
 
 func (p *valuePatch) reverse() diffPatch {
-	return &valuePatch{oldVal: p.newVal, newVal: p.oldVal}
+	return &valuePatch{oldVal: p.newVal, newVal: p.oldVal, cond: p.cond}
 }
 
 func (p *valuePatch) format(indent int) string {
@@ -253,11 +298,11 @@ func (p *ptrPatch) apply(v reflect.Value) {
 	p.elemPatch.apply(v.Elem())
 }
 
-func (p *ptrPatch) applyChecked(v reflect.Value) error {
+func (p *ptrPatch) applyChecked(root any, v reflect.Value, strict bool) error {
 	if v.IsNil() {
 		return fmt.Errorf("cannot apply pointer patch to nil value")
 	}
-	return p.elemPatch.applyChecked(v.Elem())
+	return p.elemPatch.applyChecked(root, v.Elem(), strict)
 }
 
 func (p *ptrPatch) reverse() diffPatch {
@@ -284,14 +329,14 @@ func (p *interfacePatch) apply(v reflect.Value) {
 	v.Set(newElem)
 }
 
-func (p *interfacePatch) applyChecked(v reflect.Value) error {
+func (p *interfacePatch) applyChecked(root any, v reflect.Value, strict bool) error {
 	if v.IsNil() {
 		return fmt.Errorf("cannot apply interface patch to nil value")
 	}
 	elem := v.Elem()
 	newElem := reflect.New(elem.Type()).Elem()
 	newElem.Set(elem)
-	if err := p.elemPatch.applyChecked(newElem); err != nil {
+	if err := p.elemPatch.applyChecked(root, newElem, strict); err != nil {
 		return err
 	}
 	v.Set(newElem)
@@ -323,7 +368,7 @@ func (p *structPatch) apply(v reflect.Value) {
 	}
 }
 
-func (p *structPatch) applyChecked(v reflect.Value) error {
+func (p *structPatch) applyChecked(root any, v reflect.Value, strict bool) error {
 	for name, patch := range p.fields {
 		f := v.FieldByName(name)
 		if !f.IsValid() {
@@ -332,7 +377,7 @@ func (p *structPatch) applyChecked(v reflect.Value) error {
 		if !f.CanSet() {
 			unsafe.DisableRO(&f)
 		}
-		if err := patch.applyChecked(f); err != nil {
+		if err := patch.applyChecked(root, f, strict); err != nil {
 			return fmt.Errorf("field %s: %w", name, err)
 		}
 	}
@@ -375,7 +420,7 @@ func (p *arrayPatch) apply(v reflect.Value) {
 	}
 }
 
-func (p *arrayPatch) applyChecked(v reflect.Value) error {
+func (p *arrayPatch) applyChecked(root any, v reflect.Value, strict bool) error {
 	for i, patch := range p.indices {
 		if i >= v.Len() {
 			return fmt.Errorf("index %d out of bounds", i)
@@ -384,7 +429,7 @@ func (p *arrayPatch) applyChecked(v reflect.Value) error {
 		if !e.CanSet() {
 			unsafe.DisableRO(&e)
 		}
-		if err := patch.applyChecked(e); err != nil {
+		if err := patch.applyChecked(root, e, strict); err != nil {
 			return fmt.Errorf("index %d: %w", i, err)
 		}
 	}
@@ -446,7 +491,7 @@ func (p *mapPatch) apply(v reflect.Value) {
 	}
 }
 
-func (p *mapPatch) applyChecked(v reflect.Value) error {
+func (p *mapPatch) applyChecked(root any, v reflect.Value, strict bool) error {
 	if v.IsNil() {
 		if len(p.added) > 0 {
 			newMap := reflect.MakeMap(v.Type())
@@ -461,7 +506,7 @@ func (p *mapPatch) applyChecked(v reflect.Value) error {
 		if !val.IsValid() {
 			return fmt.Errorf("key %v not found for removal", k)
 		}
-		if !reflect.DeepEqual(val.Interface(), oldVal.Interface()) {
+		if strict && !reflect.DeepEqual(val.Interface(), oldVal.Interface()) {
 			return fmt.Errorf("map removal mismatch for key %v: expected %v, got %v", k, oldVal, val)
 		}
 	}
@@ -473,18 +518,18 @@ func (p *mapPatch) applyChecked(v reflect.Value) error {
 		}
 		newElem := reflect.New(val.Type()).Elem()
 		newElem.Set(val)
-		if err := patch.applyChecked(newElem); err != nil {
+		if err := patch.applyChecked(root, newElem, strict); err != nil {
 			return fmt.Errorf("key %v: %w", k, err)
 		}
 		v.SetMapIndex(keyVal, newElem)
 	}
 	for k := range p.removed {
-		v.SetMapIndex(reflect.ValueOf(k), reflect.Value{})
+		v.SetMapIndex(convertValue(reflect.ValueOf(k), v.Type().Key()), reflect.Value{})
 	}
 	for k, val := range p.added {
 		keyVal := convertValue(reflect.ValueOf(k), v.Type().Key())
 		curr := v.MapIndex(keyVal)
-		if curr.IsValid() {
+		if strict && curr.IsValid() {
 			return fmt.Errorf("key %v already exists", k)
 		}
 		v.SetMapIndex(keyVal, convertValue(val, v.Type().Elem()))
@@ -576,7 +621,7 @@ func (p *slicePatch) apply(v reflect.Value) {
 	v.Set(newSlice)
 }
 
-func (p *slicePatch) applyChecked(v reflect.Value) error {
+func (p *slicePatch) applyChecked(root any, v reflect.Value, strict bool) error {
 	newSlice := reflect.MakeSlice(v.Type(), 0, v.Len())
 	curIdx := 0
 	for _, op := range p.ops {
@@ -596,7 +641,7 @@ func (p *slicePatch) applyChecked(v reflect.Value) error {
 				return fmt.Errorf("slice deletion index %d out of bounds", curIdx)
 			}
 			curr := v.Index(curIdx)
-			if op.Val.IsValid() {
+			if strict && op.Val.IsValid() {
 				convertedVal := convertValue(op.Val, v.Type().Elem())
 				if !reflect.DeepEqual(curr.Interface(), convertedVal.Interface()) {
 					return fmt.Errorf("slice deletion mismatch at %d: expected %v, got %v", curIdx, convertedVal, curr)
@@ -608,7 +653,7 @@ func (p *slicePatch) applyChecked(v reflect.Value) error {
 				return fmt.Errorf("slice modification index %d out of bounds", curIdx)
 			}
 			elem := deepCopyValue(v.Index(curIdx))
-			if err := op.Patch.applyChecked(elem); err != nil {
+			if err := op.Patch.applyChecked(root, elem, strict); err != nil {
 				return fmt.Errorf("slice index %d: %w", curIdx, err)
 			}
 			newSlice = reflect.Append(newSlice, elem)
@@ -687,11 +732,16 @@ func marshalDiffPatch(p diffPatch) (any, error) {
 	}
 	switch v := p.(type) {
 	case *valuePatch:
+		cond, err := marshalConditionAny(v.cond)
+		if err != nil {
+			return nil, err
+		}
 		return &patchSurrogate{
 			Kind: "value",
 			Data: map[string]any{
 				"o": valueToInterface(v.oldVal),
 				"n": valueToInterface(v.newVal),
+				"c": cond,
 			},
 		}, nil
 	case *ptrPatch:
@@ -815,9 +865,19 @@ func convertFromSurrogate(s any) (diffPatch, error) {
 	switch kind {
 	case "value":
 		d := data.(map[string]any)
+		var cond any
+		if cData, ok := d["c"]; ok && cData != nil {
+			// This is tricky because we don't know the type for Condition[T].
+			// However, unmarshalCondition is now mostly type-independent for basic logic.
+			// We'll use a placeholder type or just unmarshal as any.
+			jsonData, _ := json.Marshal(cData)
+			c, _ := unmarshalCondition[any](jsonData)
+			cond = c
+		}
 		return &valuePatch{
 			oldVal: interfaceToValue(d["o"]),
 			newVal: interfaceToValue(d["n"]),
+			cond:   cond,
 		}, nil
 	case "ptr":
 		elem, err := convertFromSurrogate(data)
