@@ -1,6 +1,7 @@
 package deep
 
 import (
+	"encoding/json"
 	"reflect"
 	"testing"
 )
@@ -191,5 +192,116 @@ func TestParseCondition(t *testing.T) {
 				t.Errorf("Evaluate(%q) = %v, want %v", tt.expr, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestFieldConditions(t *testing.T) {
+	type Data struct {
+		A int
+		B int
+		C int
+		S1 string
+		S2 string
+	}
+	d := Data{A: 10, B: 10, C: 20, S1: "foo", S2: "bar"}
+
+	tests := []struct {
+		name string
+		cond Condition[Data]
+		want bool
+	}{
+		{"EqualField_True", EqualField[Data]("A", "B"), true},
+		{"EqualField_False", EqualField[Data]("A", "C"), false},
+		{"NotEqualField_True", NotEqualField[Data]("A", "C"), true},
+		{"NotEqualField_False", NotEqualField[Data]("A", "B"), false},
+		{"GreaterField_True", GreaterField[Data]("C", "A"), true},
+		{"GreaterField_False", GreaterField[Data]("A", "C"), false},
+		{"LessField_True", LessField[Data]("A", "C"), true},
+		{"LessEqualField_True", LessEqualField[Data]("A", "B"), true},
+		{"GreaterEqualField_True", GreaterEqualField[Data]("A", "B"), true},
+		{"String_LessField", LessField[Data]("S2", "S1"), true}, // "bar" < "foo"
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := tt.cond.Evaluate(&d)
+			if err != nil {
+				t.Fatalf("Evaluate failed: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("Evaluate() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseFieldCondition(t *testing.T) {
+	type Data struct {
+		A int
+		B int
+		C int
+	}
+	d := Data{A: 10, B: 10, C: 20}
+
+	tests := []struct {
+		expr string
+		want bool
+	}{
+		{"A == B", true},
+		{"A != C", true},
+		{"C > A", true},
+		{"A < C", true},
+		{"A >= B", true},
+		{"A <= B", true},
+		{"A == C", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.expr, func(t *testing.T) {
+			cond, err := ParseCondition[Data](tt.expr)
+			if err != nil {
+				t.Fatalf("ParseCondition failed: %v", err)
+			}
+			got, err := cond.Evaluate(&d)
+			if err != nil {
+				t.Fatalf("Evaluate failed: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("Evaluate(%q) = %v, want %v", tt.expr, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFieldConditionSerialization(t *testing.T) {
+	type Data struct {
+		A int
+		B int
+	}
+	cond := EqualField[Data]("A", "B")
+	
+	// We use the internal marshal function to verify our custom logic
+	s, err := marshalCondition(cond)
+	if err != nil {
+		t.Fatalf("marshalCondition failed: %v", err)
+	}
+	
+	sBytes, err := json.Marshal(s)
+	if err != nil {
+		t.Fatalf("json.Marshal failed: %v", err)
+	}
+	
+	cond2, err := unmarshalCondition[Data](sBytes)
+	if err != nil {
+		t.Fatalf("unmarshalCondition failed: %v", err)
+	}
+	
+	d := Data{A: 10, B: 10}
+	ok, err := cond2.Evaluate(&d)
+	if err != nil {
+		t.Fatalf("Evaluate failed: %v", err)
+	}
+	if !ok {
+		t.Error("Restored condition failed evaluation")
 	}
 }
