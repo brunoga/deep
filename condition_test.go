@@ -274,34 +274,183 @@ func TestParseFieldCondition(t *testing.T) {
 }
 
 func TestFieldConditionSerialization(t *testing.T) {
+
 	type Data struct {
+
 		A int
+
 		B int
+
 	}
-	cond := EqualField[Data]("A", "B")
+
 	
-	// We use the internal marshal function to verify our custom logic
-	s, err := marshalCondition(cond)
-	if err != nil {
-		t.Fatalf("marshalCondition failed: %v", err)
+
+	tests := []struct {
+
+		name string
+
+		cond Condition[Data]
+
+	}{
+
+		{"EqualField", EqualField[Data]("A", "B")},
+
+		{"CompareField", GreaterField[Data]("A", "B")},
+
+		{"AndCondition", And[Data](EqualField[Data]("A", "B"), Greater[Data]("A", 5))},
+
+		{"OrCondition", Or[Data](EqualField[Data]("A", "B"), Less[Data]("B", 10))},
+
+		{"NotCondition", Not[Data](Equal[Data]("A", 0))},
+
 	}
-	
-	sBytes, err := json.Marshal(s)
-	if err != nil {
-		t.Fatalf("json.Marshal failed: %v", err)
+
+
+
+	for _, tt := range tests {
+
+		t.Run(tt.name, func(t *testing.T) {
+
+			s, err := marshalCondition(tt.cond)
+
+			if err != nil {
+
+				t.Fatalf("marshalCondition failed: %v", err)
+
+			}
+
+			
+
+			sBytes, err := json.Marshal(s)
+
+			if err != nil {
+
+				t.Fatalf("json.Marshal failed: %v", err)
+
+			}
+
+			
+
+			cond2, err := unmarshalCondition[Data](sBytes)
+
+			if err != nil {
+
+				t.Fatalf("unmarshalCondition failed: %v", err)
+
+			}
+
+			
+
+			d := Data{A: 10, B: 10}
+
+			ok1, err := tt.cond.Evaluate(&d)
+
+			if err != nil {
+
+				t.Fatalf("Original Evaluate failed: %v", err)
+
+			}
+
+			ok2, err := cond2.Evaluate(&d)
+
+			if err != nil {
+
+				t.Fatalf("Restored Evaluate failed: %v", err)
+
+			}
+
+			
+
+			if ok1 != ok2 {
+
+				t.Errorf("Evaluate mismatch: original=%v, restored=%v", ok1, ok2)
+
+			}
+
+		})
+
 	}
-	
-	cond2, err := unmarshalCondition[Data](sBytes)
-	if err != nil {
-		t.Fatalf("unmarshalCondition failed: %v", err)
+
+}
+
+
+
+func TestCompareValues_Exhaustive(t *testing.T) {
+
+	type Data struct {
+
+		U uint
+
+		F float64
+
+		S string
+
 	}
-	
-	d := Data{A: 10, B: 10}
-	ok, err := cond2.Evaluate(&d)
-	if err != nil {
-		t.Fatalf("Evaluate failed: %v", err)
+
+	d := Data{U: 10, F: 3.14, S: "banana"}
+
+
+
+	tests := []struct {
+
+		expr string
+
+		want bool
+
+	}{
+
+		{"U > 5", true},
+
+		{"U < 20", true},
+
+		{"U >= 10", true},
+
+		{"U <= 10", true},
+
+		{"F > 3.0", true},
+
+		{"F < 4.0", true},
+
+		{"S > 'apple'", true},
+
+		{"S < 'cherry'", true},
+
+		{"S == 'banana'", true},
+
+		{"S != 'apple'", true},
+
 	}
-	if !ok {
-		t.Error("Restored condition failed evaluation")
+
+
+
+	for _, tt := range tests {
+
+		t.Run(tt.expr, func(t *testing.T) {
+
+			cond, err := ParseCondition[Data](tt.expr)
+
+			if err != nil {
+
+				t.Fatalf("ParseCondition failed: %v", err)
+
+			}
+
+			got, err := cond.Evaluate(&d)
+
+			if err != nil {
+
+				t.Fatalf("Evaluate failed: %v", err)
+
+			}
+
+			if got != tt.want {
+
+				t.Errorf("Evaluate(%q) = %v, want %v", tt.expr, got, tt.want)
+
+			}
+
+		})
+
 	}
+
 }

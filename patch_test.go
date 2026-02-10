@@ -415,3 +415,96 @@ func TestPatch_LocalCondition(t *testing.T) {
 	}
 }
 
+func TestPatch_RecursiveCondition(t *testing.T) {
+	type Child struct{ Name string }
+	type Parent struct {
+		Age   int
+		Child Child
+	}
+
+	builder := NewBuilder[Parent]()
+	// Change Child.Name to "NewName", but only if Parent.Age > 18
+	root := builder.Root()
+	root.WithCondition(Greater[Parent]("Age", 18))
+	childNode, _ := root.Field("Child")
+	nameNode, _ := childNode.Field("Name")
+	nameNode.Set("Old", "New")
+
+	p, _ := builder.Build()
+
+	// 1. Should fail because Age is 10
+	p1 := Parent{Age: 10, Child: Child{Name: "Old"}}
+	if err := p.ApplyChecked(&p1); err == nil {
+		t.Error("Expected condition to fail due to Age")
+	}
+
+	// 2. Should pass because Age is 20
+	p2 := Parent{Age: 20, Child: Child{Name: "Old"}}
+	if err := p.ApplyChecked(&p2); err != nil {
+		t.Fatalf("ApplyChecked failed: %v", err)
+	}
+	if p2.Child.Name != "New" {
+		t.Errorf("Expected Name=New, got %s", p2.Child.Name)
+	}
+}
+
+func TestApplyChecked_Conflicts(t *testing.T) {
+	t.Run("MapDeletionMismatch", func(t *testing.T) {
+		m1 := map[string]int{"a": 1}
+		m2 := map[string]int{}
+		p := Diff(m1, m2)
+		
+		m3 := map[string]int{"a": 2} // Value mismatch
+		if err := p.ApplyChecked(&m3); err == nil {
+			t.Error("Expected error for map deletion value mismatch")
+		}
+	})
+
+	t.Run("MapModificationMissingKey", func(t *testing.T) {
+		m1 := map[string]int{"a": 1}
+		m2 := map[string]int{"a": 2}
+		p := Diff(m1, m2)
+		
+		m3 := map[string]int{"b": 1} // Key 'a' missing
+		if err := p.ApplyChecked(&m3); err == nil {
+			t.Error("Expected error for map modification missing key")
+		}
+	})
+
+	t.Run("NumericConversions", func(t *testing.T) {
+		type S struct {
+			I8  int8
+			U16 uint16
+			F32 float32
+		}
+		s1 := S{I8: 1, U16: 1, F32: 1.0}
+		s2 := S{I8: 2, U16: 2, F32: 2.0}
+		p := Diff(s1, s2)
+		
+		// Simulate JSON/Gob float64 input
+		data, _ := json.Marshal(p)
+		p2 := NewPatch[S]()
+		json.Unmarshal(data, p2)
+		
+		s3 := S{I8: 1, U16: 1, F32: 1.0}
+		if err := p2.ApplyChecked(&s3); err != nil {
+			t.Fatalf("ApplyChecked failed with numeric conversion: %v", err)
+		}
+		if s3.I8 != 2 || s3.U16 != 2 || s3.F32 != 2.0 {
+			t.Errorf("Result mismatch: %+v", s3)
+		}
+	})
+
+	t.Run("MapAdditionConflict", func(t *testing.T) {
+		m1 := map[string]int{}
+		m2 := map[string]int{"a": 1}
+		p := Diff(m1, m2)
+		
+		m3 := map[string]int{"a": 10} // Key 'a' already exists
+		if err := p.ApplyChecked(&m3); err == nil {
+			t.Error("Expected error for map addition existing key conflict")
+		}
+	})
+}
+
+

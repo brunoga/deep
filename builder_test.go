@@ -223,3 +223,44 @@ func TestBuilder_ErrorPaths(t *testing.T) {
 		t.Error("Expected error for AddMapEntry on slice")
 	}
 }
+
+func TestBuilder_Exhaustive(t *testing.T) {
+	t.Run("NestedPointer", func(t *testing.T) {
+		type S struct{ V int }
+		type P struct{ S *S }
+
+		b := NewBuilder[P]()
+		// Automatically handles nil pointer creation
+		sNode, _ := b.Root().Field("S")
+		sNode.Elem().Field("V")
+		vNode, _ := sNode.Elem().Field("V")
+		vNode.Set(nil, 10)
+
+		p, _ := b.Build()
+		var target P
+		p.Apply(&target)
+		if target.S == nil || target.S.V != 10 {
+			t.Errorf("Nested pointer application failed: %+v", target.S)
+		}
+	})
+
+	t.Run("MapKeyCreation", func(t *testing.T) {
+		b := NewBuilder[map[string]int]()
+		b.Root().AddMapEntry("a", 1)
+
+		p, _ := b.Build()
+		var m map[string]int
+		p.Apply(&m)
+		if m["a"] != 1 {
+			t.Errorf("Map key creation failed: %v", m)
+		}
+	})
+
+	t.Run("EmptyPatch", func(t *testing.T) {
+		b := NewBuilder[int]()
+		p, err := b.Build()
+		if err != nil || p != nil {
+			t.Errorf("Expected nil patch for no operations, got %v, %v", p, err)
+		}
+	})
+}
