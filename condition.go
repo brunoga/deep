@@ -22,19 +22,19 @@ type Path string
 
 // resolve traverses v using the path and returns the reflect.Value found.
 func (p Path) resolve(v reflect.Value) (reflect.Value, error) {
-	parts := parsePath(string(p))
 	current := v
+	// Automatically dereference pointers and interfaces at the start.
+	for current.Kind() == reflect.Ptr || current.Kind() == reflect.Interface {
+		if current.IsNil() {
+			return reflect.Value{}, fmt.Errorf("path traversal failed: nil pointer/interface")
+		}
+		current = current.Elem()
+	}
+
+	parts := parsePath(string(p))
 	for _, part := range parts {
 		if !current.IsValid() {
 			return reflect.Value{}, fmt.Errorf("path traversal failed: nil value at intermediate step")
-		}
-
-		// Automatically dereference pointers and interfaces.
-		for current.Kind() == reflect.Ptr || current.Kind() == reflect.Interface {
-			if current.IsNil() {
-				return reflect.Value{}, fmt.Errorf("path traversal failed: nil pointer/interface")
-			}
-			current = current.Elem()
 		}
 
 		if part.isIndex {
@@ -78,8 +78,94 @@ func (p Path) resolve(v reflect.Value) (reflect.Value, error) {
 			unsafe.DisableRO(&f)
 			current = f
 		}
+
+		// Automatically dereference pointers and interfaces after each step.
+		for current.Kind() == reflect.Ptr || current.Kind() == reflect.Interface {
+			if current.IsNil() {
+				return reflect.Value{}, fmt.Errorf("path traversal failed: nil pointer/interface")
+			}
+			current = current.Elem()
+		}
 	}
 	return current, nil
+}
+
+func compareValues(v1, v2 reflect.Value, op string) (bool, error) {
+	if !v1.IsValid() || !v2.IsValid() {
+		switch op {
+		case "==":
+			return !v1.IsValid() && !v2.IsValid(), nil
+		case "!=":
+			return v1.IsValid() != v2.IsValid(), nil
+		default:
+			return false, nil
+		}
+	}
+
+	v2 = convertValue(v2, v1.Type())
+
+	if op == "==" {
+		return reflect.DeepEqual(v1.Interface(), v2.Interface()), nil
+	}
+	if op == "!=" {
+		return !reflect.DeepEqual(v1.Interface(), v2.Interface()), nil
+	}
+
+	if v1.Kind() != v2.Kind() {
+		return false, nil
+	}
+
+	switch v1.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		i1, i2 := v1.Int(), v2.Int()
+		switch op {
+		case ">":
+			return i1 > i2, nil
+		case "<":
+			return i1 < i2, nil
+		case ">=":
+			return i1 >= i2, nil
+		case "<=":
+			return i1 <= i2, nil
+		}
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		u1, u2 := v1.Uint(), v2.Uint()
+		switch op {
+		case ">":
+			return u1 > u2, nil
+		case "<":
+			return u1 < u2, nil
+		case ">=":
+			return u1 >= u2, nil
+		case "<=":
+			return u1 <= u2, nil
+		}
+	case reflect.Float32, reflect.Float64:
+		f1, f2 := v1.Float(), v2.Float()
+		switch op {
+		case ">":
+			return f1 > f2, nil
+		case "<":
+			return f1 < f2, nil
+		case ">=":
+			return f1 >= f2, nil
+		case "<=":
+			return f1 <= f2, nil
+		}
+	case reflect.String:
+		s1, s2 := v1.String(), v2.String()
+		switch op {
+		case ">":
+			return s1 > s2, nil
+		case "<":
+			return s1 < s2, nil
+		case ">=":
+			return s1 >= s2, nil
+		case "<=":
+			return s1 <= s2, nil
+		}
+	}
+	return false, fmt.Errorf("unsupported comparison %s for kind %v", op, v1.Kind())
 }
 
 type pathPart struct {
@@ -123,52 +209,6 @@ func parsePath(path string) []pathPart {
 	return parts
 }
 
-type EqualCondition[T any] struct {
-	Path  Path
-	Value any
-}
-
-func (c EqualCondition[T]) Evaluate(v *T) (bool, error) {
-	rv := reflect.ValueOf(v)
-	target, err := c.Path.resolve(rv)
-	if err != nil {
-		return false, err
-	}
-	if !target.IsValid() {
-		return c.Value == nil, nil
-	}
-	targetVal := target.Interface()
-	convertedVal := convertValue(reflect.ValueOf(c.Value), reflect.TypeOf(targetVal)).Interface()
-	return reflect.DeepEqual(targetVal, convertedVal), nil
-}
-
-func Equal[T any](path string, val any) Condition[T] {
-	return EqualCondition[T]{Path: Path(path), Value: val}
-}
-
-type NotEqualCondition[T any] struct {
-	Path  Path
-	Value any
-}
-
-func (c NotEqualCondition[T]) Evaluate(v *T) (bool, error) {
-	rv := reflect.ValueOf(v)
-	target, err := c.Path.resolve(rv)
-	if err != nil {
-		return false, err
-	}
-	if !target.IsValid() {
-		return c.Value != nil, nil
-	}
-	targetVal := target.Interface()
-	convertedVal := convertValue(reflect.ValueOf(c.Value), reflect.TypeOf(targetVal)).Interface()
-	return !reflect.DeepEqual(targetVal, convertedVal), nil
-}
-
-func NotEqual[T any](path string, val any) Condition[T] {
-	return NotEqualCondition[T]{Path: Path(path), Value: val}
-}
-
 type CompareCondition[T any] struct {
 	Path Path
 	Val  any
@@ -181,71 +221,15 @@ func (c CompareCondition[T]) Evaluate(v *T) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if !target.IsValid() {
-		return false, nil
-	}
-	tVal := target.Interface()
-	v1 := reflect.ValueOf(tVal)
-	v2 := convertValue(reflect.ValueOf(c.Val), v1.Type())
+	return compareValues(target, reflect.ValueOf(c.Val), c.Op)
+}
 
-	if v1.Kind() != v2.Kind() {
-		return false, nil
-	}
-	switch v1.Kind() {
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		i1 := v1.Int()
-		i2 := v2.Int()
-		switch c.Op {
-		case ">":
-			return i1 > i2, nil
-		case "<":
-			return i1 < i2, nil
-		case ">=":
-			return i1 >= i2, nil
-		case "<=":
-			return i1 <= i2, nil
-		}
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
-		u1 := v1.Uint()
-		u2 := v2.Uint()
-		switch c.Op {
-		case ">":
-			return u1 > u2, nil
-		case "<":
-			return u1 < u2, nil
-		case ">=":
-			return u1 >= u2, nil
-		case "<=":
-			return u1 <= u2, nil
-		}
-	case reflect.Float32, reflect.Float64:
-		f1 := v1.Float()
-		f2 := v2.Float()
-		switch c.Op {
-		case ">":
-			return f1 > f2, nil
-		case "<":
-			return f1 < f2, nil
-		case ">=":
-			return f1 >= f2, nil
-		case "<=":
-			return f1 <= f2, nil
-		}
-	case reflect.String:
-		s1 := v1.String()
-		s2 := v2.String()
-		switch c.Op {
-		case ">":
-			return s1 > s2, nil
-		case "<":
-			return s1 < s2, nil
-		case ">=":
-			return s1 >= s2, nil
-		case "<=":
-			return s1 <= s2, nil
-		}
-	}
-	return false, fmt.Errorf("unsupported comparison for kind %v", v1.Kind())
+func Equal[T any](path string, val any) Condition[T] {
+	return CompareCondition[T]{Path: Path(path), Val: val, Op: "=="}
+}
+
+func NotEqual[T any](path string, val any) Condition[T] {
+	return CompareCondition[T]{Path: Path(path), Val: val, Op: "!="}
 }
 
 func Greater[T any](path string, val any) Condition[T] {
@@ -262,6 +246,49 @@ func GreaterEqual[T any](path string, val any) Condition[T] {
 
 func LessEqual[T any](path string, val any) Condition[T] {
 	return CompareCondition[T]{Path: Path(path), Val: val, Op: "<="}
+}
+
+type CompareFieldCondition[T any] struct {
+	Path1 Path
+	Path2 Path
+	Op    string
+}
+
+func (c CompareFieldCondition[T]) Evaluate(v *T) (bool, error) {
+	rv := reflect.ValueOf(v)
+	target1, err := c.Path1.resolve(rv)
+	if err != nil {
+		return false, err
+	}
+	target2, err := c.Path2.resolve(rv)
+	if err != nil {
+		return false, err
+	}
+	return compareValues(target1, target2, c.Op)
+}
+
+func EqualField[T any](path1, path2 string) Condition[T] {
+	return CompareFieldCondition[T]{Path1: Path(path1), Path2: Path(path2), Op: "=="}
+}
+
+func NotEqualField[T any](path1, path2 string) Condition[T] {
+	return CompareFieldCondition[T]{Path1: Path(path1), Path2: Path(path2), Op: "!="}
+}
+
+func GreaterField[T any](path1, path2 string) Condition[T] {
+	return CompareFieldCondition[T]{Path1: Path(path1), Path2: Path(path2), Op: ">"}
+}
+
+func LessField[T any](path1, path2 string) Condition[T] {
+	return CompareFieldCondition[T]{Path1: Path(path1), Path2: Path(path2), Op: "<"}
+}
+
+func GreaterEqualField[T any](path1, path2 string) Condition[T] {
+	return CompareFieldCondition[T]{Path1: Path(path1), Path2: Path(path2), Op: ">="}
+}
+
+func LessEqualField[T any](path1, path2 string) Condition[T] {
+	return CompareFieldCondition[T]{Path1: Path(path1), Path2: Path(path2), Op: "<="}
 }
 
 type AndCondition[T any] struct {
@@ -547,6 +574,9 @@ func (p *parser[T]) parseComparison() (Condition[T], error) {
 	p.next()
 	valTok := p.curr
 	var val any
+	var isField bool
+	var fieldPath string
+
 	switch valTok.kind {
 	case tokString:
 		val = valTok.val
@@ -560,25 +590,23 @@ func (p *parser[T]) parseComparison() (Condition[T], error) {
 		}
 	case tokBool:
 		val = (valTok.val == "true")
+	case tokIdent:
+		isField = true
+		fieldPath = valTok.val
 	default:
-		return nil, fmt.Errorf("expected value, got %v", valTok.val)
+		return nil, fmt.Errorf("expected value or field, got %v", valTok.val)
 	}
 	p.next()
-	switch opTok.kind {
-	case tokEq:
-		return Equal[T](path, val), nil
-	case tokNeq:
-		return NotEqual[T](path, val), nil
-	case tokGt:
-		return Greater[T](path, val), nil
-	case tokLt:
-		return Less[T](path, val), nil
-	case tokGte:
-		return GreaterEqual[T](path, val), nil
-	case tokLte:
-		return LessEqual[T](path, val), nil
+
+	ops := map[tokenKind]string{
+		tokEq: "==", tokNeq: "!=", tokGt: ">", tokLt: "<", tokGte: ">=", tokLte: "<=",
 	}
-	return nil, fmt.Errorf("unsupported operator")
+	opStr := ops[opTok.kind]
+
+	if isField {
+		return CompareFieldCondition[T]{Path1: Path(path), Path2: Path(fieldPath), Op: opStr}, nil
+	}
+	return CompareCondition[T]{Path: Path(path), Val: val, Op: opStr}, nil
 }
 
 func init() {
@@ -591,39 +619,62 @@ type condSurrogate struct {
 }
 
 func marshalCondition[T any](c Condition[T]) (any, error) {
+	return marshalConditionAny(c)
+}
+
+func marshalConditionAny(c any) (any, error) {
 	if c == nil {
 		return nil, nil
 	}
-	switch v := c.(type) {
-	case EqualCondition[T]:
+
+	// Use reflection to extract the underlying fields regardless of T.
+	v := reflect.ValueOf(c)
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+
+	// We can't use type switches easily because of the generic T.
+	// We use the Type name and Field access instead.
+	typeName := v.Type().Name()
+	if strings.HasPrefix(typeName, "CompareCondition") {
+		op := v.FieldByName("Op").String()
+		kind := "compare"
+		if op == "==" {
+			kind = "equal"
+		} else if op == "!=" {
+			kind = "not_equal"
+		}
 		return &condSurrogate{
-			Kind: "equal",
+			Kind: kind,
 			Data: map[string]any{
-				"p": string(v.Path),
-				"v": v.Value,
+				"p": v.FieldByName("Path").String(),
+				"v": v.FieldByName("Val").Interface(),
+				"o": op,
 			},
 		}, nil
-	case NotEqualCondition[T]:
+	}
+	if strings.HasPrefix(typeName, "CompareFieldCondition") {
+		op := v.FieldByName("Op").String()
+		kind := "compare_field"
+		if op == "==" {
+			kind = "equal_field"
+		} else if op == "!=" {
+			kind = "not_equal_field"
+		}
 		return &condSurrogate{
-			Kind: "not_equal",
+			Kind: kind,
 			Data: map[string]any{
-				"p": string(v.Path),
-				"v": v.Value,
+				"p1": v.FieldByName("Path1").String(),
+				"p2": v.FieldByName("Path2").String(),
+				"o":  op,
 			},
 		}, nil
-	case CompareCondition[T]:
-		return &condSurrogate{
-			Kind: "compare",
-			Data: map[string]any{
-				"p": string(v.Path),
-				"v": v.Val,
-				"o": v.Op,
-			},
-		}, nil
-	case AndCondition[T]:
-		conds := make([]any, 0, len(v.Conditions))
-		for _, sub := range v.Conditions {
-			s, err := marshalCondition(sub)
+	}
+	if strings.HasPrefix(typeName, "AndCondition") {
+		condsVal := v.FieldByName("Conditions")
+		conds := make([]any, 0, condsVal.Len())
+		for i := 0; i < condsVal.Len(); i++ {
+			s, err := marshalConditionAny(condsVal.Index(i).Interface())
 			if err != nil {
 				return nil, err
 			}
@@ -633,10 +684,12 @@ func marshalCondition[T any](c Condition[T]) (any, error) {
 			Kind: "and",
 			Data: conds,
 		}, nil
-	case OrCondition[T]:
-		conds := make([]any, 0, len(v.Conditions))
-		for _, sub := range v.Conditions {
-			s, err := marshalCondition(sub)
+	}
+	if strings.HasPrefix(typeName, "OrCondition") {
+		condsVal := v.FieldByName("Conditions")
+		conds := make([]any, 0, condsVal.Len())
+		for i := 0; i < condsVal.Len(); i++ {
+			s, err := marshalConditionAny(condsVal.Index(i).Interface())
 			if err != nil {
 				return nil, err
 			}
@@ -646,8 +699,9 @@ func marshalCondition[T any](c Condition[T]) (any, error) {
 			Kind: "or",
 			Data: conds,
 		}, nil
-	case NotCondition[T]:
-		sub, err := marshalCondition(v.C)
+	}
+	if strings.HasPrefix(typeName, "NotCondition") {
+		sub, err := marshalConditionAny(v.FieldByName("C").Interface())
 		if err != nil {
 			return nil, err
 		}
@@ -656,6 +710,7 @@ func marshalCondition[T any](c Condition[T]) (any, error) {
 			Data: sub,
 		}, nil
 	}
+
 	return nil, fmt.Errorf("unknown condition type: %T", c)
 }
 
@@ -689,13 +744,22 @@ func convertFromCondSurrogate[T any](s any) (Condition[T], error) {
 	switch kind {
 	case "equal":
 		d := data.(map[string]any)
-		return EqualCondition[T]{Path: Path(d["p"].(string)), Value: d["v"]}, nil
+		return CompareCondition[T]{Path: Path(d["p"].(string)), Val: d["v"], Op: "=="}, nil
 	case "not_equal":
 		d := data.(map[string]any)
-		return NotEqualCondition[T]{Path: Path(d["p"].(string)), Value: d["v"]}, nil
+		return CompareCondition[T]{Path: Path(d["p"].(string)), Val: d["v"], Op: "!="}, nil
 	case "compare":
 		d := data.(map[string]any)
 		return CompareCondition[T]{Path: Path(d["p"].(string)), Val: d["v"], Op: d["o"].(string)}, nil
+	case "equal_field":
+		d := data.(map[string]any)
+		return CompareFieldCondition[T]{Path1: Path(d["p1"].(string)), Path2: Path(d["p2"].(string)), Op: "=="}, nil
+	case "not_equal_field":
+		d := data.(map[string]any)
+		return CompareFieldCondition[T]{Path1: Path(d["p1"].(string)), Path2: Path(d["p2"].(string)), Op: "!="}, nil
+	case "compare_field":
+		d := data.(map[string]any)
+		return CompareFieldCondition[T]{Path1: Path(d["p1"].(string)), Path2: Path(d["p2"].(string)), Op: d["o"].(string)}, nil
 	case "and":
 		d := data.([]any)
 		conds := make([]Condition[T], 0, len(d))

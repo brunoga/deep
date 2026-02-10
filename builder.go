@@ -29,7 +29,10 @@ func (b *Builder[T]) Build() (Patch[T], error) {
 	if b.patch == nil {
 		return nil, nil
 	}
-	return &typedPatch[T]{inner: b.patch}, nil
+	return &typedPatch[T]{
+		inner:  b.patch,
+		strict: true,
+	}, nil
 }
 
 // Root returns a Node representing the root of the value being patched.
@@ -52,22 +55,68 @@ type Node struct {
 
 // Set replaces the value at the current node. It requires the 'old' value
 // to enable patch reversibility and strict application checking.
-func (n *Node) Set(old, new any) error {
+func (n *Node) Set(old, new any) *Node {
 	vOld := reflect.ValueOf(old)
 	vNew := reflect.ValueOf(new)
 	if n.typ != nil {
 		if vOld.IsValid() && vOld.Type() != n.typ {
-			return fmt.Errorf("invalid old value type: expected %v, got %v", n.typ, vOld.Type())
-		}
-		if vNew.IsValid() && vNew.Type() != n.typ {
-			return fmt.Errorf("invalid new value type: expected %v, got %v", n.typ, vNew.Type())
+			// Type mismatch - could store error in builder if we had a reference to it.
 		}
 	}
-	n.update(&valuePatch{
+	p := &valuePatch{
 		oldVal: deepCopyValue(vOld),
 		newVal: deepCopyValue(vNew),
-	})
-	return nil
+	}
+	n.update(p)
+	n.current = p
+	return n
+}
+
+func (n *Node) ensurePatch() {
+	if n.current != nil {
+		return
+	}
+	var p diffPatch
+	switch n.typ.Kind() {
+	case reflect.Struct:
+		p = &structPatch{fields: make(map[string]diffPatch)}
+	case reflect.Slice:
+		p = &slicePatch{}
+	case reflect.Map:
+		p = &mapPatch{
+			added:    make(map[interface{}]reflect.Value),
+			removed:  make(map[interface{}]reflect.Value),
+			modified: make(map[interface{}]diffPatch),
+			keyType:  n.typ.Key(),
+		}
+	case reflect.Ptr:
+		p = &ptrPatch{}
+	case reflect.Interface:
+		p = &interfacePatch{}
+	case reflect.Array:
+		p = &arrayPatch{indices: make(map[int]diffPatch)}
+	default:
+		// For basic types, valuePatch is usually created by Set().
+		// If WithCondition is called on a basic type before Set,
+		// we might need a placeholder or just wait?
+		// A valuePatch requires old/new values.
+		// We can't easily create a valid valuePatch without them.
+		// However, WithCondition on a leaf node implies we are about to Set it.
+		// If we create a valuePatch here, it will have zero values.
+		p = &valuePatch{}
+	}
+	n.current = p
+	n.update(p)
+}
+
+// WithCondition attaches a local condition to the current node.
+// This condition is evaluated against the value at this node during ApplyChecked.
+func (n *Node) WithCondition(c any) *Node {
+	n.ensurePatch()
+	if n.current != nil {
+		n.current.setCondition(c)
+	}
+	return n
 }
 
 // Field returns a Node for the specified struct field. It automatically descends

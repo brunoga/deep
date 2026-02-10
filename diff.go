@@ -29,7 +29,10 @@ func Diff[T any](a, b T) Patch[T] {
 		return nil
 	}
 
-	return &typedPatch[T]{inner: patch}
+	return &typedPatch[T]{
+		inner:  patch,
+		strict: true,
+	}
 }
 
 type visitKey struct {

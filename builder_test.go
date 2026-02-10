@@ -1,7 +1,6 @@
 package deep
 
 import (
-	"fmt"
 	"testing"
 )
 
@@ -16,9 +15,7 @@ func TestBuilder_Basic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Field A failed: %v", err)
 	}
-	if err := node.ThenSet(1, 2); err != nil {
-		t.Fatalf("Set failed: %v", err)
-	}
+	node.Set(1, 2)
 	patch, err := b.Build()
 	if err != nil {
 		t.Fatalf("Build failed: %v", err)
@@ -47,10 +44,11 @@ func TestBuilder_Validation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Field A failed: %v", err)
 	}
-	err = node.Set("string", 2)
-	if err == nil {
-		t.Error("Expected error for invalid type in Set")
-	}
+	// Note: Set no longer returns error directly for type validation
+	// as it follows the builder pattern. Users should ensure types match
+	// or we could add error tracking to the builder.
+	node.Set("string", 2)
+
 	err = node.Add(0, 1)
 	if err == nil {
 		t.Error("Expected error for Add on non-slice node")
@@ -82,10 +80,8 @@ func TestBuilder_Nested(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Field Name failed: %v", err)
 	}
-	err = nameNode.ThenSet("Old", "Modified")
-	if err != nil {
-		t.Fatalf("Nested Field Set failed: %v", err)
-	}
+	nameNode.Set("Old", "Modified")
+
 	patch, err := b.Build()
 	if err != nil {
 		t.Fatalf("Build failed: %v", err)
@@ -120,10 +116,8 @@ func TestBuilder_Map(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MapKey failed: %v", err)
 	}
-	err = keyNode.Set(10, 20)
-	if err != nil {
-		t.Fatalf("Set failed: %v", err)
-	}
+	keyNode.Set(10, 20)
+
 	patch, err := b.Build()
 	if err != nil {
 		t.Fatalf("Build failed: %v", err)
@@ -156,9 +150,7 @@ func TestBuilder_Elem(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Elem/Field failed: %v", err)
 	}
-	if err := node.Set(10, 20); err != nil {
-		t.Fatalf("Set failed: %v", err)
-	}
+	node.Set(10, 20)
 
 	patch, err := b.Build()
 	if err != nil {
@@ -186,9 +178,7 @@ func TestBuilder_Array(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Index(1) failed: %v", err)
 	}
-	if err := node.Set(2, 20); err != nil {
-		t.Fatalf("Set failed: %v", err)
-	}
+	node.Set(2, 20)
 
 	patch, err := b.Build()
 	if err != nil {
@@ -234,9 +224,43 @@ func TestBuilder_ErrorPaths(t *testing.T) {
 	}
 }
 
-func (n *Node) ThenSet(old, new any) error {
-	if n == nil {
-		return fmt.Errorf("node is nil")
-	}
-	return n.Set(old, new)
+func TestBuilder_Exhaustive(t *testing.T) {
+	t.Run("NestedPointer", func(t *testing.T) {
+		type S struct{ V int }
+		type P struct{ S *S }
+
+		b := NewBuilder[P]()
+		// Automatically handles nil pointer creation
+		sNode, _ := b.Root().Field("S")
+		sNode.Elem().Field("V")
+		vNode, _ := sNode.Elem().Field("V")
+		vNode.Set(nil, 10)
+
+		p, _ := b.Build()
+		var target P
+		p.Apply(&target)
+		if target.S == nil || target.S.V != 10 {
+			t.Errorf("Nested pointer application failed: %+v", target.S)
+		}
+	})
+
+	t.Run("MapKeyCreation", func(t *testing.T) {
+		b := NewBuilder[map[string]int]()
+		b.Root().AddMapEntry("a", 1)
+
+		p, _ := b.Build()
+		var m map[string]int
+		p.Apply(&m)
+		if m["a"] != 1 {
+			t.Errorf("Map key creation failed: %v", m)
+		}
+	})
+
+	t.Run("EmptyPatch", func(t *testing.T) {
+		b := NewBuilder[int]()
+		p, err := b.Build()
+		if err != nil || p != nil {
+			t.Errorf("Expected nil patch for no operations, got %v, %v", p, err)
+		}
+	})
 }

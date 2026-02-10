@@ -9,6 +9,9 @@
 *   **Patch Application**: Applies patches to objects to transform them from state A to state B.
 *   **Patch Reversal**: Generates a reverse patch to undo changes (`Apply(Reverse(patch))`).
 *   **Conditional Patching**: Apply patches only if specific logical conditions are met (`ApplyChecked`, `WithCondition`).
+*   **Cross-Field Logic**: Conditions can compare fields against literals OR against other fields.
+*   **Flexible Consistency**: Choose between strict "old-value" matching or flexible application based on custom conditions.
+*   **Local Node Conditions**: Attach conditions to specific fields or elements during manual construction.
 *   **Manual Patch Builder**: Construct valid patches manually using a fluent API with on-the-fly type validation.
 *   **Unexported Fields**: Handles unexported struct fields transparently.
 *   **Cycle Detection**: Correctly handles circular references in both Copy and Diff operations.
@@ -62,24 +65,37 @@ if patch != nil {
 }
 ```
 
-### Conditional Patching
+### Conditional Patching and Consistency
 
-You can attach conditions to a patch or check strict consistency before applying.
+Patches support sophisticated validation before application.
+
+#### 1. Strict Consistency (Default)
+By default, `ApplyChecked` ensures that the target's current values exactly match the `old` values recorded during the `Diff`. If the target has diverged, application fails.
 
 ```go
-// 1. Strict Application
-// Checks that the target's current values match the 'old' values recorded in the patch.
+// Fails if target.Version != 1
 err := patch.ApplyChecked(&target)
-if err != nil {
-    // Fails if target state has diverged from the original 'oldConf'
-    log.Fatal("Conflict detected:", err)
-}
+```
 
-// 2. Custom Logic Conditions
-// Create a condition: Apply only if "Version" is greater than 0
-cond, _ := deep.ParseCondition[Config]("Version > 0")
-patchWithCond := patch.WithCondition(cond)
+#### 2. Flexible Consistency
+You can disable strict matching to apply changes even if the object has changed, as long as your custom conditions pass.
 
+```go
+// Disable "old-value" checks, rely only on custom conditions
+patch = patch.WithStrict(false)
+```
+
+#### 3. Custom Conditions (Literal & Cross-Field)
+Create complex rules using the `Condition` DSL.
+
+```go
+// Literals: Apply only if "Version" is greater than 0
+cond1, _ := deep.ParseCondition[Config]("Version > 0")
+
+// Cross-Field: Apply only if "CurrentScore" is less than "MaxScore"
+cond2, _ := deep.ParseCondition[Config]("CurrentScore < MaxScore")
+
+patchWithCond := patch.WithCondition(deep.And(cond1, cond2))
 err = patchWithCond.ApplyChecked(&target)
 ```
 
@@ -87,57 +103,39 @@ err = patchWithCond.ApplyChecked(&target)
 *   **Comparisons**: `==`, `!=`, `>`, `<`, `>=`, `<=`
 *   **Logic**: `AND`, `OR`, `NOT`, `(...)`
 *   **Paths**: `Field`, `Field.SubField`, `Slice[0]`, `Map.Key`
-
-### Patch Serialization
-
-Patches can be serialized to JSON or Gob format for storage or transmission over the network.
-
-#### JSON Serialization
-
-```go
-// Marshal
-data, err := json.Marshal(patch)
-
-// Unmarshal
-newPatch := deep.NewPatch[Config]()
-err = json.Unmarshal(data, newPatch)
-```
-
-#### Gob Serialization
-
-When using Gob, you must register the `Patch` implementation for your type.
-
-```go
-// Register type once (e.g. in init())
-deep.Register[Config]()
-
-// Marshal
-var buf bytes.Buffer
-err := gob.NewEncoder(&buf).Encode(&patch)
-
-// Unmarshal
-newPatch := deep.NewPatch[Config]()
-err = gob.NewDecoder(&buf).Decode(&newPatch)
-```
+*   **RHS**: Can be a literal (`'string'`, `123`, `true`) OR another path (`OtherField.Sub`)
 
 ### Manual Patch Builder
 
-Construct patches programmatically without having two objects to compare.
+Construct patches programmatically and attach local field-level conditions.
 
 ```go
 builder := deep.NewBuilder[Config]()
 root := builder.Root()
 
-// Set a field
-root.Field("Name").Set("OldName", "NewName")
-
-// Add to a map (if Config had a map)
-// root.Field("Meta").MapKey("retry").Set(nil, 3)
+// Set a field with a LOCAL condition (checked only for this specific field)
+root.Field("Version").
+    Set(1, 2).
+    WithCondition(deep.Less[int]("", 10)) // Only if current version < 10
 
 patch, err := builder.Build()
 if err == nil {
-    patch.Apply(&myConfig)
+    // Patches from Builder are also Strict by default
+    patch.ApplyChecked(&myConfig)
 }
+```
+
+### Patch Serialization
+
+Patches can be serialized to JSON or Gob format, including all attached conditions.
+
+```go
+// JSON Marshal
+data, err := json.Marshal(patch)
+
+// Unmarshal
+newPatch := deep.NewPatch[Config]()
+err = json.Unmarshal(data, newPatch)
 ```
 
 ### Reversing a Patch
