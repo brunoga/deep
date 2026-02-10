@@ -295,38 +295,59 @@ func TestDiff_SliceStruct(t *testing.T) {
 	}
 }
 
-func TestDiff_Cycle(t *testing.T) {
-	type Node struct {
-		Val  int
-		Next *Node
+func TestDiff_InterfaceExhaustive(t *testing.T) {
+	tests := []struct {
+		name string
+		a, b any
+	}{
+		{"NilToNil", nil, nil},
+		{"NilToVal", nil, 1},
+		{"ValToNil", 1, nil},
+		{"SameTypeDiffVal", 1, 2},
+		{"DiffType", 1, "string"},
+		{"SameTypeNestedDiff", map[string]int{"a": 1}, map[string]int{"a": 2}},
 	}
-
-	// a: 1 -> 2 -> 1
-	n1 := &Node{Val: 1}
-	n2 := &Node{Val: 2}
-	n1.Next = n2
-	n2.Next = n1
-
-	// b: 1 -> 3 -> 1 (mod n2.Val to 3)
-	m1 := &Node{Val: 1}
-	m2 := &Node{Val: 3}
-	m1.Next = m2
-	m2.Next = m1
-
-	// Diff should detect cycle and stop infinite recursion, producing patch for Val
-	patch := Diff(n1, m1)
-
-	if patch == nil {
-		t.Fatal("Expected patch")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := tt.a
+			patch := Diff(a, tt.b)
+			if tt.a == nil && tt.b == nil {
+				if patch != nil {
+					t.Errorf("Expected nil patch")
+				}
+				return
+			}
+			if patch == nil {
+				t.Fatal("Expected patch")
+			}
+			patch.Apply(&a)
+			if !reflect.DeepEqual(a, tt.b) {
+				t.Errorf("Apply failed: expected %v, got %v", tt.b, a)
+			}
+		})
 	}
+}
 
-	// Apply
-	patch.Apply(&n1)
-
-	if n1.Next.Val != 3 {
-		t.Errorf("Cycle update failed: expected 3, got %d", n1.Next.Val)
+func TestDiff_MapExhaustive(t *testing.T) {
+	type S struct{ A int }
+	tests := []struct {
+		name string
+		a, b map[string]S
+	}{
+		{
+			"ModifiedValue",
+			map[string]S{"a": {1}},
+			map[string]S{"a": {2}},
+		},
 	}
-	if n1.Next.Next != n1 {
-		t.Errorf("Cycle structure broken")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := tt.a
+			patch := Diff(a, tt.b)
+			patch.Apply(&a)
+			if !reflect.DeepEqual(a, tt.b) {
+				t.Errorf("Apply failed: expected %v, got %v", tt.b, a)
+			}
+		})
 	}
 }

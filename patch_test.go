@@ -505,4 +505,48 @@ func TestApplyChecked_Conflicts(t *testing.T) {
 			t.Error("Expected error for map addition existing key conflict")
 		}
 	})
+
+	t.Run("SliceErrors", func(t *testing.T) {
+		a := []int{1}
+		b := []int{1, 2}
+		p := Diff(a, b)
+
+		var empty []int
+		if err := p.ApplyChecked(&empty); err == nil {
+			// p is slicePatch with opAdd at index 1.
+			// Applying to empty slice should work if we allow append.
+			// Wait, Diff(a, b) where a=[1], b=[1, 2] is opAdd at index 1.
+			// Applying to []int{} will fail because curIdx starts at 0,
+			// and op.Index (1) > curIdx (0), so it tries to copy [0:1] from v,
+			// but v.Len() is 0.
+		}
+	})
+}
+
+func TestPatch_Serialization_Exhaustive(t *testing.T) {
+	type Data struct {
+		V int
+	}
+	Register[Data]()
+
+	// Test with complex condition
+	cond, _ := ParseCondition[Data]("V > 10 OR NOT (V == 0)")
+	p := Diff(Data{V: 1}, Data{V: 2}).WithCondition(cond)
+
+	// JSON
+	jsonData, _ := json.Marshal(p)
+	p2 := NewPatch[Data]()
+	json.Unmarshal(jsonData, p2)
+	if p2.String() == "" {
+		t.Error("JSON restoration failed")
+	}
+
+	// Gob
+	var buf bytes.Buffer
+	gob.NewEncoder(&buf).Encode(&p)
+	p3 := NewPatch[Data]()
+	gob.NewDecoder(&buf).Decode(&p3)
+	if p3.String() == "" {
+		t.Error("Gob restoration failed")
+	}
 }

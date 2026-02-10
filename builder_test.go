@@ -263,4 +263,232 @@ func TestBuilder_Exhaustive(t *testing.T) {
 			t.Errorf("Expected nil patch for no operations, got %v, %v", p, err)
 		}
 	})
+
+	t.Run("NavigationErrors", func(t *testing.T) {
+		type S struct{ A int }
+		b := NewBuilder[S]()
+		_, err := b.Root().navigate("NonExistent")
+		if err == nil {
+			t.Error("Expected error for non-existent field navigation")
+		}
+
+		type M struct{ Data map[int]int }
+		b2 := NewBuilder[M]()
+		_, err = b2.Root().navigate("Data.not_an_int")
+		if err == nil {
+			t.Error("Expected error for invalid map key type navigation")
+		}
+
+		_, err = b2.Root().navigate("Data[0]") // Index on map
+		if err == nil {
+			t.Error("Expected error for index navigation on map")
+		}
+	})
+
+	t.Run("DeleteMore", func(t *testing.T) {
+		b := NewBuilder[map[int]string]()
+		err := b.Root().Delete(1, "old")
+		if err != nil {
+			t.Errorf("Delete on map failed: %v", err)
+		}
+
+		type S struct{ A int }
+		b2 := NewBuilder[S]()
+		err = b2.Root().Delete("A", 1)
+		if err == nil {
+			t.Error("Expected error for Delete on struct")
+		}
+	})
+
+	t.Run("ElemEdgeCases", func(t *testing.T) {
+		b := NewBuilder[**int]()
+		// Elem on pointer to pointer
+		node := b.Root().Elem().Elem()
+		node.Set(1, 2)
+
+		p, _ := b.Build()
+		v := 1
+		pv := &v
+		ppv := &pv
+		p.Apply(&ppv)
+		if **ppv != 2 {
+			t.Errorf("Expected 2, got %d", **ppv)
+		}
+
+		b2 := NewBuilder[int]()
+		root2 := b2.Root()
+		node2 := root2.Elem() // Elem on non-pointer/interface
+		if node2 != root2 {
+			t.Error("Elem on non-pointer should return self")
+		}
+	})
+
+	t.Run("WithConditionOnAllTypes", func(t *testing.T) {
+		cond := Equal[int]("", 1)
+
+		// Pointer
+		b1 := NewBuilder[*int]()
+		b1.Root().WithCondition(cond)
+
+		// Slice
+		b2 := NewBuilder[[]int]()
+		b2.Root().WithCondition(cond)
+
+		// Map
+		b3 := NewBuilder[map[string]int]()
+		b3.Root().WithCondition(cond)
+
+		// Array
+		b4 := NewBuilder[[1]int]()
+		b4.Root().WithCondition(cond)
+
+		// Interface
+		type IfaceStruct struct{ I any }
+		b5 := NewBuilder[IfaceStruct]()
+		node5, _ := b5.Root().Field("I")
+		node5.WithCondition(cond)
+
+		_, err := b1.Build()
+		if err != nil {
+			t.Errorf("Build failed: %v", err)
+		}
+	})
+}
+
+type builderTestConfig struct {
+	Network builderTestNetworkConfig
+}
+
+type builderTestNetworkConfig struct {
+	Port int
+	Host string
+}
+
+func TestBuilder_AddConditionSmart(t *testing.T) {
+	b := NewBuilder[builderTestConfig]()
+	b.AddCondition("Network.Port > 1024")
+
+	p, err := b.Build()
+	if err != nil {
+		t.Fatalf("Build failed: %v", err)
+	}
+
+	// Test condition passes
+	c1 := builderTestConfig{Network: builderTestNetworkConfig{Port: 8080}}
+	if err := p.ApplyChecked(&c1); err != nil {
+		t.Errorf("ApplyChecked failed for valid port: %v", err)
+	}
+
+	// Test condition fails
+	c2 := builderTestConfig{Network: builderTestNetworkConfig{Port: 80}}
+	if err := p.ApplyChecked(&c2); err == nil {
+		t.Errorf("ApplyChecked should have failed for invalid port")
+	}
+}
+
+func TestBuilder_AddConditionLCP(t *testing.T) {
+	b := NewBuilder[builderTestConfig]()
+	// LCP is "Network"
+	b.AddCondition("Network.Port > 1024 AND Network.Host == 'localhost'")
+
+	p, err := b.Build()
+	if err != nil {
+		t.Fatalf("Build failed: %v", err)
+	}
+
+	// Test condition passes
+	c1 := builderTestConfig{Network: builderTestNetworkConfig{Port: 8080, Host: "localhost"}}
+	if err := p.ApplyChecked(&c1); err != nil {
+		t.Errorf("ApplyChecked failed for valid config: %v", err)
+	}
+
+	// Test condition fails (Port)
+	c2 := builderTestConfig{Network: builderTestNetworkConfig{Port: 80, Host: "localhost"}}
+	if err := p.ApplyChecked(&c2); err == nil {
+		t.Errorf("ApplyChecked should have failed for invalid port")
+	}
+
+	// Test condition fails (Host)
+	c3 := builderTestConfig{Network: builderTestNetworkConfig{Port: 8080, Host: "example.com"}}
+	if err := p.ApplyChecked(&c3); err == nil {
+		t.Errorf("ApplyChecked should have failed for invalid host")
+	}
+}
+
+func TestBuilder_AddConditionDeep(t *testing.T) {
+	type Deep struct {
+		A struct {
+			B struct {
+				C int
+			}
+		}
+	}
+
+	b := NewBuilder[Deep]()
+	b.AddCondition("A.B.C == 10")
+
+	p, err := b.Build()
+	if err != nil {
+		t.Fatalf("Build failed: %v", err)
+	}
+
+	d1 := Deep{}
+	d1.A.B.C = 10
+	if err := p.ApplyChecked(&d1); err != nil {
+		t.Errorf("ApplyChecked failed: %v", err)
+	}
+
+	d2 := Deep{}
+	d2.A.B.C = 20
+	if err := p.ApplyChecked(&d2); err == nil {
+		t.Errorf("ApplyChecked should have failed")
+	}
+}
+
+func TestBuilder_AddConditionMap(t *testing.T) {
+	type MapStruct struct {
+		Data map[string]int
+	}
+
+	b := NewBuilder[MapStruct]()
+	b.AddCondition("Data.key1 > 10")
+
+	p, err := b.Build()
+	if err != nil {
+		t.Fatalf("Build failed: %v", err)
+	}
+
+	m1 := MapStruct{Data: map[string]int{"key1": 20}}
+	if err := p.ApplyChecked(&m1); err != nil {
+		t.Errorf("ApplyChecked failed: %v", err)
+	}
+
+	m2 := MapStruct{Data: map[string]int{"key1": 5}}
+	if err := p.ApplyChecked(&m2); err == nil {
+		t.Errorf("ApplyChecked should have failed")
+	}
+}
+
+func TestBuilder_AddConditionFieldToField(t *testing.T) {
+	type S struct {
+		A int
+		B int
+	}
+	b := NewBuilder[S]()
+	b.AddCondition("A > B")
+
+	p, err := b.Build()
+	if err != nil {
+		t.Fatalf("Build failed: %v", err)
+	}
+
+	s1 := S{A: 10, B: 5}
+	if err := p.ApplyChecked(&s1); err != nil {
+		t.Errorf("ApplyChecked failed for A > B: %v", err)
+	}
+
+	s2 := S{A: 5, B: 10}
+	if err := p.ApplyChecked(&s2); err == nil {
+		t.Errorf("ApplyChecked should have failed for A <= B")
+	}
 }

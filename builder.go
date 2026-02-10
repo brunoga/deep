@@ -3,6 +3,8 @@ package deep
 import (
 	"fmt"
 	"reflect"
+	"strconv"
+	"strings"
 )
 
 // Builder allows constructing a Patch[T] manually with on-the-fly type validation.
@@ -46,6 +48,74 @@ func (b *Builder[T]) Root() *Node {
 	}
 }
 
+// AddCondition parses a string expression and attaches it to the appropriate
+// node in the patch tree based on the paths used in the expression.
+// It finds the longest common prefix of all paths in the expression and
+// navigates to that node before attaching the condition.
+func (b *Builder[T]) AddCondition(expr string) *Builder[T] {
+	if b.err != nil {
+		return b
+	}
+	raw, err := parseRawCondition(expr)
+	if err != nil {
+		b.err = err
+		return b
+	}
+
+	paths := raw.paths()
+	prefix := lcp(paths)
+
+	node, err := b.Root().navigate(prefix)
+	if err != nil {
+		b.err = err
+		return b
+	}
+
+	node.WithCondition(raw.withRelativePaths(prefix))
+	return b
+}
+
+func lcp(paths []Path) string {
+	if len(paths) == 0 {
+		return ""
+	}
+
+	allParts := make([][]pathPart, len(paths))
+	for i, p := range paths {
+		allParts[i] = parsePath(string(p))
+	}
+
+	common := allParts[0]
+	for i := 1; i < len(allParts); i++ {
+		n := len(common)
+		if len(allParts[i]) < n {
+			n = len(allParts[i])
+		}
+		common = common[:n]
+		for j := 0; j < n; j++ {
+			if common[j] != allParts[i][j] {
+				common = common[:j]
+				break
+			}
+		}
+	}
+
+	var res strings.Builder
+	for i, p := range common {
+		if i > 0 && !p.isIndex {
+			res.WriteByte('.')
+		}
+		if p.isIndex {
+			res.WriteByte('[')
+			res.WriteString(strconv.Itoa(p.index))
+			res.WriteByte(']')
+		} else {
+			res.WriteString(p.key)
+		}
+	}
+	return res.String()
+}
+
 // Node represents a specific location within a value's structure.
 type Node struct {
 	typ     reflect.Type
@@ -53,16 +123,52 @@ type Node struct {
 	current diffPatch
 }
 
+func (n *Node) navigate(path string) (*Node, error) {
+	if path == "" {
+		return n, nil
+	}
+	parts := parsePath(path)
+	curr := n
+	var err error
+	for _, part := range parts {
+		if part.isIndex {
+			curr, err = curr.Index(part.index)
+		} else {
+			curr, err = curr.FieldOrMapKey(part.key)
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	return curr, nil
+}
+
+func (n *Node) FieldOrMapKey(key string) (*Node, error) {
+	curr := n.Elem()
+	if curr.typ != nil && curr.typ.Kind() == reflect.Map {
+		keyType := curr.typ.Key()
+		var keyVal any
+		if keyType.Kind() == reflect.String {
+			keyVal = key
+		} else if keyType.Kind() == reflect.Int {
+			i, err := strconv.Atoi(key)
+			if err != nil {
+				return nil, fmt.Errorf("invalid int key for map: %s", key)
+			}
+			keyVal = i
+		} else {
+			return nil, fmt.Errorf("unsupported map key type for navigation: %v", keyType)
+		}
+		return curr.MapKey(keyVal)
+	}
+	return curr.Field(key)
+}
+
 // Set replaces the value at the current node. It requires the 'old' value
 // to enable patch reversibility and strict application checking.
 func (n *Node) Set(old, new any) *Node {
 	vOld := reflect.ValueOf(old)
 	vNew := reflect.ValueOf(new)
-	if n.typ != nil {
-		if vOld.IsValid() && vOld.Type() != n.typ {
-			// Type mismatch - could store error in builder if we had a reference to it.
-		}
-	}
 	p := &valuePatch{
 		oldVal: deepCopyValue(vOld),
 		newVal: deepCopyValue(vNew),
@@ -77,33 +183,31 @@ func (n *Node) ensurePatch() {
 		return
 	}
 	var p diffPatch
-	switch n.typ.Kind() {
-	case reflect.Struct:
-		p = &structPatch{fields: make(map[string]diffPatch)}
-	case reflect.Slice:
-		p = &slicePatch{}
-	case reflect.Map:
-		p = &mapPatch{
-			added:    make(map[interface{}]reflect.Value),
-			removed:  make(map[interface{}]reflect.Value),
-			modified: make(map[interface{}]diffPatch),
-			keyType:  n.typ.Key(),
-		}
-	case reflect.Ptr:
-		p = &ptrPatch{}
-	case reflect.Interface:
-		p = &interfacePatch{}
-	case reflect.Array:
-		p = &arrayPatch{indices: make(map[int]diffPatch)}
-	default:
-		// For basic types, valuePatch is usually created by Set().
-		// If WithCondition is called on a basic type before Set,
-		// we might need a placeholder or just wait?
-		// A valuePatch requires old/new values.
-		// We can't easily create a valid valuePatch without them.
-		// However, WithCondition on a leaf node implies we are about to Set it.
-		// If we create a valuePatch here, it will have zero values.
+	if n.typ == nil {
 		p = &valuePatch{}
+	} else {
+		switch n.typ.Kind() {
+		case reflect.Struct:
+			p = &structPatch{fields: make(map[string]diffPatch)}
+		case reflect.Slice:
+			p = &slicePatch{}
+		case reflect.Map:
+			p = &mapPatch{
+				added:    make(map[interface{}]reflect.Value),
+				removed:  make(map[interface{}]reflect.Value),
+				modified: make(map[interface{}]diffPatch),
+				keyType:  n.typ.Key(),
+			}
+		case reflect.Ptr:
+			p = &ptrPatch{}
+		case reflect.Interface:
+			p = &interfacePatch{}
+		case reflect.Array:
+			p = &arrayPatch{indices: make(map[int]diffPatch)}
+		default:
+			// For basic types, valuePatch is usually created by Set().
+			p = &valuePatch{}
+		}
 	}
 	n.current = p
 	n.update(p)
@@ -122,9 +226,7 @@ func (n *Node) WithCondition(c any) *Node {
 // Field returns a Node for the specified struct field. It automatically descends
 // into pointers and interfaces if necessary.
 func (n *Node) Field(name string) (*Node, error) {
-	if n.typ.Kind() == reflect.Ptr || n.typ.Kind() == reflect.Interface {
-		return n.Elem().Field(name)
-	}
+	n = n.Elem()
 	if n.typ.Kind() != reflect.Struct {
 		return nil, fmt.Errorf("not a struct: %v", n.typ)
 	}
@@ -149,9 +251,7 @@ func (n *Node) Field(name string) (*Node, error) {
 
 // Index returns a Node for the specified array or slice index.
 func (n *Node) Index(i int) (*Node, error) {
-	if n.typ.Kind() == reflect.Ptr || n.typ.Kind() == reflect.Interface {
-		return n.Elem().Index(i)
-	}
+	n = n.Elem()
 	kind := n.typ.Kind()
 	if kind != reflect.Slice && kind != reflect.Array {
 		return nil, fmt.Errorf("not a slice or array: %v", n.typ)
@@ -205,9 +305,7 @@ func (n *Node) Index(i int) (*Node, error) {
 
 // MapKey returns a Node for the specified map key.
 func (n *Node) MapKey(key any) (*Node, error) {
-	if n.typ.Kind() == reflect.Ptr || n.typ.Kind() == reflect.Interface {
-		return n.Elem().MapKey(key)
-	}
+	n = n.Elem()
 	if n.typ.Kind() != reflect.Map {
 		return nil, fmt.Errorf("not a map: %v", n.typ)
 	}
@@ -237,7 +335,7 @@ func (n *Node) MapKey(key any) (*Node, error) {
 
 // Elem returns a Node for the element type of a pointer or interface.
 func (n *Node) Elem() *Node {
-	if n.typ.Kind() != reflect.Ptr && n.typ.Kind() != reflect.Interface {
+	if n.typ == nil || (n.typ.Kind() != reflect.Ptr && n.typ.Kind() != reflect.Interface) {
 		return n
 	}
 	updateFunc := n.update
