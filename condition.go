@@ -22,13 +22,9 @@ type Path string
 
 // resolve traverses v using the path and returns the reflect.Value found.
 func (p Path) resolve(v reflect.Value) (reflect.Value, error) {
-	current := v
-	// Automatically dereference pointers and interfaces at the start.
-	for current.Kind() == reflect.Ptr || current.Kind() == reflect.Interface {
-		if current.IsNil() {
-			return reflect.Value{}, fmt.Errorf("path traversal failed: nil pointer/interface")
-		}
-		current = current.Elem()
+	current, err := dereference(v)
+	if err != nil {
+		return reflect.Value{}, err
 	}
 
 	parts := parsePath(string(p))
@@ -79,15 +75,22 @@ func (p Path) resolve(v reflect.Value) (reflect.Value, error) {
 			current = f
 		}
 
-		// Automatically dereference pointers and interfaces after each step.
-		for current.Kind() == reflect.Ptr || current.Kind() == reflect.Interface {
-			if current.IsNil() {
-				return reflect.Value{}, fmt.Errorf("path traversal failed: nil pointer/interface")
-			}
-			current = current.Elem()
+		current, err = dereference(current)
+		if err != nil {
+			return reflect.Value{}, err
 		}
 	}
 	return current, nil
+}
+
+func dereference(v reflect.Value) (reflect.Value, error) {
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() {
+			return reflect.Value{}, fmt.Errorf("path traversal failed: nil pointer/interface")
+		}
+		v = v.Elem()
+	}
+	return v, nil
 }
 
 func compareValues(v1, v2 reflect.Value, op string) (bool, error) {
@@ -112,60 +115,35 @@ func compareValues(v1, v2 reflect.Value, op string) (bool, error) {
 	}
 
 	if v1.Kind() != v2.Kind() {
-		return false, nil
+		return false, fmt.Errorf("type mismatch: %v and %v", v1.Type(), v2.Type())
 	}
 
 	switch v1.Kind() {
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		i1, i2 := v1.Int(), v2.Int()
-		switch op {
-		case ">":
-			return i1 > i2, nil
-		case "<":
-			return i1 < i2, nil
-		case ">=":
-			return i1 >= i2, nil
-		case "<=":
-			return i1 <= i2, nil
-		}
+		return compareOrdered(v1.Int(), v2.Int(), op)
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
-		u1, u2 := v1.Uint(), v2.Uint()
-		switch op {
-		case ">":
-			return u1 > u2, nil
-		case "<":
-			return u1 < u2, nil
-		case ">=":
-			return u1 >= u2, nil
-		case "<=":
-			return u1 <= u2, nil
-		}
+		return compareOrdered(v1.Uint(), v2.Uint(), op)
 	case reflect.Float32, reflect.Float64:
-		f1, f2 := v1.Float(), v2.Float()
-		switch op {
-		case ">":
-			return f1 > f2, nil
-		case "<":
-			return f1 < f2, nil
-		case ">=":
-			return f1 >= f2, nil
-		case "<=":
-			return f1 <= f2, nil
-		}
+		return compareOrdered(v1.Float(), v2.Float(), op)
 	case reflect.String:
-		s1, s2 := v1.String(), v2.String()
-		switch op {
-		case ">":
-			return s1 > s2, nil
-		case "<":
-			return s1 < s2, nil
-		case ">=":
-			return s1 >= s2, nil
-		case "<=":
-			return s1 <= s2, nil
-		}
+		return compareOrdered(v1.String(), v2.String(), op)
 	}
 	return false, fmt.Errorf("unsupported comparison %s for kind %v", op, v1.Kind())
+}
+
+func compareOrdered[T int64 | uint64 | float64 | string](a, b T, op string) (bool, error) {
+	switch op {
+	case ">":
+		return a > b, nil
+	case "<":
+		return a < b, nil
+	case ">=":
+		return a >= b, nil
+	case "<=":
+		return a <= b, nil
+	default:
+		return false, fmt.Errorf("unsupported operator: %s", op)
+	}
 }
 
 type pathPart struct {
@@ -209,6 +187,168 @@ func parsePath(path string) []pathPart {
 	return parts
 }
 
+// rawCondition is the internal non-generic interface for conditions.
+type rawCondition interface {
+	Evaluate(v any) (bool, error)
+	paths() []Path
+	withRelativePaths(prefix string) rawCondition
+}
+
+func toReflectValue(v any) reflect.Value {
+	if rv, ok := v.(reflect.Value); ok {
+		return rv
+	}
+	rv := reflect.ValueOf(v)
+	for rv.Kind() == reflect.Ptr {
+		rv = rv.Elem()
+	}
+	return rv
+}
+
+type rawCompareCondition struct {
+	Path Path
+	Val  any
+	Op   string
+}
+
+func (c *rawCompareCondition) Evaluate(v any) (bool, error) {
+	rv := toReflectValue(v)
+	target, err := c.Path.resolve(rv)
+	if err != nil {
+		return false, err
+	}
+	return compareValues(target, reflect.ValueOf(c.Val), c.Op)
+}
+
+func (c *rawCompareCondition) paths() []Path {
+	return []Path{c.Path}
+}
+
+func (c *rawCompareCondition) withRelativePaths(prefix string) rawCondition {
+	return &rawCompareCondition{
+		Path: Path(strings.TrimPrefix(strings.TrimPrefix(string(c.Path), prefix), ".")),
+		Val:  c.Val,
+		Op:   c.Op,
+	}
+}
+
+type rawCompareFieldCondition struct {
+	Path1 Path
+	Path2 Path
+	Op    string
+}
+
+func (c *rawCompareFieldCondition) Evaluate(v any) (bool, error) {
+	rv := toReflectValue(v)
+	target1, err := c.Path1.resolve(rv)
+	if err != nil {
+		return false, err
+	}
+	target2, err := c.Path2.resolve(rv)
+	if err != nil {
+		return false, err
+	}
+	return compareValues(target1, target2, c.Op)
+}
+
+func (c *rawCompareFieldCondition) paths() []Path {
+	return []Path{c.Path1, c.Path2}
+}
+
+func (c *rawCompareFieldCondition) withRelativePaths(prefix string) rawCondition {
+	return &rawCompareFieldCondition{
+		Path1: Path(strings.TrimPrefix(strings.TrimPrefix(string(c.Path1), prefix), ".")),
+		Path2: Path(strings.TrimPrefix(strings.TrimPrefix(string(c.Path2), prefix), ".")),
+		Op:    c.Op,
+	}
+}
+
+type rawAndCondition struct {
+	Conditions []rawCondition
+}
+
+func (c *rawAndCondition) Evaluate(v any) (bool, error) {
+	for _, sub := range c.Conditions {
+		ok, err := sub.Evaluate(v)
+		if err != nil {
+			return false, err
+		}
+		if !ok {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func (c *rawAndCondition) paths() []Path {
+	var res []Path
+	for _, sub := range c.Conditions {
+		res = append(res, sub.paths()...)
+	}
+	return res
+}
+
+func (c *rawAndCondition) withRelativePaths(prefix string) rawCondition {
+	res := &rawAndCondition{Conditions: make([]rawCondition, len(c.Conditions))}
+	for i, sub := range c.Conditions {
+		res.Conditions[i] = sub.withRelativePaths(prefix)
+	}
+	return res
+}
+
+type rawOrCondition struct {
+	Conditions []rawCondition
+}
+
+func (c *rawOrCondition) Evaluate(v any) (bool, error) {
+	for _, sub := range c.Conditions {
+		ok, err := sub.Evaluate(v)
+		if err != nil {
+			return false, err
+		}
+		if ok {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (c *rawOrCondition) paths() []Path {
+	var res []Path
+	for _, sub := range c.Conditions {
+		res = append(res, sub.paths()...)
+	}
+	return res
+}
+
+func (c *rawOrCondition) withRelativePaths(prefix string) rawCondition {
+	res := &rawOrCondition{Conditions: make([]rawCondition, len(c.Conditions))}
+	for i, sub := range c.Conditions {
+		res.Conditions[i] = sub.withRelativePaths(prefix)
+	}
+	return res
+}
+
+type rawNotCondition struct {
+	C rawCondition
+}
+
+func (c *rawNotCondition) Evaluate(v any) (bool, error) {
+	ok, err := c.C.Evaluate(v)
+	if err != nil {
+		return false, err
+	}
+	return !ok, nil
+}
+
+func (c *rawNotCondition) paths() []Path {
+	return c.C.paths()
+}
+
+func (c *rawNotCondition) withRelativePaths(prefix string) rawCondition {
+	return &rawNotCondition{C: c.C.withRelativePaths(prefix)}
+}
+
 type CompareCondition[T any] struct {
 	Path Path
 	Val  any
@@ -216,12 +356,8 @@ type CompareCondition[T any] struct {
 }
 
 func (c CompareCondition[T]) Evaluate(v *T) (bool, error) {
-	rv := reflect.ValueOf(v)
-	target, err := c.Path.resolve(rv)
-	if err != nil {
-		return false, err
-	}
-	return compareValues(target, reflect.ValueOf(c.Val), c.Op)
+	raw := &rawCompareCondition{Path: c.Path, Val: c.Val, Op: c.Op}
+	return raw.Evaluate(v)
 }
 
 func Equal[T any](path string, val any) Condition[T] {
@@ -255,16 +391,8 @@ type CompareFieldCondition[T any] struct {
 }
 
 func (c CompareFieldCondition[T]) Evaluate(v *T) (bool, error) {
-	rv := reflect.ValueOf(v)
-	target1, err := c.Path1.resolve(rv)
-	if err != nil {
-		return false, err
-	}
-	target2, err := c.Path2.resolve(rv)
-	if err != nil {
-		return false, err
-	}
-	return compareValues(target1, target2, c.Op)
+	raw := &rawCompareFieldCondition{Path1: c.Path1, Path2: c.Path2, Op: c.Op}
+	return raw.Evaluate(v)
 }
 
 func EqualField[T any](path1, path2 string) Condition[T] {
@@ -349,11 +477,35 @@ func Not[T any](c Condition[T]) Condition[T] {
 	return NotCondition[T]{C: c}
 }
 
+// typedRawCondition wraps a rawCondition to satisfy Condition[T].
+type typedRawCondition[T any] struct {
+	raw rawCondition
+}
+
+func (c *typedRawCondition[T]) Evaluate(v *T) (bool, error) {
+	return c.raw.Evaluate(v)
+}
+
 // ParseCondition parses a string expression into a Condition[T] tree.
 func ParseCondition[T any](expr string) (Condition[T], error) {
-	p := &parser[T]{lexer: newLexer(expr)}
+	raw, err := parseRawCondition(expr)
+	if err != nil {
+		return nil, err
+	}
+	return &typedRawCondition[T]{raw: raw}, nil
+}
+
+func parseRawCondition(expr string) (rawCondition, error) {
+	p := &parser{lexer: newLexer(expr)}
 	p.next()
-	return p.parseExpr()
+	cond, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	if p.curr.kind != tokEOF {
+		return nil, fmt.Errorf("unexpected token: %v", p.curr.val)
+	}
+	return cond, nil
 }
 
 type tokenKind int
@@ -493,20 +645,20 @@ func isWhitespace(c byte) bool { return c == ' ' || c == '\t' || c == '\n' || c 
 func isDigit(c byte) bool      { return c >= '0' && c <= '9' }
 func isAlpha(c byte) bool      { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' }
 
-type parser[T any] struct {
+type parser struct {
 	lexer *lexer
 	curr  token
 }
 
-func (p *parser[T]) next() {
+func (p *parser) next() {
 	p.curr = p.lexer.next()
 }
 
-func (p *parser[T]) parseExpr() (Condition[T], error) {
+func (p *parser) parseExpr() (rawCondition, error) {
 	return p.parseOr()
 }
 
-func (p *parser[T]) parseOr() (Condition[T], error) {
+func (p *parser) parseOr() (rawCondition, error) {
 	left, err := p.parseAnd()
 	if err != nil {
 		return nil, err
@@ -517,12 +669,12 @@ func (p *parser[T]) parseOr() (Condition[T], error) {
 		if err != nil {
 			return nil, err
 		}
-		left = Or(left, right)
+		left = &rawOrCondition{Conditions: []rawCondition{left, right}}
 	}
 	return left, nil
 }
 
-func (p *parser[T]) parseAnd() (Condition[T], error) {
+func (p *parser) parseAnd() (rawCondition, error) {
 	left, err := p.parseFactor()
 	if err != nil {
 		return nil, err
@@ -533,12 +685,12 @@ func (p *parser[T]) parseAnd() (Condition[T], error) {
 		if err != nil {
 			return nil, err
 		}
-		left = And(left, right)
+		left = &rawAndCondition{Conditions: []rawCondition{left, right}}
 	}
 	return left, nil
 }
 
-func (p *parser[T]) parseFactor() (Condition[T], error) {
+func (p *parser) parseFactor() (rawCondition, error) {
 	switch p.curr.kind {
 	case tokNot:
 		p.next()
@@ -546,7 +698,7 @@ func (p *parser[T]) parseFactor() (Condition[T], error) {
 		if err != nil {
 			return nil, err
 		}
-		return Not(cond), nil
+		return &rawNotCondition{C: cond}, nil
 	case tokLParen:
 		p.next()
 		cond, err := p.parseExpr()
@@ -564,7 +716,7 @@ func (p *parser[T]) parseFactor() (Condition[T], error) {
 	return nil, fmt.Errorf("unexpected token: %v", p.curr.val)
 }
 
-func (p *parser[T]) parseComparison() (Condition[T], error) {
+func (p *parser) parseComparison() (rawCondition, error) {
 	path := p.curr.val
 	p.next()
 	opTok := p.curr
@@ -604,9 +756,9 @@ func (p *parser[T]) parseComparison() (Condition[T], error) {
 	opStr := ops[opTok.kind]
 
 	if isField {
-		return CompareFieldCondition[T]{Path1: Path(path), Path2: Path(fieldPath), Op: opStr}, nil
+		return &rawCompareFieldCondition{Path1: Path(path), Path2: Path(fieldPath), Op: opStr}, nil
 	}
-	return CompareCondition[T]{Path: Path(path), Val: val, Op: opStr}, nil
+	return &rawCompareCondition{Path: Path(path), Val: val, Op: opStr}, nil
 }
 
 func init() {

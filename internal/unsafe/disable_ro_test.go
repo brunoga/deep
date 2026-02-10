@@ -11,7 +11,7 @@ import (
 func TestDisableRO_CrossPackage(t *testing.T) {
 	s := foo.NewS(1, 2)
 	rv := reflect.ValueOf(&s).Elem()
-	
+
 	// 'b' is unexported in package 'foo'
 	fieldB := rv.FieldByName("b")
 	if !fieldB.IsValid() {

@@ -426,3 +426,97 @@ func TestCompareValues_Exhaustive(t *testing.T) {
 	}
 
 }
+
+func TestCondition_Errors(t *testing.T) {
+	t.Run("PathResolveErrors", func(t *testing.T) {
+		type S struct{ A int }
+		s := S{A: 1}
+		rv := reflect.ValueOf(s)
+
+		paths := []string{
+			"NonExistent",
+			"A.Sub",
+			"A[0]",
+		}
+		for _, p := range paths {
+			_, err := Path(p).resolve(rv)
+			if err == nil {
+				t.Errorf("Expected error for path %q", p)
+			}
+		}
+
+		var nilPtr *S
+		_, err := Path("A").resolve(reflect.ValueOf(nilPtr))
+		if err == nil {
+			t.Error("Expected error for nil pointer resolve")
+		}
+	})
+
+	t.Run("CompareValuesErrors", func(t *testing.T) {
+		v1 := reflect.ValueOf(10)
+		v2 := reflect.ValueOf("string")
+		_, err := compareValues(v1, v2, ">")
+		if err == nil {
+			t.Error("Expected error for mismatched types in comparison")
+		}
+
+		v3 := reflect.ValueOf(true)
+		_, err = compareValues(v3, v3, ">")
+		if err == nil {
+			t.Error("Expected error for unsupported comparison on bool")
+		}
+	})
+
+	t.Run("ParserErrors", func(t *testing.T) {
+		exprs := []string{
+			"A == ",
+			"A > B C",
+			"(A == 1",
+			"A == 1)",
+			"NOT",
+			"A + B",
+		}
+		for _, e := range exprs {
+			_, err := ParseCondition[any](e)
+			if err == nil {
+				t.Errorf("Expected error for invalid expression %q", e)
+			}
+		}
+	})
+
+	t.Run("SerializationErrors", func(t *testing.T) {
+		_, err := marshalConditionAny(123) // Not a condition
+		if err == nil {
+			t.Error("Expected error for non-condition marshal")
+		}
+
+		_, err = convertFromCondSurrogate[int]("not a surrogate")
+		if err == nil {
+			t.Error("Expected error for invalid surrogate type")
+		}
+	})
+
+	t.Run("RawConditionExhaustive", func(t *testing.T) {
+		// Test rawOrCondition paths/relative
+		c1 := &rawCompareCondition{Path: "A", Val: 1, Op: "=="}
+		c2 := &rawCompareCondition{Path: "B", Val: 2, Op: "=="}
+		or := &rawOrCondition{Conditions: []rawCondition{c1, c2}}
+		if len(or.paths()) != 2 {
+			t.Errorf("Expected 2 paths, got %d", len(or.paths()))
+		}
+		relOr := or.withRelativePaths("Prefix")
+		if relOr.(*rawOrCondition).Conditions[0].(*rawCompareCondition).Path != "A" {
+			// Actually withRelativePaths("Prefix") on path "A" should be "A" if prefix not found
+		}
+
+		// Test rawNotCondition paths/relative
+		not := &rawNotCondition{C: c1}
+		if len(not.paths()) != 1 {
+			t.Error("Expected 1 path for not")
+		}
+		relNot := not.withRelativePaths("A")
+		if relNot.(*rawNotCondition).C.(*rawCompareCondition).Path != "" {
+			t.Errorf("Expected empty path after stripping prefix, got %q", relNot.(*rawNotCondition).C.(*rawCompareCondition).Path)
+		}
+	})
+}

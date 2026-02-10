@@ -9,6 +9,7 @@
 *   **Patch Application**: Applies patches to objects to transform them from state A to state B.
 *   **Patch Reversal**: Generates a reverse patch to undo changes (`Apply(Reverse(patch))`).
 *   **Conditional Patching**: Apply patches only if specific logical conditions are met (`ApplyChecked`, `WithCondition`).
+*   **Smart Condition Attachment**: The builder can automatically determine where to attach conditions in the patch tree based on the expression.
 *   **Cross-Field Logic**: Conditions can compare fields against literals OR against other fields.
 *   **Flexible Consistency**: Choose between strict "old-value" matching or flexible application based on custom conditions.
 *   **Local Node Conditions**: Attach conditions to specific fields or elements during manual construction.
@@ -107,8 +108,9 @@ err = patchWithCond.ApplyChecked(&target)
 
 ### Manual Patch Builder
 
-Construct patches programmatically and attach local field-level conditions.
+Construct patches programmatically and attach local conditions to any node (struct fields, map keys, slice indices, etc.).
 
+#### Manual Navigation
 ```go
 builder := deep.NewBuilder[Config]()
 root := builder.Root()
@@ -123,6 +125,20 @@ if err == nil {
     // Patches from Builder are also Strict by default
     patch.ApplyChecked(&myConfig)
 }
+```
+
+#### Smart Condition Attachment
+The builder can automatically figure out where to attach a condition based on the paths in the expression.
+
+```go
+builder := deep.NewBuilder[Config]()
+
+// Automatically attaches the condition to "Network" node because both 
+// fields are under it.
+builder.AddCondition("Network.Port > 1024 AND Network.Host == 'localhost'")
+
+// Automatically attaches to the "Version" leaf node.
+builder.AddCondition("Version == 1")
 ```
 
 ### Patch Serialization
