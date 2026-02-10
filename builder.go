@@ -97,9 +97,9 @@ func (n *Node) ensurePatch() {
 		p = &arrayPatch{indices: make(map[int]diffPatch)}
 	default:
 		// For basic types, valuePatch is usually created by Set().
-		// If WithCondition is called on a basic type before Set, 
+		// If WithCondition is called on a basic type before Set,
 		// we might need a placeholder or just wait?
-		// A valuePatch requires old/new values. 
+		// A valuePatch requires old/new values.
 		// We can't easily create a valid valuePatch without them.
 		// However, WithCondition on a leaf node implies we are about to Set it.
 		// If we create a valuePatch here, it will have zero values.

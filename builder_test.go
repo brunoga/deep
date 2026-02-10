@@ -48,7 +48,7 @@ func TestBuilder_Validation(t *testing.T) {
 	// as it follows the builder pattern. Users should ensure types match
 	// or we could add error tracking to the builder.
 	node.Set("string", 2)
-	
+
 	err = node.Add(0, 1)
 	if err == nil {
 		t.Error("Expected error for Add on non-slice node")
@@ -81,7 +81,7 @@ func TestBuilder_Nested(t *testing.T) {
 		t.Fatalf("Field Name failed: %v", err)
 	}
 	nameNode.Set("Old", "Modified")
-	
+
 	patch, err := b.Build()
 	if err != nil {
 		t.Fatalf("Build failed: %v", err)
@@ -117,7 +117,7 @@ func TestBuilder_Map(t *testing.T) {
 		t.Fatalf("MapKey failed: %v", err)
 	}
 	keyNode.Set(10, 20)
-	
+
 	patch, err := b.Build()
 	if err != nil {
 		t.Fatalf("Build failed: %v", err)

@@ -373,14 +373,14 @@ func TestPatch_StrictToggle(t *testing.T) {
 	type S struct{ A int }
 	s1 := S{A: 1}
 	s2 := S{A: 2}
-	
+
 	p := Diff(s1, s2) // Strict is true by default
-	
+
 	s3 := S{A: 10} // Current value doesn't match oldVal (1)
 	if err := p.ApplyChecked(&s3); err == nil {
 		t.Error("Expected error in strict mode")
 	}
-	
+
 	pNonStrict := p.WithStrict(false)
 	if err := pNonStrict.ApplyChecked(&s3); err != nil {
 		t.Errorf("Expected no error in non-strict mode: %v", err)
@@ -392,15 +392,15 @@ func TestPatch_StrictToggle(t *testing.T) {
 
 func TestPatch_LocalCondition(t *testing.T) {
 	type S struct{ A int }
-	
+
 	builder := NewBuilder[S]()
 	// Set A from 1 to 2, but only if current value < 5
 	node, _ := builder.Root().Field("A")
 	node.Set(1, 2).WithCondition(Less[int]("", 5))
-	
+
 	p, _ := builder.Build()
 	p = p.WithStrict(false) // Disable strict to only test local condition
-	
+
 	s1 := S{A: 3}
 	if err := p.ApplyChecked(&s1); err != nil {
 		t.Fatalf("ApplyChecked failed: %v", err)
@@ -408,7 +408,7 @@ func TestPatch_LocalCondition(t *testing.T) {
 	if s1.A != 2 {
 		t.Errorf("Expected A=2, got %d", s1.A)
 	}
-	
+
 	s2 := S{A: 10}
 	if err := p.ApplyChecked(&s2); err == nil {
 		t.Error("Expected local condition to fail")
@@ -453,7 +453,7 @@ func TestApplyChecked_Conflicts(t *testing.T) {
 		m1 := map[string]int{"a": 1}
 		m2 := map[string]int{}
 		p := Diff(m1, m2)
-		
+
 		m3 := map[string]int{"a": 2} // Value mismatch
 		if err := p.ApplyChecked(&m3); err == nil {
 			t.Error("Expected error for map deletion value mismatch")
@@ -464,7 +464,7 @@ func TestApplyChecked_Conflicts(t *testing.T) {
 		m1 := map[string]int{"a": 1}
 		m2 := map[string]int{"a": 2}
 		p := Diff(m1, m2)
-		
+
 		m3 := map[string]int{"b": 1} // Key 'a' missing
 		if err := p.ApplyChecked(&m3); err == nil {
 			t.Error("Expected error for map modification missing key")
@@ -480,12 +480,12 @@ func TestApplyChecked_Conflicts(t *testing.T) {
 		s1 := S{I8: 1, U16: 1, F32: 1.0}
 		s2 := S{I8: 2, U16: 2, F32: 2.0}
 		p := Diff(s1, s2)
-		
+
 		// Simulate JSON/Gob float64 input
 		data, _ := json.Marshal(p)
 		p2 := NewPatch[S]()
 		json.Unmarshal(data, p2)
-		
+
 		s3 := S{I8: 1, U16: 1, F32: 1.0}
 		if err := p2.ApplyChecked(&s3); err != nil {
 			t.Fatalf("ApplyChecked failed with numeric conversion: %v", err)
@@ -499,12 +499,10 @@ func TestApplyChecked_Conflicts(t *testing.T) {
 		m1 := map[string]int{}
 		m2 := map[string]int{"a": 1}
 		p := Diff(m1, m2)
-		
+
 		m3 := map[string]int{"a": 10} // Key 'a' already exists
 		if err := p.ApplyChecked(&m3); err == nil {
 			t.Error("Expected error for map addition existing key conflict")
 		}
 	})
 }
-
-

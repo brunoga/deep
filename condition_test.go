@@ -197,9 +197,9 @@ func TestParseCondition(t *testing.T) {
 
 func TestFieldConditions(t *testing.T) {
 	type Data struct {
-		A int
-		B int
-		C int
+		A  int
+		B  int
+		C  int
 		S1 string
 		S2 string
 	}
@@ -276,21 +276,15 @@ func TestParseFieldCondition(t *testing.T) {
 func TestFieldConditionSerialization(t *testing.T) {
 
 	type Data struct {
-
 		A int
 
 		B int
-
 	}
 
-	
-
 	tests := []struct {
-
 		name string
 
 		cond Condition[Data]
-
 	}{
 
 		{"EqualField", EqualField[Data]("A", "B")},
@@ -302,10 +296,7 @@ func TestFieldConditionSerialization(t *testing.T) {
 		{"OrCondition", Or[Data](EqualField[Data]("A", "B"), Less[Data]("B", 10))},
 
 		{"NotCondition", Not[Data](Equal[Data]("A", 0))},
-
 	}
-
-
 
 	for _, tt := range tests {
 
@@ -319,8 +310,6 @@ func TestFieldConditionSerialization(t *testing.T) {
 
 			}
 
-			
-
 			sBytes, err := json.Marshal(s)
 
 			if err != nil {
@@ -329,8 +318,6 @@ func TestFieldConditionSerialization(t *testing.T) {
 
 			}
 
-			
-
 			cond2, err := unmarshalCondition[Data](sBytes)
 
 			if err != nil {
@@ -338,8 +325,6 @@ func TestFieldConditionSerialization(t *testing.T) {
 				t.Fatalf("unmarshalCondition failed: %v", err)
 
 			}
-
-			
 
 			d := Data{A: 10, B: 10}
 
@@ -359,8 +344,6 @@ func TestFieldConditionSerialization(t *testing.T) {
 
 			}
 
-			
-
 			if ok1 != ok2 {
 
 				t.Errorf("Evaluate mismatch: original=%v, restored=%v", ok1, ok2)
@@ -373,30 +356,22 @@ func TestFieldConditionSerialization(t *testing.T) {
 
 }
 
-
-
 func TestCompareValues_Exhaustive(t *testing.T) {
 
 	type Data struct {
-
 		U uint
 
 		F float64
 
 		S string
-
 	}
 
 	d := Data{U: 10, F: 3.14, S: "banana"}
 
-
-
 	tests := []struct {
-
 		expr string
 
 		want bool
-
 	}{
 
 		{"U > 5", true},
@@ -418,10 +393,7 @@ func TestCompareValues_Exhaustive(t *testing.T) {
 		{"S == 'banana'", true},
 
 		{"S != 'apple'", true},
-
 	}
-
-
 
 	for _, tt := range tests {
 
