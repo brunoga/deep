@@ -140,8 +140,6 @@ func (p *typedPatch[T]) UnmarshalJSON(data []byte) error {
 		p.inner = inner
 	}
 	if condData, ok := m["cond"]; ok && len(condData) > 0 && string(condData) != "null" {
-		// We don't know T here for unmarshalCondition[T] easily without more context,
-		// but typedPatch is generic so it works.
 		cond, err := unmarshalCondition[T](condData)
 		if err != nil {
 			return err
@@ -207,13 +205,34 @@ type diffPatch interface {
 	applyChecked(root any, v reflect.Value, strict bool) error
 	reverse() diffPatch
 	format(indent int) string
+	setCondition(cond any)
+}
+
+func evaluateLocalCondition(cond any, v reflect.Value) error {
+	if cond == nil {
+		return nil
+	}
+	method := reflect.ValueOf(cond).MethodByName("Evaluate")
+	if !method.IsValid() {
+		return fmt.Errorf("local condition: method Evaluate not found on %T", cond)
+	}
+	ptr := reflect.New(v.Type())
+	ptr.Elem().Set(v)
+	results := method.Call([]reflect.Value{ptr})
+	if !results[1].IsNil() {
+		return results[1].Interface().(error)
+	}
+	if !results[0].Bool() {
+		return fmt.Errorf("local condition failed for value %v", v.Interface())
+	}
+	return nil
 }
 
 // valuePatch handles replacement of basic types and full replacement of complex types.
 type valuePatch struct {
 	oldVal reflect.Value
 	newVal reflect.Value
-	cond   any // Internal: stored as any to avoid complex generics in diffPatch, cast at runtime.
+	cond   any
 }
 
 func (p *valuePatch) apply(v reflect.Value) {
@@ -221,6 +240,10 @@ func (p *valuePatch) apply(v reflect.Value) {
 		unsafe.DisableRO(&v)
 	}
 	setValue(v, p.newVal)
+}
+
+func (p *valuePatch) setCondition(cond any) {
+	p.cond = cond
 }
 
 func init() {
@@ -242,22 +265,8 @@ func (p *valuePatch) applyChecked(root any, v reflect.Value, strict bool) error 
 		}
 	}
 
-	// Local condition evaluation
-	if p.cond != nil {
-		method := reflect.ValueOf(p.cond).MethodByName("Evaluate")
-		if method.IsValid() {
-			ptr := reflect.New(v.Type())
-			ptr.Elem().Set(v)
-			results := method.Call([]reflect.Value{ptr})
-			if !results[1].IsNil() {
-				return results[1].Interface().(error)
-			}
-			if !results[0].Bool() {
-				return fmt.Errorf("local condition failed for value %v", v.Interface())
-			}
-		} else {
-			return fmt.Errorf("local condition: method Evaluate not found on %T", p.cond)
-		}
+	if err := evaluateLocalCondition(p.cond, v); err != nil {
+		return err
 	}
 
 	p.apply(v)
@@ -286,6 +295,11 @@ func (p *valuePatch) format(indent int) string {
 // ptrPatch handles changes to the content pointed to by a pointer.
 type ptrPatch struct {
 	elemPatch diffPatch
+	cond      any
+}
+
+func (p *ptrPatch) setCondition(cond any) {
+	p.cond = cond
 }
 
 func (p *ptrPatch) apply(v reflect.Value) {
@@ -302,11 +316,14 @@ func (p *ptrPatch) applyChecked(root any, v reflect.Value, strict bool) error {
 	if v.IsNil() {
 		return fmt.Errorf("cannot apply pointer patch to nil value")
 	}
+	if err := evaluateLocalCondition(p.cond, v); err != nil {
+		return err
+	}
 	return p.elemPatch.applyChecked(root, v.Elem(), strict)
 }
 
 func (p *ptrPatch) reverse() diffPatch {
-	return &ptrPatch{elemPatch: p.elemPatch.reverse()}
+	return &ptrPatch{elemPatch: p.elemPatch.reverse(), cond: p.cond}
 }
 
 func (p *ptrPatch) format(indent int) string {
@@ -316,6 +333,11 @@ func (p *ptrPatch) format(indent int) string {
 // interfacePatch handles changes to the value stored in an interface.
 type interfacePatch struct {
 	elemPatch diffPatch
+	cond      any
+}
+
+func (p *interfacePatch) setCondition(cond any) {
+	p.cond = cond
 }
 
 func (p *interfacePatch) apply(v reflect.Value) {
@@ -333,6 +355,9 @@ func (p *interfacePatch) applyChecked(root any, v reflect.Value, strict bool) er
 	if v.IsNil() {
 		return fmt.Errorf("cannot apply interface patch to nil value")
 	}
+	if err := evaluateLocalCondition(p.cond, v); err != nil {
+		return err
+	}
 	elem := v.Elem()
 	newElem := reflect.New(elem.Type()).Elem()
 	newElem.Set(elem)
@@ -344,7 +369,7 @@ func (p *interfacePatch) applyChecked(root any, v reflect.Value, strict bool) er
 }
 
 func (p *interfacePatch) reverse() diffPatch {
-	return &interfacePatch{elemPatch: p.elemPatch.reverse()}
+	return &interfacePatch{elemPatch: p.elemPatch.reverse(), cond: p.cond}
 }
 
 func (p *interfacePatch) format(indent int) string {
@@ -354,6 +379,11 @@ func (p *interfacePatch) format(indent int) string {
 // structPatch handles field-level modifications in a struct.
 type structPatch struct {
 	fields map[string]diffPatch
+	cond   any
+}
+
+func (p *structPatch) setCondition(cond any) {
+	p.cond = cond
 }
 
 func (p *structPatch) apply(v reflect.Value) {
@@ -369,6 +399,9 @@ func (p *structPatch) apply(v reflect.Value) {
 }
 
 func (p *structPatch) applyChecked(root any, v reflect.Value, strict bool) error {
+	if err := evaluateLocalCondition(p.cond, v); err != nil {
+		return err
+	}
 	for name, patch := range p.fields {
 		f := v.FieldByName(name)
 		if !f.IsValid() {
@@ -389,7 +422,7 @@ func (p *structPatch) reverse() diffPatch {
 	for k, v := range p.fields {
 		newFields[k] = v.reverse()
 	}
-	return &structPatch{fields: newFields}
+	return &structPatch{fields: newFields, cond: p.cond}
 }
 
 func (p *structPatch) format(indent int) string {
@@ -406,6 +439,11 @@ func (p *structPatch) format(indent int) string {
 // arrayPatch handles index-level modifications in a fixed-size array.
 type arrayPatch struct {
 	indices map[int]diffPatch
+	cond    any
+}
+
+func (p *arrayPatch) setCondition(cond any) {
+	p.cond = cond
 }
 
 func (p *arrayPatch) apply(v reflect.Value) {
@@ -421,6 +459,9 @@ func (p *arrayPatch) apply(v reflect.Value) {
 }
 
 func (p *arrayPatch) applyChecked(root any, v reflect.Value, strict bool) error {
+	if err := evaluateLocalCondition(p.cond, v); err != nil {
+		return err
+	}
 	for i, patch := range p.indices {
 		if i >= v.Len() {
 			return fmt.Errorf("index %d out of bounds", i)
@@ -441,7 +482,7 @@ func (p *arrayPatch) reverse() diffPatch {
 	for k, v := range p.indices {
 		newIndices[k] = v.reverse()
 	}
-	return &arrayPatch{indices: newIndices}
+	return &arrayPatch{indices: newIndices, cond: p.cond}
 }
 
 func (p *arrayPatch) format(indent int) string {
@@ -461,6 +502,11 @@ type mapPatch struct {
 	removed  map[interface{}]reflect.Value
 	modified map[interface{}]diffPatch
 	keyType  reflect.Type
+	cond     any
+}
+
+func (p *mapPatch) setCondition(cond any) {
+	p.cond = cond
 }
 
 func (p *mapPatch) apply(v reflect.Value) {
@@ -492,6 +538,9 @@ func (p *mapPatch) apply(v reflect.Value) {
 }
 
 func (p *mapPatch) applyChecked(root any, v reflect.Value, strict bool) error {
+	if err := evaluateLocalCondition(p.cond, v); err != nil {
+		return err
+	}
 	if v.IsNil() {
 		if len(p.added) > 0 {
 			newMap := reflect.MakeMap(v.Type())
@@ -547,6 +596,7 @@ func (p *mapPatch) reverse() diffPatch {
 		removed:  p.added,
 		modified: newModified,
 		keyType:  p.keyType,
+		cond:     p.cond,
 	}
 }
 
@@ -584,7 +634,12 @@ type sliceOp struct {
 
 // slicePatch handles complex edits (insertions, deletions, modifications) in a slice.
 type slicePatch struct {
-	ops []sliceOp
+	ops  []sliceOp
+	cond any
+}
+
+func (p *slicePatch) setCondition(cond any) {
+	p.cond = cond
 }
 
 func (p *slicePatch) apply(v reflect.Value) {
@@ -622,6 +677,9 @@ func (p *slicePatch) apply(v reflect.Value) {
 }
 
 func (p *slicePatch) applyChecked(root any, v reflect.Value, strict bool) error {
+	if err := evaluateLocalCondition(p.cond, v); err != nil {
+		return err
+	}
 	newSlice := reflect.MakeSlice(v.Type(), 0, v.Len())
 	curIdx := 0
 	for _, op := range p.ops {
@@ -700,7 +758,7 @@ func (p *slicePatch) reverse() diffPatch {
 			curB++
 		}
 	}
-	return &slicePatch{ops: revOps}
+	return &slicePatch{ops: revOps, cond: p.cond}
 }
 
 func (p *slicePatch) format(indent int) string {
@@ -726,42 +784,43 @@ type patchSurrogate struct {
 	Data any    `json:"d,omitempty" gob:"d,omitempty"`
 }
 
+func makeSurrogate(kind string, data map[string]any, cond any) (*patchSurrogate, error) {
+	c, err := marshalConditionAny(cond)
+	if err != nil {
+		return nil, err
+	}
+	if c != nil {
+		data["c"] = c
+	}
+	return &patchSurrogate{Kind: kind, Data: data}, nil
+}
+
 func marshalDiffPatch(p diffPatch) (any, error) {
 	if p == nil {
 		return nil, nil
 	}
 	switch v := p.(type) {
 	case *valuePatch:
-		cond, err := marshalConditionAny(v.cond)
-		if err != nil {
-			return nil, err
-		}
-		return &patchSurrogate{
-			Kind: "value",
-			Data: map[string]any{
-				"o": valueToInterface(v.oldVal),
-				"n": valueToInterface(v.newVal),
-				"c": cond,
-			},
-		}, nil
+		return makeSurrogate("value", map[string]any{
+			"o": valueToInterface(v.oldVal),
+			"n": valueToInterface(v.newVal),
+		}, v.cond)
 	case *ptrPatch:
 		elem, err := marshalDiffPatch(v.elemPatch)
 		if err != nil {
 			return nil, err
 		}
-		return &patchSurrogate{
-			Kind: "ptr",
-			Data: elem,
-		}, nil
+		return makeSurrogate("ptr", map[string]any{
+			"p": elem,
+		}, v.cond)
 	case *interfacePatch:
 		elem, err := marshalDiffPatch(v.elemPatch)
 		if err != nil {
 			return nil, err
 		}
-		return &patchSurrogate{
-			Kind: "interface",
-			Data: elem,
-		}, nil
+		return makeSurrogate("interface", map[string]any{
+			"p": elem,
+		}, v.cond)
 	case *structPatch:
 		fields := make(map[string]any)
 		for name, patch := range v.fields {
@@ -771,10 +830,9 @@ func marshalDiffPatch(p diffPatch) (any, error) {
 			}
 			fields[name] = p
 		}
-		return &patchSurrogate{
-			Kind: "struct",
-			Data: fields,
-		}, nil
+		return makeSurrogate("struct", map[string]any{
+			"f": fields,
+		}, v.cond)
 	case *arrayPatch:
 		indices := make(map[string]any)
 		for idx, patch := range v.indices {
@@ -784,10 +842,9 @@ func marshalDiffPatch(p diffPatch) (any, error) {
 			}
 			indices[fmt.Sprintf("%d", idx)] = p
 		}
-		return &patchSurrogate{
-			Kind: "array",
-			Data: indices,
-		}, nil
+		return makeSurrogate("array", map[string]any{
+			"i": indices,
+		}, v.cond)
 	case *mapPatch:
 		added := make([]map[string]any, 0, len(v.added))
 		for k, val := range v.added {
@@ -805,14 +862,11 @@ func marshalDiffPatch(p diffPatch) (any, error) {
 			}
 			modified = append(modified, map[string]any{"k": k, "p": p})
 		}
-		return &patchSurrogate{
-			Kind: "map",
-			Data: map[string]any{
-				"a": added,
-				"r": removed,
-				"m": modified,
-			},
-		}, nil
+		return makeSurrogate("map", map[string]any{
+			"a": added,
+			"r": removed,
+			"m": modified,
+		}, v.cond)
 	case *slicePatch:
 		ops := make([]map[string]any, 0, len(v.ops))
 		for _, op := range v.ops {
@@ -827,10 +881,9 @@ func marshalDiffPatch(p diffPatch) (any, error) {
 				"p": p,
 			})
 		}
-		return &patchSurrogate{
-			Kind: "slice",
-			Data: ops,
-		}, nil
+		return makeSurrogate("slice", map[string]any{
+			"o": ops,
+		}, v.cond)
 	}
 	return nil, fmt.Errorf("unknown patch type: %T", p)
 }
@@ -841,6 +894,15 @@ func unmarshalDiffPatch(data []byte) (diffPatch, error) {
 		return nil, err
 	}
 	return convertFromSurrogate(&s)
+}
+
+func unmarshalCondFromMap(d map[string]any) any {
+	if cData, ok := d["c"]; ok && cData != nil {
+		jsonData, _ := json.Marshal(cData)
+		c, _ := unmarshalCondition[any](jsonData)
+		return c
+	}
+	return nil
 }
 
 func convertFromSurrogate(s any) (diffPatch, error) {
@@ -865,47 +927,42 @@ func convertFromSurrogate(s any) (diffPatch, error) {
 	switch kind {
 	case "value":
 		d := data.(map[string]any)
-		var cond any
-		if cData, ok := d["c"]; ok && cData != nil {
-			// This is tricky because we don't know the type for Condition[T].
-			// However, unmarshalCondition is now mostly type-independent for basic logic.
-			// We'll use a placeholder type or just unmarshal as any.
-			jsonData, _ := json.Marshal(cData)
-			c, _ := unmarshalCondition[any](jsonData)
-			cond = c
-		}
 		return &valuePatch{
 			oldVal: interfaceToValue(d["o"]),
 			newVal: interfaceToValue(d["n"]),
-			cond:   cond,
+			cond:   unmarshalCondFromMap(d),
 		}, nil
 	case "ptr":
-		elem, err := convertFromSurrogate(data)
+		d := data.(map[string]any)
+		elem, err := convertFromSurrogate(d["p"])
 		if err != nil {
 			return nil, err
 		}
-		return &ptrPatch{elemPatch: elem}, nil
+		return &ptrPatch{elemPatch: elem, cond: unmarshalCondFromMap(d)}, nil
 	case "interface":
-		elem, err := convertFromSurrogate(data)
+		d := data.(map[string]any)
+		elem, err := convertFromSurrogate(d["p"])
 		if err != nil {
 			return nil, err
 		}
-		return &interfacePatch{elemPatch: elem}, nil
+		return &interfacePatch{elemPatch: elem, cond: unmarshalCondFromMap(d)}, nil
 	case "struct":
 		d := data.(map[string]any)
+		fieldsData := d["f"].(map[string]any)
 		fields := make(map[string]diffPatch)
-		for name, pData := range d {
+		for name, pData := range fieldsData {
 			p, err := convertFromSurrogate(pData)
 			if err != nil {
 				return nil, err
 			}
 			fields[name] = p
 		}
-		return &structPatch{fields: fields}, nil
+		return &structPatch{fields: fields, cond: unmarshalCondFromMap(d)}, nil
 	case "array":
 		d := data.(map[string]any)
+		indicesData := d["i"].(map[string]any)
 		indices := make(map[int]diffPatch)
-		for idxStr, pData := range d {
+		for idxStr, pData := range indicesData {
 			var idx int
 			fmt.Sscanf(idxStr, "%d", &idx)
 			p, err := convertFromSurrogate(pData)
@@ -914,7 +971,7 @@ func convertFromSurrogate(s any) (diffPatch, error) {
 			}
 			indices[idx] = p
 		}
-		return &arrayPatch{indices: indices}, nil
+		return &arrayPatch{indices: indices, cond: unmarshalCondFromMap(d)}, nil
 	case "map":
 		d := data.(map[string]any)
 		added := make(map[interface{}]reflect.Value)
@@ -968,19 +1025,28 @@ func convertFromSurrogate(s any) (diffPatch, error) {
 			added:    added,
 			removed:  removed,
 			modified: modified,
+			cond:     unmarshalCondFromMap(d),
 		}, nil
 	case "slice":
-		var opsData []map[string]any
-		if slice, ok := data.([]any); ok {
-			for _, entry := range slice {
-				opsData = append(opsData, entry.(map[string]any))
+		d := data.(map[string]any)
+		var opsDataRaw []any
+		if raw, ok := d["o"].([]any); ok {
+			opsDataRaw = raw
+		} else if raw, ok := d["o"].([]map[string]any); ok {
+			for _, m := range raw {
+				opsDataRaw = append(opsDataRaw, m)
 			}
-		} else if slice, ok := data.([]map[string]any); ok {
-			opsData = slice
 		}
 
-		ops := make([]sliceOp, 0, len(opsData))
-		for _, o := range opsData {
+		ops := make([]sliceOp, 0, len(opsDataRaw))
+		for _, oRaw := range opsDataRaw {
+			var o map[string]any
+			switch v := oRaw.(type) {
+			case map[string]any:
+				o = v
+			case *patchSurrogate: // Might happen in Gob
+				o = v.Data.(map[string]any)
+			}
 			p, err := convertFromSurrogate(o["p"])
 			if err != nil {
 				return nil, err
@@ -1009,7 +1075,7 @@ func convertFromSurrogate(s any) (diffPatch, error) {
 				Patch: p,
 			})
 		}
-		return &slicePatch{ops: ops}, nil
+		return &slicePatch{ops: ops, cond: unmarshalCondFromMap(d)}, nil
 	}
 	return nil, fmt.Errorf("unknown patch kind: %s", kind)
 }

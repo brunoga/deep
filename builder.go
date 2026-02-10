@@ -72,11 +72,49 @@ func (n *Node) Set(old, new any) *Node {
 	return n
 }
 
+func (n *Node) ensurePatch() {
+	if n.current != nil {
+		return
+	}
+	var p diffPatch
+	switch n.typ.Kind() {
+	case reflect.Struct:
+		p = &structPatch{fields: make(map[string]diffPatch)}
+	case reflect.Slice:
+		p = &slicePatch{}
+	case reflect.Map:
+		p = &mapPatch{
+			added:    make(map[interface{}]reflect.Value),
+			removed:  make(map[interface{}]reflect.Value),
+			modified: make(map[interface{}]diffPatch),
+			keyType:  n.typ.Key(),
+		}
+	case reflect.Ptr:
+		p = &ptrPatch{}
+	case reflect.Interface:
+		p = &interfacePatch{}
+	case reflect.Array:
+		p = &arrayPatch{indices: make(map[int]diffPatch)}
+	default:
+		// For basic types, valuePatch is usually created by Set().
+		// If WithCondition is called on a basic type before Set, 
+		// we might need a placeholder or just wait?
+		// A valuePatch requires old/new values. 
+		// We can't easily create a valid valuePatch without them.
+		// However, WithCondition on a leaf node implies we are about to Set it.
+		// If we create a valuePatch here, it will have zero values.
+		p = &valuePatch{}
+	}
+	n.current = p
+	n.update(p)
+}
+
 // WithCondition attaches a local condition to the current node.
 // This condition is evaluated against the value at this node during ApplyChecked.
 func (n *Node) WithCondition(c any) *Node {
-	if vp, ok := n.current.(*valuePatch); ok {
-		vp.cond = c
+	n.ensurePatch()
+	if n.current != nil {
+		n.current.setCondition(c)
 	}
 	return n
 }
