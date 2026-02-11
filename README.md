@@ -1,271 +1,154 @@
-# Deep Copy and Patch Library for Go
+# Deep Copy and Patch for Go
 
-`deep` is a powerful, reflection-based library for creating deep copies, calculating differences (diffs), and patching complex Go data structures. It supports cyclic references, unexported fields, and custom type-specific behaviors.
+`deep` is a high-performance, reflection-based library for manipulating complex Go data structures. It provides three primary capabilities: recursive deep copying, structural diffing to produce patches, and a fluent API for manual patch construction.
 
 ## Features
 
-*   **Deep Copy**: Recursively copies structs, maps, slices, arrays, pointers, and interfaces.
-*   **Deep Diff**: Calculates the difference between two objects, producing a `Patch`.
-*   **Patch Application**: Applies patches to objects to transform them from state A to state B.
-*   **Patch Reversal**: Generates a reverse patch to undo changes (`Apply(Reverse(patch))`).
-*   **Conditional Patching**: Apply patches only if specific logical conditions are met (`ApplyChecked`, `WithCondition`).
-*   **Smart Condition Attachment**: The builder can automatically determine where to attach conditions in the patch tree based on the expression.
-*   **Cross-Field Logic**: Conditions can compare fields against literals OR against other fields.
-*   **Flexible Consistency**: Choose between strict "old-value" matching or flexible application based on custom conditions.
-*   **Local Node Conditions**: Attach conditions to specific fields or elements during manual construction.
-*   **Manual Patch Builder**: Construct valid patches manually using a fluent API with on-the-fly type validation.
-*   **JSON Pointer Support**: Use RFC 6901 pointers (`/path/to/item`) in conditions and builder navigation.
-*   **JSON Patch Export**: Export patches to RFC 6902 compliant JSON for interoperability.
-*   **Move & Copy Operations**: Efficiently re-order data or reuse values across the structure.
-*   **Atomic Test Operation**: Include pre-condition checks that fail the patch if not met.
-*   **Soft Conditions**: Skip operations using `If` and `Unless` logic without failing the entire patch application.
-*   **Custom Log Operation**: Insert logging points in your patch for debugging during application.
-*   **Unexported Fields**: Handles unexported struct fields transparently.
-*   **Cycle Detection**: Correctly handles circular references in both Copy and Diff operations.
+*   **Deep Copy**: Full recursive cloning of structs, maps, slices, and pointers.
+*   **Deep Diff**: Calculate the semantic difference between two objects.
+*   **Rich Patching**: Apply patches with atomicity, move/copy operations, and logging.
+*   **Conditional Logic**: A built-in DSL for cross-field validation and soft-skipping (`If`/`Unless`).
+*   **Standard Compliant**: Full support for JSON Pointer (RFC 6901) and JSON Patch (RFC 6902).
+*   **Production Ready**: Handles circular references and unexported fields transparently.
 
-## Installation
+---
 
-```bash
-go get github.com/brunoga/deep
-```
+## Quick Start
 
-## Usage
-
-### Deep Copy
-
+### 1. Deep Copy
+Create a decoupled clone of any value.
 ```go
-import "github.com/brunoga/deep"
-
-type Config struct {
-    Name    string
-    Version int
-    Meta    map[string]any
-}
-
-src := Config{Name: "App", Version: 1, Meta: map[string]any{"env": "prod"}}
 dst, err := deep.Copy(src)
-if err != nil {
-    panic(err)
-}
 ```
 
-### Deep Diff and Patch
-
-Calculate the difference between two objects and apply it.
-
+### 2. Diff and Apply
+Transform an object from one state to another.
 ```go
-oldConf := Config{Name: "App", Version: 1}
-newConf := Config{Name: "App", Version: 2}
+// 1. Calculate the difference
+patch := deep.Diff(oldConfig, newConfig)
 
-// Calculate Diff
-patch := deep.Diff(oldConf, newConf)
-
-// Check if there are changes
 if patch != nil {
-    fmt.Println("Changes found:", patch) 
-    // Output: Struct{ Version: 1 -> 2 }
-
-    // Apply to a target (must be a pointer)
-    target := oldConf
-    patch.Apply(&target)
-    // target.Version is now 2
+    // 2. Apply to a target (must be a pointer)
+    err := patch.ApplyChecked(&oldConfig)
 }
 ```
 
-### Conditional Patching and Consistency
+---
 
-Patches support sophisticated validation before application.
+## Core Concepts
 
-#### 1. Strict Consistency (Default)
-By default, `ApplyChecked` ensures that the target's current values exactly match the `old` values recorded during the `Diff`. If the target has diverged, application fails.
+### The Patch Model
+A `Patch[T]` is a tree of operations. Unlike simple key-value maps, `deep` patches understand the structure of your data. A single patch can contain replacements, slice insertions/deletions, map manipulations, and even data movement between paths.
 
-```go
-// Fails if target.Version != 1
-err := patch.ApplyChecked(&target)
-```
+### Consistency Modes
+*   **Strict (Default)**: `ApplyChecked` ensures the target value matches the `old` value recorded during the `Diff`. If the target has changed since the diff was taken, the patch fails.
+*   **Flexible**: Disable strict checking using `patch.WithStrict(false)` to apply changes regardless of the current value, relying instead on custom Conditions.
 
-#### 2. Flexible Consistency
-You can disable strict matching to apply changes even if the object has changed, as long as your custom conditions pass.
+---
 
-```go
-// Disable "old-value" checks, rely only on custom conditions
-patch = patch.WithStrict(false)
-```
-
-#### 3. Custom Conditions (Literal & Cross-Field)
-Create complex rules using the `Condition` DSL.
-
-```go
-// Literals: Apply only if "Version" is greater than 0
-cond1, _ := deep.ParseCondition[Config]("Version > 0")
-
-// Cross-Field: Apply only if "CurrentScore" is less than "MaxScore"
-cond2, _ := deep.ParseCondition[Config]("CurrentScore < MaxScore")
-
-patchWithCond := patch.WithCondition(deep.And(cond1, cond2))
-err = patchWithCond.ApplyChecked(&target)
-```
-
-**Supported Condition Syntax:**
-*   **Comparisons**: `==`, `!=`, `>`, `<`, `>=`, `<=`
-*   **Logic**: `AND`, `OR`, `NOT`, `(...)`
-*   **Paths**: `Field`, `Field.SubField`, `Slice[0]`, `Map.Key`
-*   **RHS**: Can be a literal (`'string'`, `123`, `true`) OR another path (`OtherField.Sub`)
-
-### Manual Patch Builder
-
-Construct patches programmatically and attach local conditions to any node (struct fields, map keys, slice indices, etc.).
-
-#### Manual Navigation
-```go
-builder := deep.NewBuilder[Config]()
-root := builder.Root()
-
-// Set a field with a LOCAL condition (checked only for this specific field)
-root.Field("Version").
-    Set(1, 2).
-    WithCondition(deep.Less[int]("", 10)) // Only if current version < 10
-
-patch, err := builder.Build()
-if err == nil {
-    // Patches from Builder are also Strict by default
-    patch.ApplyChecked(&myConfig)
-}
-```
-
-#### Smart Condition Attachment
-The builder can automatically figure out where to attach a condition based on the paths in the expression.
+## The Manual Patch Builder
+While `Diff` is great for sync logic, the `Builder` is ideal for API-driven updates or migrations.
 
 ```go
 builder := deep.NewBuilder[Config]()
 
-// Automatically attaches the condition to "Network" node because both 
-// fields are under it.
-builder.AddCondition("Network.Port > 1024 AND Network.Host == 'localhost'")
+builder.Root().
+    Field("Version").Put(2). // "Put" is a blind set (bypasses strict checks)
+    Field("Metadata").
+        MapKey("env").Set("dev", "prod") // "Set" requires old value for strict check
 
-// Automatically attaches to the "Version" leaf node.
-builder.AddCondition("Version == 1")
+patch, _ := builder.Build()
+patch.ApplyChecked(&myConfig)
 ```
 
-### Patch Serialization
-
-Patches can be serialized to JSON or Gob format, including all attached conditions.
-
+### Navigation
+You can jump to any path using Go-style notation or JSON Pointers:
 ```go
-// JSON Marshal
-data, err := json.Marshal(patch)
-
-// Unmarshal
-newPatch := deep.NewPatch[Config]()
-err = json.Unmarshal(data, newPatch)
+builder.Root().Navigate("/network/settings/port").Put(8080)
+builder.Root().Navigate("Metadata.Tags[0]").Put("admin")
 ```
 
-### Reversing a Patch
+### Advanced Operations
+The builder supports more than just "Set":
+*   **Move**: `Root().Field("Backup").Move("/Active")`
+*   **Copy**: `Root().Field("Template").Copy("/Target")`
+*   **Test**: `Root().Field("Status").Test("ready")` (Fails patch if value doesn't match)
+*   **Log**: `Root().Log("Applying update...")` (Prints to stdout during application)
 
-Undo changes by creating a reverse patch.
+---
 
-```go
-patch := deep.Diff(stateA, stateB)
+## Conditional Patching
 
-// Apply forward
-patch.Apply(&stateA) // stateA matches stateB
+### Condition DSL
+You can attach logic to any node in a patch using a string-based DSL via `ParseCondition` or `AddCondition`.
 
-// Reverse
-reversePatch := patch.Reverse()
-reversePatch.Apply(&stateA) // stateA is back to original
-```
-
-## JSON Patch & RFC Interoperability
-
-`deep` provides deep support for JSON standards to ensure interoperability with other systems and web frontends.
-
-### JSON Pointer (RFC 6901)
-
-You can use JSON Pointers anywhere a path is expected, including in the Condition DSL and the Manual Builder.
-
-```go
-// Use in conditions
-cond, _ := deep.ParseCondition[Config]("/network/port > 1024")
-
-// Use in manual builder navigation
-builder.Root().navigate("/meta/env").Set("prod", "staging")
-```
-
-### JSON Patch Export (RFC 6902)
-
-Any `deep.Patch` can be exported to a standard JSON Patch array. Exported patches automatically include `If` and `Unless` conditions as standard JSON Predicates.
-
-```go
-patch := deep.Diff(oldObj, newObj)
-jsonBytes, err := patch.ToJSONPatch()
-// Produces: [{"op": "replace", "path": "/version", "value": 2, "if": {...}}, ...]
-```
-
-### Move & Copy Operations
-
-The manual builder supports efficient `Move` and `Copy` operations.
-
-```go
-builder := deep.NewBuilder[Config]()
-
-// Move a value from one path to another (deletes from source)
-builder.Root().Field("BackupHost").Move("/Network/Host")
-
-// Copy a value from one path to another
-builder.Root().Field("Alias").Copy("/Name")
-```
-
-### Atomic Test Operation
-
-Modeled after JSON Patch's `test` operation, this allows ensuring a value matches a specific state before proceeding, without modifying it.
-
-```go
-// Application will fail if /version is not currently 1
-builder.Root().navigate("/version").Test(1)
-```
+**Syntax Examples:**
+*   `"Version > 5"` (Literal comparison)
+*   `"Stock < MinAlertThreshold"` (Cross-field comparison)
+*   `"Network.Port == 8080 AND Status == 'active'"` (Logical groups)
+*   `"NOT (Tags[0] == 'internal')"` (Slice access)
 
 ### Soft Conditions (If/Unless)
-
-Unlike standard conditions that fail the whole `ApplyChecked` call, `If` and `Unless` conditions allow skipping specific operations while letting the rest of the patch proceed.
-
-```go
-builder := deep.NewBuilder[Config]()
-
-// Only update the version IF the environment is 'prod'
-// If not 'prod', this specific update is skipped, but other fields are still updated.
-builder.Root().Field("Version").
-    If(deep.Equal[Config]("/meta/env", "prod")).
-    Set(1, 2)
-```
-
-### Custom Log Operation
-
-Insert a log point anywhere in your structure to print the current value during patch application. This is highly useful for debugging complex patch trees.
+Standard conditions fail the entire patch. Soft conditions simply skip a specific operation while allowing the rest of the patch to proceed.
 
 ```go
-builder.Root().Field("Settings").
-    Log("Applying settings update").
-    Field("Timeout").Set(30, 60)
+builder.Root().Field("BetaFeatures").
+    If(deep.Equal[Config]("Tier", "premium")).
+    Put(true)
 ```
 
-## Advanced
+---
 
-### Custom Copier
+## Interoperability
 
-Types can implement the `Copier[T]` interface to define custom copy behavior.
-
+### JSON Pointer (RFC 6901)
+Use standard pointers to navigate or query your structures:
 ```go
-type SecureToken string
-
-func (t SecureToken) Copy() (SecureToken, error) {
-    return "", nil // Don't copy tokens
-}
+// Both the DSL and the Builder support JSON pointers
+cond, _ := deep.ParseCondition[Config]("/network/settings/port > 1024")
+builder.Root().Navigate("/meta/tags/0").Put("new")
 ```
+
+### JSON Patch (RFC 6902)
+Export any `deep.Patch` to a standard JSON Patch array:
+```go
+jsonBytes, err := patch.ToJSONPatch()
+```
+
+---
+
+## Advanced Options
+
+### Ignoring Paths
+Ignore specific fields during a diff or copy (e.g., timestamps or secrets):
+```go
+// Works for both Copy and Diff
+dst, _ := deep.Copy(src, deep.IgnorePath("SecretToken"))
+patch := deep.Diff(old, new, deep.IgnorePath("UpdatedAt"))
+```
+
+### Skipping Unsupported Types
+Tell `Copy` to zero-out types it cannot handle (like functions or channels) instead of returning an error:
+```go
+dst, _ := deep.Copy(src, deep.SkipUnsupported())
+```
+
+---
+
+## Technical Details
 
 ### Unexported Fields
+`deep` uses `unsafe` pointers to read and write unexported struct fields. This is required for true deep copying of third-party or internal types where fields are not public.
 
-The library uses `unsafe` operations to read and write unexported fields. This is essential for true deep copying and patching of opaque structs but relies on internal runtime structures.
+### Cycle Detection
+The library tracks pointers during recursive operations. Circular references are handled correctly without entering infinite loops.
+
+### Custom Copiers
+Types can control their own cloning logic by implementing `Copier[T]`:
+```go
+type Token string
+func (t Token) Copy() (Token, error) { return "REDACTED", nil }
+```
 
 ## License
-
 Apache 2.0

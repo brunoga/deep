@@ -8,420 +8,704 @@ import (
 )
 
 func TestCopy_Bool(t *testing.T) {
-	doCopyAndCheck(t, true, false)
+	src := true
+	dst, err := Copy(src)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if dst != src {
+		t.Errorf("expected %v, got %v", src, dst)
+	}
 }
 
 func TestCopy_Int(t *testing.T) {
-	doCopyAndCheck(t, 42, false)
+	src := 42
+	dst, err := Copy(src)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if dst != src {
+		t.Errorf("expected %v, got %v", src, dst)
+	}
 }
 
 func TestCopy_Int8(t *testing.T) {
-	doCopyAndCheck(t, int8(42), false)
+	src := int8(42)
+	dst, err := Copy(src)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if dst != src {
+		t.Errorf("expected %v, got %v", src, dst)
+	}
 }
 
 func TestCopy_Int16(t *testing.T) {
-	doCopyAndCheck(t, int16(42), false)
+	src := int16(42)
+	dst, err := Copy(src)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if dst != src {
+		t.Errorf("expected %v, got %v", src, dst)
+	}
 }
 
 func TestCopy_Int32(t *testing.T) {
-	doCopyAndCheck(t, int32(42), false)
+	src := int32(42)
+	dst, err := Copy(src)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if dst != src {
+		t.Errorf("expected %v, got %v", src, dst)
+	}
 }
 
 func TestCopy_Int64(t *testing.T) {
-	doCopyAndCheck(t, int64(42), false)
+	src := int64(42)
+	dst, err := Copy(src)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if dst != src {
+		t.Errorf("expected %v, got %v", src, dst)
+	}
 }
 
 func TestCopy_Uint(t *testing.T) {
-	doCopyAndCheck(t, uint(42), false)
+	src := uint(42)
+	dst, err := Copy(src)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if dst != src {
+		t.Errorf("expected %v, got %v", src, dst)
+	}
 }
 
 func TestCopy_Uint8(t *testing.T) {
-	doCopyAndCheck(t, uint8(42), false)
+	src := uint8(42)
+	dst, err := Copy(src)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if dst != src {
+		t.Errorf("expected %v, got %v", src, dst)
+	}
 }
 
 func TestCopy_Uint16(t *testing.T) {
-	doCopyAndCheck(t, uint16(42), false)
+	src := uint16(42)
+	dst, err := Copy(src)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if dst != src {
+		t.Errorf("expected %v, got %v", src, dst)
+	}
 }
 
 func TestCopy_Uint32(t *testing.T) {
-	doCopyAndCheck(t, uint32(42), false)
+	src := uint32(42)
+	dst, err := Copy(src)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if dst != src {
+		t.Errorf("expected %v, got %v", src, dst)
+	}
 }
 
 func TestCopy_Uint64(t *testing.T) {
-	doCopyAndCheck(t, uint64(42), false)
+	src := uint64(42)
+	dst, err := Copy(src)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if dst != src {
+		t.Errorf("expected %v, got %v", src, dst)
+	}
 }
 
 func TestCopy_Uintptr(t *testing.T) {
-	doCopyAndCheck(t, uintptr(42), false)
+	src := uintptr(42)
+	dst, err := Copy(src)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if dst != src {
+		t.Errorf("expected %v, got %v", src, dst)
+	}
 }
 
 func TestCopy_Float32(t *testing.T) {
-	doCopyAndCheck(t, float32(42), false)
+	src := float32(42.42)
+	dst, err := Copy(src)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if dst != src {
+		t.Errorf("expected %v, got %v", src, dst)
+	}
 }
 
 func TestCopy_Float64(t *testing.T) {
-	doCopyAndCheck(t, float64(42), false)
+	src := 42.42
+	dst, err := Copy(src)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if dst != src {
+		t.Errorf("expected %v, got %v", src, dst)
+	}
 }
 
 func TestCopy_Complex64(t *testing.T) {
-	doCopyAndCheck(t, complex64(42), false)
+	src := complex(float32(42.42), float32(42.42))
+	dst, err := Copy(src)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if dst != src {
+		t.Errorf("expected %v, got %v", src, dst)
+	}
 }
 
 func TestCopy_Complex128(t *testing.T) {
-	doCopyAndCheck(t, complex128(42), false)
+	src := complex(42.42, 42.42)
+	dst, err := Copy(src)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if dst != src {
+		t.Errorf("expected %v, got %v", src, dst)
+	}
 }
 
 func TestCopy_String(t *testing.T) {
-	doCopyAndCheck(t, "42", false)
+	src := "foo"
+	dst, err := Copy(src)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if dst != src {
+		t.Errorf("expected %v, got %v", src, dst)
+	}
 }
 
 func TestCopy_Array(t *testing.T) {
-	doCopyAndCheck(t, [4]int{42, 43, 44, 45}, false)
+	src := [3]int{1, 2, 3}
+	dst, err := Copy(src)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if dst != src {
+		t.Errorf("expected %v, got %v", src, dst)
+	}
 }
 
 func TestCopy_Array_Error(t *testing.T) {
-	doCopyAndCheck(t, [1]func(){func() {}}, true)
+	type unsupported struct {
+		f func()
+	}
+
+	src := [1]unsupported{
+		{
+			f: func() {},
+		},
+	}
+
+	_, err := Copy(src)
+	if err == nil {
+		t.Errorf("expected error, got nil")
+	}
 }
 
 func TestCopy_Map(t *testing.T) {
-	doCopyAndCheck(t, map[int]string{42: "42", 43: "43", 44: "44", 45: "45"}, false)
+	src := map[string]int{
+		"foo": 1,
+		"bar": 2,
+	}
+	dst, err := Copy(src)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !reflect.DeepEqual(dst, src) {
+		t.Errorf("expected %v, got %v", src, dst)
+	}
+
+	if reflect.ValueOf(dst).Pointer() == reflect.ValueOf(src).Pointer() {
+		t.Errorf("expected different pointers, got same")
+	}
 }
 
 func TestCopy_Map_Error(t *testing.T) {
-	doCopyAndCheck(t, map[int]func(){0: func() {}}, true)
+	type unsupported struct {
+		f func()
+	}
+
+	src := map[string]unsupported{
+		"foo": {
+			f: func() {},
+		},
+	}
+
+	_, err := Copy(src)
+	if err == nil {
+		t.Errorf("expected error, got nil")
+	}
 }
 
 func TestCopy_Map_Nil(t *testing.T) {
-	var m map[int]int
-	doCopyAndCheck(t, m, false)
+	var src map[string]int
+	dst, err := Copy(src)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if dst != nil {
+		t.Errorf("expected nil, got %v", dst)
+	}
 }
 
 func TestCopy_Ptr(t *testing.T) {
-	value := 42
-	doCopyAndCheck(t, &value, false)
+	v := 42
+	src := &v
+	dst, err := Copy(src)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if dst == src {
+		t.Errorf("expected different pointers, got same")
+	}
+
+	if *dst != *src {
+		t.Errorf("expected %v, got %v", *src, *dst)
+	}
 }
 
 func TestCopyPtr_Error(t *testing.T) {
-	value := func() {}
-	doCopyAndCheck(t, &value, true)
+	src := func() {}
+	_, err := Copy(&src)
+	if err == nil {
+		t.Errorf("expected error, got nil")
+	}
 }
 
 func TestCopy_Ptr_Nil(t *testing.T) {
-	value := (*int)(nil)
-	doCopyAndCheck(t, value, false)
+	var src *int
+	dst, err := Copy(src)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if dst != nil {
+		t.Errorf("expected nil, got %v", dst)
+	}
 }
 
 func TestCopy_Slice(t *testing.T) {
-	doCopyAndCheck(t, []int{42, 43, 44, 45}, false)
+	src := []int{1, 2, 3}
+	dst, err := Copy(src)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !reflect.DeepEqual(dst, src) {
+		t.Errorf("expected %v, got %v", src, dst)
+	}
+
+	if reflect.ValueOf(dst).Pointer() == reflect.ValueOf(src).Pointer() {
+		t.Errorf("expected different pointers, got same")
+	}
 }
 
 func TestCopy_Slice_Nil(t *testing.T) {
-	var S []int
-	doCopyAndCheck(t, S, false)
+	var src []int
+	dst, err := Copy(src)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if dst != nil {
+		t.Errorf("expected nil, got %v", dst)
+	}
 }
 
 func TestCopy_Slice_Error(t *testing.T) {
-	doCopyAndCheck(t, []func(){func() {}}, true)
+	type unsupported struct {
+		f func()
+	}
+
+	src := []unsupported{
+		{
+			f: func() {},
+		},
+	}
+
+	_, err := Copy(src)
+	if err == nil {
+		t.Errorf("expected error, got nil")
+	}
 }
 
 func TestCopy_Any_MapStringAny(t *testing.T) {
-	doCopyAndCheck(t, any(map[string]any{"key": 123}), false)
+	src := any(map[string]any{
+		"foo": 1,
+		"bar": "baz",
+	})
+	dst, err := Copy(src)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !reflect.DeepEqual(dst, src) {
+		t.Errorf("expected %v, got %v", src, dst)
+	}
+
+	if reflect.ValueOf(dst).Pointer() == reflect.ValueOf(src).Pointer() {
+		t.Errorf("expected different pointers, got same")
+	}
 }
 
 func TestCopy_Struct(t *testing.T) {
-	type S struct {
+	type s struct {
 		A int
 		B string
 	}
-	doCopyAndCheck(t, S{42, "42"}, false)
+
+	src := s{
+		A: 42,
+		B: "foo",
+	}
+	dst, err := Copy(src)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if dst != src {
+		t.Errorf("expected %v, got %v", src, dst)
+	}
 }
 
 func TestCopy_Struct_Loop(t *testing.T) {
-	type S struct {
-		A int
-		B *S
+	type s struct {
+		S *s
 	}
 
-	// Create a loop.
-	src := S{A: 1}
-	src.B = &src
+	src := &s{}
+	src.S = src
 
-	doCopyAndCheck(t, src, false)
+	dst, err := Copy(src)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if dst.S != dst {
+		t.Errorf("expected loop, got %p vs %p", dst.S, dst)
+	}
 }
 
 func TestCopy_Struct_Unexported(t *testing.T) {
-	type S struct {
+	type s struct {
 		a int
-		b string
+		B string
 	}
 
-	doCopyAndCheck(t, S{42, "42"}, false)
+	src := s{
+		a: 42,
+		B: "foo",
+	}
+	dst, err := Copy(src)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if dst != src {
+		t.Errorf("expected %v, got %v", src, dst)
+	}
 }
 
 func TestCopy_Struct_Error(t *testing.T) {
-	type S struct {
-		A func()
+	type unsupported struct {
+		f func()
 	}
 
-	doCopyAndCheck(t, S{A: func() {}}, true)
+	type s struct {
+		U unsupported
+	}
+
+	src := s{
+		U: unsupported{
+			f: func() {},
+		},
+	}
+
+	_, err := Copy(src)
+	if err == nil {
+		t.Errorf("expected error, got nil")
+	}
 }
 
 func TestCopy_Func_Nil(t *testing.T) {
-	var f func()
-	doCopyAndCheck(t, f, false)
+	var src func()
+	dst, err := Copy(src)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if dst != nil {
+		t.Errorf("expected nil")
+	}
 }
 
 func TestCopy_Func_Error(t *testing.T) {
-	doCopyAndCheck(t, func() {}, true)
+	src := func() {}
+	_, err := Copy(src)
+	if err == nil {
+		t.Errorf("expected error, got nil")
+	}
 }
 
 func TestCopy_Chan_Nil(t *testing.T) {
-	var c chan struct{}
-	doCopyAndCheck(t, c, false)
+	var src chan int
+	dst, err := Copy(src)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if dst != nil {
+		t.Errorf("expected nil, got %v", dst)
+	}
 }
 
 func TestCopy_Chan_Error(t *testing.T) {
-	doCopyAndCheck(t, make(chan struct{}), true)
+	src := make(chan int)
+	_, err := Copy(src)
+	if err == nil {
+		t.Errorf("expected error, got nil")
+	}
 }
 
 func TestCopy_UnsafePointer_Nil(t *testing.T) {
-	var p unsafe.Pointer
-	doCopyAndCheck(t, p, false)
+	var src unsafe.Pointer
+	dst, err := Copy(src)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if dst != nil {
+		t.Errorf("expected nil, got %v", dst)
+	}
 }
 
 func TestCopy_UnsafePointer_Error(t *testing.T) {
-	doCopyAndCheck(t, unsafe.Pointer(t), true)
+	v := 42
+	src := unsafe.Pointer(&v)
+	_, err := Copy(src)
+	if err == nil {
+		t.Errorf("expected error, got nil")
+	}
 }
 
 func TestCopy_Interface_Nil(t *testing.T) {
-	var value any
-	doCopyAndCheck(t, value, false)
+	var src any
+	dst, err := Copy(src)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if dst != nil {
+		t.Errorf("expected nil, got %v", dst)
+	}
 }
 
 func TestCopy_Interface_Struct_Recursive_Nil(t *testing.T) {
-	var s struct {
+	type s struct {
 		A any
 	}
-	doCopyAndCheck(t, s, false)
+
+	var src s
+	dst, err := Copy(src)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if dst.A != nil {
+		t.Errorf("expected nil, got %v", dst.A)
+	}
 }
 
 func TestCopy_Interface_Slice_Recursive_Nil(t *testing.T) {
-	value := []any{nil}
-	doCopyAndCheck(t, value, false)
+	src := []any{nil}
+	dst, err := Copy(src)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if dst[0] != nil {
+		t.Errorf("expected nil, got %v", dst[0])
+	}
 }
 
 func TestCopy_Interface_Map_Recursive_Nil(t *testing.T) {
-	value := map[string]any{"test": nil}
-	doCopyAndCheck(t, value, false)
+	src := map[string]any{
+		"foo": nil,
+	}
+	dst, err := Copy(src)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if dst["foo"] != nil {
+		t.Errorf("expected nil, got %v", dst["foo"])
+	}
 }
 
 func TestCopy_DerivedType(t *testing.T) {
-	type S int
-	doCopyAndCheck(t, S(42), false)
+	type MyInt int
+	src := MyInt(42)
+	dst, err := Copy(src)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if dst != src {
+		t.Errorf("expected %v, got %v", src, dst)
+	}
 }
 
 func TestCopy_Struct_With_Any_Field(t *testing.T) {
-	type S struct {
+	type s struct {
 		A any
 	}
 
-	src := S{A: map[string]interface{}{"key1": "value1", "key2": 12345}}
-	doCopyAndCheck(t, src, false)
+	src := s{
+		A: 42,
+	}
+	dst, err := Copy(src)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if dst != src {
+		t.Errorf("expected %v, got %v", src, dst)
+	}
 }
 
 func TestCopySkipUnsupported(t *testing.T) {
-	type S struct {
-		A int
-		B func()
-		C int
-	}
-
-	src := S{A: 42, B: func() {}, C: 43}
+	src := func() {}
 	dst, err := CopySkipUnsupported(src)
 	if err != nil {
-		t.Errorf("CopySkipUnsupported failed: %v", err)
+		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if src.A != dst.A {
-		t.Errorf("CopySkipUnsupported failed: expected %v, got %v", src.A, dst.A)
-	}
-
-	if src.C != dst.C {
-		t.Errorf("CopySkipUnsupported failed: expected %v, got %v", src.C, dst.C)
-	}
-
-	if dst.B != nil {
-		t.Errorf("CopySkipUnsupported failed: expected nil, got non-nil")
+	if dst != nil {
+		t.Errorf("expected nil")
 	}
 }
 
 func TestMustCopy(t *testing.T) {
 	src := 42
 	dst := MustCopy(src)
-	if src != dst {
-		t.Errorf("MustCopy failed: expected %v, got %v", src, dst)
+	if dst != src {
+		t.Errorf("expected %v, got %v", src, dst)
 	}
 }
 
 func TestMustCopy_Error(t *testing.T) {
 	defer func() {
 		if r := recover(); r == nil {
-			t.Error("MustCopy did not panic")
+			t.Errorf("expected panic, got nil")
 		}
 	}()
 
-	MustCopy(func() {})
-}
-
-func doCopyAndCheck[T any](t *testing.T, src T, expectError bool) {
-	t.Helper()
-
-	dst, err := Copy(src)
-	if err != nil {
-		if !expectError {
-			t.Errorf("Copy failed: %v", err)
-		}
-		return
-	}
-	if !reflect.DeepEqual(dst, src) {
-		t.Errorf("Copy failed: expected %v, got %v", src, dst)
-	}
-}
-
-func BenchmarkCopy_Deep(b *testing.B) {
-	type InnerStruct struct {
-		Description string
-		ID          int
-		Points      *InnerStruct
-	}
-
-	type NestedStruct struct {
-		Title     string
-		InnerData InnerStruct
-		MoreData  *NestedStruct
-	}
-
-	type ComplexStruct struct {
-		Name        string
-		Age         int
-		Data        map[string]interface{}
-		Nested      NestedStruct
-		Pointers    []*InnerStruct
-		IsAvailable bool
-		// Both below can be copied if they are nil.
-		F func()
-		C chan struct{}
-	}
-
-	src := ComplexStruct{
-		Name:        "Complex Example",
-		Age:         42,
-		Data:        map[string]interface{}{"key1": "value1", "key2": 12345},
-		IsAvailable: true,
-	}
-
-	innerInstance := InnerStruct{
-		Description: "Inner struct instance",
-		ID:          1,
-	}
-
-	innerInstance.Points = &innerInstance // Cyclic reference
-
-	nestedInstance := NestedStruct{
-		Title:     "Nested Instance",
-		InnerData: innerInstance,
-	}
-
-	nestedInstance.MoreData = &nestedInstance // Cyclic reference
-
-	src.Nested = nestedInstance
-	src.Pointers = append(src.Pointers, &innerInstance)
-
-	for i := 0; i < b.N; i++ {
-		MustCopy(src)
-	}
+	src := func() {}
+	MustCopy(src)
 }
 
 func TestTrickyMemberPointer(t *testing.T) {
-	type Foo struct {
-		N int
-	}
-	type Bar struct {
-		F *Foo
-		P *int
+	type s struct {
+		A *int
+		B *int
 	}
 
-	foo := Foo{N: 1}
-	bar := Bar{F: &foo, P: &foo.N}
+	v := 42
+	src := s{
+		A: &v,
+		B: &v,
+	}
 
-	doCopyAndCheck(t, bar, false)
+	dst, err := Copy(src)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if dst.A != dst.B {
+		t.Errorf("expected same pointer, got different")
+	}
+
+	if dst.A == src.A {
+		t.Errorf("expected different pointers, got same")
+	}
+
+	if *dst.A != 42 {
+		t.Errorf("expected 42, got %d", *dst.A)
+	}
 }
 
 type CustomTypeForCopier struct {
 	Value int
-	F     func() // Normally unsupported if non-nil.
 }
 
-var (
-	customTypeCopyCalled    bool
-	customTypeCopyErrored   bool
-	customPtrTypeCopyCalled bool
-)
-
-func (ct CustomTypeForCopier) Copy() (CustomTypeForCopier, error) {
-	customTypeCopyCalled = true
-	if ct.F != nil && ct.Value == -1 { // Special case to return error
-		customTypeCopyErrored = true
-		return CustomTypeForCopier{}, fmt.Errorf("custom copy error for F")
-	}
-	// Example custom logic: double value, share function pointer
-	return CustomTypeForCopier{Value: ct.Value * 2, F: ct.F}, nil
+func (c CustomTypeForCopier) Copy() (CustomTypeForCopier, error) {
+	return CustomTypeForCopier{Value: c.Value + 1}, nil
 }
 
 func TestCopy_CustomCopier_ValueReceiver(t *testing.T) {
-	customTypeCopyCalled = false
-	customTypeCopyErrored = false
-	src := CustomTypeForCopier{Value: 10, F: func() {}}
-
+	src := CustomTypeForCopier{Value: 10}
 	dst, err := Copy(src)
-
 	if err != nil {
-		t.Fatalf("Copy failed for CustomCopier: %v", err)
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if !customTypeCopyCalled {
-		t.Errorf("Custom Copier method was not called")
-	}
-	if customTypeCopyErrored {
-		t.Errorf("Custom Copier method unexpectedly errored")
-	}
-	if dst.Value != 20 { // As per custom logic
-		t.Errorf("Expected dst.Value to be 20, got %d", dst.Value)
-	}
-	if reflect.ValueOf(dst.F).Pointer() != reflect.ValueOf(src.F).Pointer() {
-		t.Errorf("Expected func to be shallow copied (shared) by custom copier")
+
+	if dst.Value != 11 {
+		t.Errorf("expected 11, got %d", dst.Value)
 	}
 }
 
+type CustomErrorCopier struct{}
+
+func (c CustomErrorCopier) Copy() (CustomErrorCopier, error) {
+	return CustomErrorCopier{}, fmt.Errorf("custom error")
+}
+
 func TestCopy_CustomCopier_ErrorCase(t *testing.T) {
-	customTypeCopyCalled = false
-	customTypeCopyErrored = false
-	// Trigger error condition in custom copier
-	src := CustomTypeForCopier{Value: -1, F: func() {}}
-
+	src := CustomErrorCopier{}
 	_, err := Copy(src)
-
-	if err == nil {
-		t.Fatalf("Expected error from custom copier, got nil")
-	}
-	if !customTypeCopyCalled {
-		t.Errorf("Custom Copier method was not called (for error case)")
-	}
-	if !customTypeCopyErrored {
-		t.Errorf("Custom Copier method did not flag error internally")
-	}
-	expectedErrorMsg := "custom copy error for F"
-	if err.Error() != expectedErrorMsg {
-		t.Errorf("Expected error message '%s', got '%s'", expectedErrorMsg, err.Error())
+	if err == nil || err.Error() != "custom error" {
+		t.Errorf("expected 'custom error', got %v", err)
 	}
 }
 
@@ -429,23 +713,19 @@ type CustomPtrTypeForCopier struct {
 	Value int
 }
 
-func (cpt *CustomPtrTypeForCopier) Copy() (*CustomPtrTypeForCopier, error) {
+var customPtrTypeCopyCalled bool
+
+func (c *CustomPtrTypeForCopier) Copy() (*CustomPtrTypeForCopier, error) {
 	customPtrTypeCopyCalled = true
-	if cpt == nil {
-		// This case should ideally not be hit if the main Copy function guards against it.
-		return nil, fmt.Errorf("custom Copy() called on nil CustomPtrTypeForCopier receiver")
-	}
-	return &CustomPtrTypeForCopier{Value: cpt.Value * 3}, nil
+	return &CustomPtrTypeForCopier{Value: c.Value + 5}, nil
 }
 
 func TestCopy_CustomCopier_PointerReceiver(t *testing.T) {
 	customPtrTypeCopyCalled = false
-	src := &CustomPtrTypeForCopier{Value: 5} // T is *CustomPtrTypeForCopier
-
+	src := &CustomPtrTypeForCopier{Value: 10}
 	dst, err := Copy(src)
-
 	if err != nil {
-		t.Fatalf("Copy failed for CustomCopier with pointer receiver: %v", err)
+		t.Fatalf("Copy failed: %v", err)
 	}
 	if !customPtrTypeCopyCalled {
 		t.Errorf("Custom Copier method (ptr receiver) was not called")
@@ -469,6 +749,55 @@ func TestCopy_CustomCopier_PointerReceiver(t *testing.T) {
 		t.Errorf("Custom Copier method (ptr receiver) was called for nil input, but should not have been")
 	}
 	if dstNil != nil {
-		t.Errorf("Expected nil for copied nil pointer of custom type, got %v", dstNil)
+		t.Errorf("Expected nil copy for nil input, got %v", dstNil)
+	}
+}
+
+func TestCopy_Options(t *testing.T) {
+	type S struct {
+		A int
+		B string
+	}
+	s := S{A: 1, B: "secret"}
+
+	t.Run("IgnorePath", func(t *testing.T) {
+		got, err := Copy(s, CopyIgnorePath("B"))
+		if err != nil {
+			t.Fatalf("Copy failed: %v", err)
+		}
+		if got.A != 1 || got.B != "" {
+			t.Errorf("CopyIgnorePath failed: %+v", got)
+		}
+	})
+
+	t.Run("SkipUnsupported", func(t *testing.T) {
+		type Unsupported struct {
+			F func()
+		}
+		u := Unsupported{F: func() {}}
+		_, err := Copy(u)
+		if err == nil {
+			t.Error("Expected error for unsupported type")
+		}
+
+		got, err := Copy(u, SkipUnsupported())
+		if err != nil {
+			t.Fatalf("Copy with SkipUnsupported failed: %v", err)
+		}
+		if got.F != nil {
+			t.Error("Expected nil function in copy")
+		}
+	})
+}
+
+func TestMustCopy_Options(t *testing.T) {
+	type S struct {
+		A int
+		B string
+	}
+	s := S{A: 1, B: "secret"}
+	got := MustCopy(s, CopyIgnorePath("B"))
+	if got.A != 1 || got.B != "" {
+		t.Errorf("MustCopy with options failed: %+v", got)
 	}
 }

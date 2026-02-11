@@ -75,6 +75,7 @@ func (b *Builder[T]) AddCondition(expr string) *Builder[T] {
 	return b
 }
 
+// lcpParts returns the longest common prefix of the given paths.
 func lcpParts(paths []Path) []pathPart {
 	if len(paths) == 0 {
 		return nil
@@ -126,13 +127,36 @@ type Node struct {
 	fullPath string
 }
 
-func (n *Node) navigate(path string) (*Node, error) {
+// navigate returns a Node for the specified path relative to the current node.
+// Navigate returns a Node for the specified path relative to the current node.
+// It supports both Go-style paths ("Field.Sub") and JSON Pointers ("/Field/Sub").
+func (n *Node) Navigate(path string) (*Node, error) {
 	if path == "" {
 		return n, nil
 	}
 	return n.navigateParts(parsePath(path))
 }
 
+// Put replaces the value at the current node without requiring the 'old' value.
+// Strict consistency checks for this specific value will be disabled.
+func (n *Node) Put(value any) *Node {
+	vNew := reflect.ValueOf(value)
+	p := &valuePatch{
+		newVal: deepCopyValue(vNew),
+	}
+	if n.current != nil {
+		p.cond, p.ifCond, p.unlessCond = n.current.conditions()
+	}
+	n.update(p)
+	n.current = p
+	return n
+}
+
+func (n *Node) navigate(path string) (*Node, error) {
+	return n.Navigate(path)
+}
+
+// FieldOrMapKey returns a Node for the specified field or map key.
 func (n *Node) FieldOrMapKey(key string) (*Node, error) {
 	curr := n.Elem()
 	if curr.typ != nil && curr.typ.Kind() == reflect.Map {

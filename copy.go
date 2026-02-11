@@ -3,6 +3,8 @@ package deep
 import (
 	"fmt"
 	"reflect"
+	"strconv"
+	"sync"
 
 	"github.com/brunoga/deep/internal/unsafe"
 )
@@ -11,27 +13,116 @@ import (
 // custom deep copy logic. The type T in Copy() (T, error) must be the
 // same concrete type as the receiver that implements this interface.
 type Copier[T any] interface {
+	// Copy returns a deep copy of the receiver.
 	Copy() (T, error)
+}
+
+// CopyOption allows configuring the behavior of the Copy function.
+type CopyOption interface {
+	applyCopy(*copyConfig)
+}
+
+type copyOptionFunc func(*copyConfig)
+
+func (f copyOptionFunc) applyCopy(c *copyConfig) {
+	f(c)
+}
+
+type copyConfig struct {
+	skipUnsupported bool
+	ignoredPaths    map[string]bool
+}
+
+var defaultCopyConfig = &copyConfig{}
+
+// SkipUnsupported returns an option that tells Copy to skip unsupported types
+// (like non-nil functions or channels) instead of returning an error.
+func SkipUnsupported() CopyOption {
+	return copyOptionFunc(func(c *copyConfig) {
+		c.skipUnsupported = true
+	})
+}
+
+// CopyIgnorePath returns an option that tells Copy to ignore the specified path.
+// The ignored path will have the zero value for its type in the resulting copy.
+func CopyIgnorePath(path string) CopyOption {
+	return copyOptionFunc(func(c *copyConfig) {
+		if c.ignoredPaths == nil {
+			c.ignoredPaths = make(map[string]bool)
+		}
+		c.ignoredPaths[path] = true
+	})
 }
 
 // Copy creates a deep copy of src. It returns the copy and a nil error in case
 // of success and the zero value for the type and a non-nil error on failure.
-func Copy[T any](src T) (T, error) {
-	return copyInternal(src, false)
+//
+// It correctly handles cyclic references and unexported fields.
+func Copy[T any](src T, opts ...CopyOption) (T, error) {
+	v := reflect.ValueOf(src)
+	if !v.IsValid() {
+		var t T
+		return t, nil
+	}
+
+	kind := v.Kind()
+
+	// Fast path for basic types with no options.
+	if len(opts) == 0 {
+		switch kind {
+		case reflect.Bool, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32,
+			reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32,
+			reflect.Uint64, reflect.Uintptr, reflect.Float32, reflect.Float64,
+			reflect.Complex64, reflect.Complex128, reflect.String:
+			return src, nil
+		}
+	}
+
+	config := defaultCopyConfig
+	if len(opts) > 0 {
+		config = &copyConfig{}
+		for _, opt := range opts {
+			opt.applyCopy(config)
+		}
+	}
+
+	// For cyclic reference detection to work reliably for root value types,
+	// they must be addressable. We ensure this by taking the address.
+	var rv reflect.Value
+	if v.Kind() == reflect.Ptr {
+		rv = v
+	} else {
+		pv := reflect.New(v.Type())
+		pv.Elem().Set(v)
+		rv = pv.Elem()
+	}
+
+	dst, err := copyInternal(rv, config)
+	if err != nil {
+		var t T
+		return t, err
+	}
+
+	return dst.Interface().(T), nil
 }
 
 // CopySkipUnsupported creates a deep copy of src. It returns the copy and a nil
 // error in case of success and the zero value for the type and a non-nil error
-// on failure. Unsupported types are skipped (the copy will have the zero value
-// for the type) instead of returning an error.
+// on failure. Unsupported types (e.g. non-nil functions, channels or unsafe
+// pointers) are skipped (the copy will have the zero value for the type) instead
+// of returning an error.
+//
+// Deprecated: Use Copy with the SkipUnsupported() option instead.
 func CopySkipUnsupported[T any](src T) (T, error) {
-	return copyInternal(src, true)
+	return Copy(src, SkipUnsupported())
 }
 
 // MustCopy creates a deep copy of src. It returns the copy on success or panics
 // in case of any failure.
-func MustCopy[T any](src T) T {
-	dst, err := copyInternal(src, false)
+//
+// It correctly handles cyclic references and unexported fields.
+func MustCopy[T any](src T, opts ...CopyOption) T {
+	dst, err := Copy(src, opts...)
 	if err != nil {
 		panic(err)
 	}
@@ -45,121 +136,135 @@ type pointersMapKey struct {
 }
 type pointersMap map[pointersMapKey]reflect.Value
 
-func copyInternal[T any](src T, skipUnsupported bool) (T, error) {
-	v := reflect.ValueOf(src)
+var pointersMapPool = sync.Pool{
+	New: func() any {
+		return make(pointersMap)
+	},
+}
 
-	// If src is the zero value for its type (e.g. an uninitialized interface,
-	// or if T is 'any' and src is its zero value), v will be invalid.
-	if !v.IsValid() {
-		// This amounts to returning the zero value for T.
-		var t T
-		return t, nil
+func copyInternal(v reflect.Value, config *copyConfig) (reflect.Value, error) {
+	pointers := pointersMapPool.Get().(pointersMap)
+	defer func() {
+		for k := range pointers {
+			delete(pointers, k)
+		}
+		pointersMapPool.Put(pointers)
+	}()
+
+	dst, err := recursiveCopy(v, pointers, config, "")
+	if err != nil {
+		return reflect.Value{}, err
 	}
 
-	// Attempt to use Copier interface if src is suitable:
-	// - A value type (struct, int, etc.)
-	// - A non-nil pointer type
-	// - A non-nil interface type
-	// This logic avoids trying to call Copy() on a nil receiver if T itself
-	// is a pointer or interface type that is nil.
-	attemptCopier := false
-	srcKind := v.Kind()
-	if srcKind != reflect.Interface && srcKind != reflect.Ptr {
-		attemptCopier = true
-	} else {
-		// Pointers or interface types are candidates only if they are not nil
-		if !v.IsNil() {
-			attemptCopier = true
+	return dst, nil
+}
+
+func recursiveCopy(v reflect.Value, pointers pointersMap,
+	config *copyConfig, path string) (reflect.Value, error) {
+	if config.ignoredPaths != nil && config.ignoredPaths[path] {
+		return reflect.Zero(v.Type()), nil
+	}
+
+	kind := v.Kind()
+
+	// Fast path for basic types.
+	switch kind {
+	case reflect.Bool, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32,
+		reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32,
+		reflect.Uint64, reflect.Uintptr, reflect.Float32, reflect.Float64,
+		reflect.Complex64, reflect.Complex128, reflect.String:
+		return v, nil
+	}
+
+	// Handle cyclic references for addressable values (structs, maps, slices, pointers).
+	if v.CanAddr() {
+		ptr := v.Addr().Pointer()
+		typ := v.Type()
+		key := pointersMapKey{ptr, typ}
+		if dst, ok := pointers[key]; ok {
+			if dst.Kind() == reflect.Ptr && v.Kind() != reflect.Ptr {
+				return dst.Elem(), nil
+			}
+			return dst, nil
+		}
+	} else if kind == reflect.Ptr && !v.IsNil() {
+		ptr := v.Pointer()
+		typ := v.Type()
+		key := pointersMapKey{ptr, typ}
+		if dst, ok := pointers[key]; ok {
+			return dst, nil
 		}
 	}
 
-	if attemptCopier {
-		srcType := v.Type()
-
-		// If T is an interface or pointer type, converting src to 'any' is generally
-		// non-allocating for src's underlying data.
-		if srcKind == reflect.Interface || srcKind == reflect.Ptr {
-			if copier, ok := any(src).(Copier[T]); ok {
-				return copier.Copy()
+	// Handle Copier interface.
+	if v.IsValid() && v.CanInterface() {
+		attemptCopier := true
+		if kind == reflect.Interface || kind == reflect.Ptr {
+			if v.IsNil() {
+				attemptCopier = false
 			}
-		} else {
-			// T is a value type (e.g. struct, array, basic type).
-			// The any(src) conversion might allocate.
-			// Check Implements first to avoid this allocation if T doesn't implement Copier[T].
-			copierInterfaceType := reflect.TypeOf((*Copier[T])(nil)).Elem()
-			if srcType.Implements(copierInterfaceType) {
-				// T implements Copier[T]. Now the type assertion (and potential allocation)
-				// is justified as we expect to call the custom method.
-				if copier, ok := any(src).(Copier[T]); ok {
-					return copier.Copy()
+		}
+
+		if attemptCopier {
+			if kind == reflect.Struct || kind == reflect.Ptr {
+				method := v.MethodByName("Copy")
+				if method.IsValid() && method.Type().NumIn() == 0 && method.Type().NumOut() == 2 {
+					if method.Type().Out(0) == v.Type() && method.Type().Out(1).Implements(reflect.TypeOf((*error)(nil)).Elem()) {
+						res := method.Call(nil)
+						if !res[1].IsNil() {
+							return reflect.Value{}, res[1].Interface().(error)
+						}
+						return res[0], nil
+					}
 				}
 			}
 		}
 	}
 
-	dst, err := recursiveCopy(v, make(pointersMap),
-		skipUnsupported)
-	if err != nil {
-		var t T
-		return t, err
-	}
-
-	return dst.Interface().(T), nil
-}
-
-func recursiveCopy(v reflect.Value, pointers pointersMap,
-	skipUnsupported bool) (reflect.Value, error) {
-	switch v.Kind() {
-	case reflect.Bool, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32,
-		reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32,
-		reflect.Uint64, reflect.Uintptr, reflect.Float32, reflect.Float64,
-		reflect.Complex64, reflect.Complex128, reflect.String:
-		// Direct type. We return a new reflect.Value with the same value
-		// to ensure it's not tied to a struct field (breaking addressability).
-		if v.CanInterface() {
-			return reflect.ValueOf(v.Interface()), nil
-		}
-		return v, nil
+	switch kind {
 	case reflect.Array:
-		return recursiveCopyArray(v, pointers, skipUnsupported)
+		return recursiveCopyArray(v, pointers, config, path)
 	case reflect.Interface:
-		return recursiveCopyInterface(v, pointers, skipUnsupported)
+		return recursiveCopyInterface(v, pointers, config, path)
 	case reflect.Map:
-		return recursiveCopyMap(v, pointers, skipUnsupported)
+		return recursiveCopyMap(v, pointers, config, path)
 	case reflect.Ptr:
-		return recursiveCopyPtr(v, pointers, skipUnsupported)
+		return recursiveCopyPtr(v, pointers, config, path)
 	case reflect.Slice:
-		return recursiveCopySlice(v, pointers, skipUnsupported)
+		return recursiveCopySlice(v, pointers, config, path)
 	case reflect.Struct:
-		return recursiveCopyStruct(v, pointers, skipUnsupported)
+		return recursiveCopyStruct(v, pointers, config, path)
 	case reflect.Func, reflect.Chan, reflect.UnsafePointer:
 		if v.IsNil() {
-			// If we have a nil function, unsafe pointer or channel, then we
-			// can copy it.
 			return v, nil
 		} else {
-			if skipUnsupported {
+			if config.skipUnsupported {
 				return reflect.Zero(v.Type()), nil
 			} else {
-				return reflect.Value{}, fmt.Errorf("unsuported non-nil value for type: %s", v.Type())
+				return reflect.Value{}, fmt.Errorf("unsupported non-nil value for type: %s", v.Type())
 			}
 		}
 	default:
-		if skipUnsupported {
+		if config.skipUnsupported {
 			return reflect.Zero(v.Type()), nil
 		} else {
-			return reflect.Value{}, fmt.Errorf("unsuported type: %s", v.Type())
+			return reflect.Value{}, fmt.Errorf("unsupported type: %s", v.Type())
 		}
 	}
 }
 
 func recursiveCopyArray(v reflect.Value, pointers pointersMap,
-	skipUnsupported bool) (reflect.Value, error) {
+	config *copyConfig, path string) (reflect.Value, error) {
 	dst := reflect.New(v.Type()).Elem()
 
+	hasIgnoredPaths := config.ignoredPaths != nil
 	for i := 0; i < v.Len(); i++ {
+		var indexPath string
+		if hasIgnoredPaths {
+			indexPath = path + "[" + strconv.Itoa(i) + "]"
+		}
 		elem := v.Index(i)
-		elemDst, err := recursiveCopy(elem, pointers, skipUnsupported)
+		elemDst, err := recursiveCopy(elem, pointers, config, indexPath)
 		if err != nil {
 			return reflect.Value{}, err
 		}
@@ -171,28 +276,35 @@ func recursiveCopyArray(v reflect.Value, pointers pointersMap,
 }
 
 func recursiveCopyInterface(v reflect.Value, pointers pointersMap,
-	skipUnsupported bool) (reflect.Value, error) {
+	config *copyConfig, path string) (reflect.Value, error) {
 	if v.IsNil() {
-		// If the interface is nil, just return it.
 		return v, nil
 	}
 
-	return recursiveCopy(v.Elem(), pointers, skipUnsupported)
+	return recursiveCopy(v.Elem(), pointers, config, path)
 }
 
 func recursiveCopyMap(v reflect.Value, pointers pointersMap,
-	skipUnsupported bool) (reflect.Value, error) {
+	config *copyConfig, path string) (reflect.Value, error) {
 	if v.IsNil() {
-		// If the slice is nil, just return it.
 		return v, nil
 	}
 
 	dst := reflect.MakeMap(v.Type())
 
+	hasIgnoredPaths := config.ignoredPaths != nil
 	for _, key := range v.MapKeys() {
+		var keyPath string
+		if hasIgnoredPaths {
+			if path == "" {
+				keyPath = fmt.Sprintf("%v", key.Interface())
+			} else {
+				keyPath = path + "." + fmt.Sprintf("%v", key.Interface())
+			}
+		}
+
 		elem := v.MapIndex(key)
-		elemDst, err := recursiveCopy(elem, pointers,
-			skipUnsupported)
+		elemDst, err := recursiveCopy(elem, pointers, config, keyPath)
 		if err != nil {
 			return reflect.Value{}, err
 		}
@@ -204,8 +316,7 @@ func recursiveCopyMap(v reflect.Value, pointers pointersMap,
 }
 
 func recursiveCopyPtr(v reflect.Value, pointers pointersMap,
-	skipUnsupported bool) (reflect.Value, error) {
-	// If the pointer is nil, just return it.
+	config *copyConfig, path string) (reflect.Value, error) {
 	if v.IsNil() {
 		return v, nil
 	}
@@ -214,19 +325,15 @@ func recursiveCopyPtr(v reflect.Value, pointers pointersMap,
 	typ := v.Type()
 	key := pointersMapKey{ptr, typ}
 
-	// If the pointer is already in the pointers map, return it.
 	if dst, ok := pointers[key]; ok {
 		return dst, nil
 	}
 
-	// Otherwise, create a new pointer and add it to the pointers map.
 	dst := reflect.New(v.Type().Elem())
-
 	pointers[key] = dst
 
-	// Proceed with the copy.
 	elem := v.Elem()
-	elemDst, err := recursiveCopy(elem, pointers, skipUnsupported)
+	elemDst, err := recursiveCopy(elem, pointers, config, path)
 	if err != nil {
 		return reflect.Value{}, err
 	}
@@ -237,18 +344,21 @@ func recursiveCopyPtr(v reflect.Value, pointers pointersMap,
 }
 
 func recursiveCopySlice(v reflect.Value, pointers pointersMap,
-	skipUnsupported bool) (reflect.Value, error) {
+	config *copyConfig, path string) (reflect.Value, error) {
 	if v.IsNil() {
-		// If the slice is nil, just return it.
 		return v, nil
 	}
 
 	dst := reflect.MakeSlice(v.Type(), v.Len(), v.Cap())
 
+	hasIgnoredPaths := config.ignoredPaths != nil
 	for i := 0; i < v.Len(); i++ {
+		var indexPath string
+		if hasIgnoredPaths {
+			indexPath = path + "[" + strconv.Itoa(i) + "]"
+		}
 		elem := v.Index(i)
-		elemDst, err := recursiveCopy(elem, pointers,
-			skipUnsupported)
+		elemDst, err := recursiveCopy(elem, pointers, config, indexPath)
 		if err != nil {
 			return reflect.Value{}, err
 		}
@@ -260,30 +370,41 @@ func recursiveCopySlice(v reflect.Value, pointers pointersMap,
 }
 
 func recursiveCopyStruct(v reflect.Value, pointers pointersMap,
-	skipUnsupported bool) (reflect.Value, error) {
+	config *copyConfig, path string) (reflect.Value, error) {
 	dst := reflect.New(v.Type()).Elem()
 
+	if v.CanAddr() {
+		pointers[pointersMapKey{v.Addr().Pointer(), v.Type()}] = dst.Addr()
+	}
+
+	hasIgnoredPaths := config.ignoredPaths != nil
 	for i := 0; i < v.NumField(); i++ {
+		var fieldPath string
+		fieldName := v.Type().Field(i).Name
+		if hasIgnoredPaths {
+			if path != "" {
+				fieldPath = path + "." + fieldName
+			} else {
+				fieldPath = fieldName
+			}
+		}
+
 		elem := v.Field(i)
 
-		// If the field is unexported, we need to disable read-only mode. If it
-		// is exported, doing this changes nothing so we just do it. We need to
-		// do this here not because we are writting to the field (this is the
-		// source), but because Interface() does not work if the read-only bits
-		// are set.
-		unsafe.DisableRO(&elem)
+		if !elem.CanInterface() {
+			unsafe.DisableRO(&elem)
+		}
 
-		elemDst, err := recursiveCopy(elem, pointers,
-			skipUnsupported)
+		elemDst, err := recursiveCopy(elem, pointers, config, fieldPath)
 		if err != nil {
 			return reflect.Value{}, err
 		}
 
 		dstField := dst.Field(i)
 
-		// If the field is unexported, we need to disable read-only mode so we
-		// can actually write to it.
-		unsafe.DisableRO(&dstField)
+		if !dstField.CanSet() {
+			unsafe.DisableRO(&dstField)
+		}
 
 		dstField.Set(elemDst)
 	}
@@ -295,9 +416,34 @@ func deepCopyValue(v reflect.Value) reflect.Value {
 	if !v.IsValid() {
 		return reflect.Value{}
 	}
-	copied, err := recursiveCopy(v, make(pointersMap), false)
+	config := defaultCopyConfig
+	pointers := pointersMapPool.Get().(pointersMap)
+	defer func() {
+		for k := range pointers {
+			delete(pointers, k)
+		}
+		pointersMapPool.Put(pointers)
+	}()
+
+	// We ensure the root is addressable for cycle detection.
+	var rv reflect.Value
+	isPtr := v.Kind() == reflect.Ptr
+	if isPtr {
+		rv = v
+	} else {
+		pv := reflect.New(v.Type())
+		pv.Elem().Set(v)
+		rv = pv.Elem()
+	}
+
+	copied, err := recursiveCopy(rv, pointers, config, "")
 	if err != nil {
 		return v
 	}
+
+	if !isPtr && copied.Kind() == reflect.Ptr {
+		return copied.Elem()
+	}
+
 	return copied
 }
