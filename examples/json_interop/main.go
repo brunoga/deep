@@ -36,7 +36,7 @@ func main() {
 	// We use ToJSONPatch() which generates an RFC 6902 compliant list of ops.
 	jsonPatchBytes, err := patch.ToJSONPatch()
 	if err != nil {
-		fmt.Printf("Error: %v\\n", err)
+		fmt.Printf("Error: %v\n", err)
 		return
 	}
 
@@ -48,6 +48,6 @@ func main() {
 	// This is useful if you want to save the patch in a database (like MongoDB)
 	// and restore it later in another Go service.
 	serializedPatch, _ := json.MarshalIndent(patch, "", "  ")
-	fmt.Println("\\nINTERNAL DEEP JSON REPRESENTATION (for persistence):")
+	fmt.Println("\nINTERNAL DEEP JSON REPRESENTATION (for persistence):")
 	fmt.Println(string(serializedPatch))
 }

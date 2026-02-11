@@ -47,11 +47,11 @@ func main() {
 	_ = patch.Walk(func(path string, op deep.OpKind, old, new any) error {
 		switch op {
 		case deep.OpReplace:
-			fmt.Printf("[Update] Item '%s' value changed: %v -> %v\\n", path, old, new)
+			fmt.Printf("[Update] Item '%s' value changed: %v -> %v\n", path, old, new)
 		case deep.OpAdd:
-			fmt.Printf("[Add] New item at '%s': %+v\\n", path, new)
+			fmt.Printf("[Add] New item at '%s': %+v\n", path, new)
 		case deep.OpRemove:
-			fmt.Printf("[Remove] Item at '%s' (Value was: %+v)\\n", path, old)
+			fmt.Printf("[Remove] Item at '%s' (Value was: %+v)\n", path, old)
 		}
 		return nil
 	})
@@ -59,5 +59,5 @@ func main() {
 	// 5. Apply the update.
 	deep.Diff(inventoryA, inventoryB).Apply(&inventoryA)
 
-	fmt.Printf("\\nFinal Inventory: %+v\\n", inventoryA)
+	fmt.Printf("\nFinal Inventory: %+v\n", inventoryA)
 }

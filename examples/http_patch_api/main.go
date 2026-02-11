@@ -78,18 +78,18 @@ func main() {
 	// Serialize the patch to JSON for transmission.
 	patchJSON, _ := json.Marshal(patch)
 
-	fmt.Printf("Client: Sending patch to server (%d bytes)\\n", len(patchJSON))
+	fmt.Printf("Client: Sending patch to server (%d bytes)\n", len(patchJSON))
 
 	// Send the patch via HTTP POST.
 	resp, err := http.Post(server.URL+"?id=res-1", "application/json", bytes.NewBuffer(patchJSON))
 	if err != nil {
-		fmt.Printf("Client Error: %v\\n", err)
+		fmt.Printf("Client Error: %v\n", err)
 		return
 	}
 	defer resp.Body.Close()
 
 	// --- PART 3: VERIFICATION ---
 	status, _ := io.ReadAll(resp.Body)
-	fmt.Printf("Server Response: %s\\n", string(status))
-	fmt.Printf("Server Final State for res-1: %+v\\n", ServerState["res-1"])
+	fmt.Printf("Server Response: %s\n", string(status))
+	fmt.Printf("Server Final State for res-1: %+v\n", ServerState["res-1"])
 }

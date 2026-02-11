@@ -42,24 +42,24 @@ func main() {
 
 	history = append(history, deep.Diff(original, doc))
 
-	fmt.Printf("\\nCurrent State: %+v\\n", doc)
+	fmt.Printf("\nCurrent State: %+v\n", doc)
 
 	// 5. UNDO!
 	// To undo, we take the last patch and REVERSE it.
-	fmt.Println("\\n--- UNDO ACTION 2 ---")
+	fmt.Println("\n--- UNDO ACTION 2 ---")
 	lastPatch := history[len(history)-1]
 	undoPatch := lastPatch.Reverse()
 	undoPatch.Apply(&doc)
 
-	fmt.Printf("After Undo 2: %+v\\n", doc)
+	fmt.Printf("After Undo 2: %+v\n", doc)
 
 	// 6. UNDO again!
-	fmt.Println("\\n--- UNDO ACTION 1 ---")
+	fmt.Println("\n--- UNDO ACTION 1 ---")
 	firstPatch := history[len(history)-2]
 	undoFirstPatch := firstPatch.Reverse()
 	undoFirstPatch.Apply(&doc)
 
-	fmt.Printf("After Undo 1: %+v\\n", doc)
+	fmt.Printf("After Undo 1: %+v\n", doc)
 
 	// Notice we are back to the initial state!
 }

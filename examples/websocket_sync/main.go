@@ -47,7 +47,7 @@ func main() {
 
 	// Network transport (simulated).
 	wireData, _ := json.Marshal(patch)
-	fmt.Printf("\\n[Network] Broadcasting Patch (%d bytes): %s\\n", len(wireData), string(wireData))
+	fmt.Printf("\n[Network] Broadcasting Patch (%d bytes): %s\n", len(wireData), string(wireData))
 
 	// 5. CLIENT RECEIVE: The client receives the wire data.
 	receivedPatch := deep.NewPatch[GameWorld]()
@@ -56,11 +56,11 @@ func main() {
 	// Client applies the patch to its local copy.
 	receivedPatch.Apply(&clientState)
 
-	fmt.Printf("\\nClient State after receiving patch: %v\\n", clientState.Players["p1"])
-	fmt.Printf("Client Game Time: %d\\n", clientState.Time)
+	fmt.Printf("\nClient State after receiving patch: %v\n", clientState.Players["p1"])
+	fmt.Printf("Client Game Time: %d\n", clientState.Time)
 
 	// 6. Verification: Both should be identical again.
 	if clientState.Players["p1"].X == serverState.Players["p1"].X {
-		fmt.Println("\\nSynchronization Successful!")
+		fmt.Println("\nSynchronization Successful!")
 	}
 }

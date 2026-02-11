@@ -49,22 +49,22 @@ func main() {
 	err := patch.Walk(func(path string, op deep.OpKind, old, new any) error {
 		switch op {
 		case deep.OpReplace:
-			fmt.Printf("Modified field '%s': %v -> %v\\n", path, old, new)
+			fmt.Printf("Modified field '%s': %v -> %v\n", path, old, new)
 		case deep.OpAdd:
 			// For slice elements, path will look like "Roles[1]"
 			if strings.Contains(path, "[") {
-				fmt.Printf("Added to list '%s': %v\\n", path, new)
+				fmt.Printf("Added to list '%s': %v\n", path, new)
 			} else {
-				fmt.Printf("Set new field '%s': %v\\n", path, new)
+				fmt.Printf("Set new field '%s': %v\n", path, new)
 			}
 		case deep.OpRemove:
-			fmt.Printf("Removed field/item '%s' (was: %v)\\n", path, old)
+			fmt.Printf("Removed field/item '%s' (was: %v)\n", path, old)
 		}
 		return nil
 	})
 
 	if err != nil {
-		fmt.Printf("Error walking patch: %v\\n", err)
+		fmt.Printf("Error walking patch: %v\n", err)
 	}
 
 	// Output should look like:

@@ -36,32 +36,32 @@ func main() {
 
 	patch, err := builder.Build()
 	if err != nil {
-		fmt.Printf("Error building patch: %v\\n", err)
+		fmt.Printf("Error building patch: %v\n", err)
 		return
 	}
 
 	// 3. Attempt to apply the patch.
-	fmt.Printf("Initial Account: %+v\\n", acc)
+	fmt.Printf("Initial Account: %+v\n", acc)
 	fmt.Println("Attempting activation with 0.0 balance...")
 
 	err = patch.ApplyChecked(&acc)
 	if err != nil {
 		// This SHOULD fail because Balance is 0.0
-		fmt.Printf("Update Rejected: %v\\n", err)
+		fmt.Printf("Update Rejected: %v\n", err)
 	} else {
 		fmt.Println("Update Successful!")
 	}
 
 	// 4. Now let's update the balance and try again.
 	acc.Balance = 100.0
-	fmt.Printf("\\nUpdated Account Balance: %+v\\n", acc)
+	fmt.Printf("\nUpdated Account Balance: %+v\n", acc)
 	fmt.Println("Attempting activation with 100.0 balance...")
 
 	err = patch.ApplyChecked(&acc)
 	if err != nil {
-		fmt.Printf("Update Rejected: %v\\n", err)
+		fmt.Printf("Update Rejected: %v\n", err)
 	} else {
 		// This SHOULD succeed now.
-		fmt.Printf("Update Successful! New Status: %s\\n", acc.Status)
+		fmt.Printf("Update Successful! New Status: %s\n", acc.Status)
 	}
 }
