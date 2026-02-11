@@ -22,54 +22,77 @@ type Path string
 
 // resolve traverses v using the path and returns the reflect.Value found.
 func (p Path) resolve(v reflect.Value) (reflect.Value, error) {
+	parts := parsePath(string(p))
+	val, _, err := p.navigate(v, parts)
+	return val, err
+}
+
+func (p Path) resolveParent(v reflect.Value) (reflect.Value, pathPart, error) {
+	parts := parsePath(string(p))
+	if len(parts) == 0 {
+		return reflect.Value{}, pathPart{}, fmt.Errorf("path is empty")
+	}
+	parent, _, err := p.navigate(v, parts[:len(parts)-1])
+	if err != nil {
+		return reflect.Value{}, pathPart{}, err
+	}
+	return parent, parts[len(parts)-1], nil
+}
+
+func (p Path) navigate(v reflect.Value, parts []pathPart) (reflect.Value, pathPart, error) {
 	current, err := dereference(v)
 	if err != nil {
-		return reflect.Value{}, err
+		return reflect.Value{}, pathPart{}, err
 	}
 
-	parts := parsePath(string(p))
 	for _, part := range parts {
 		if !current.IsValid() {
-			return reflect.Value{}, fmt.Errorf("path traversal failed: nil value at intermediate step")
+			return reflect.Value{}, pathPart{}, fmt.Errorf("path traversal failed: nil value at intermediate step")
 		}
 
-		if part.isIndex {
-			if current.Kind() != reflect.Slice && current.Kind() != reflect.Array {
-				return reflect.Value{}, fmt.Errorf("cannot index into %v", current.Type())
-			}
+		if part.isIndex && (current.Kind() == reflect.Slice || current.Kind() == reflect.Array) {
 			if part.index < 0 || part.index >= current.Len() {
-				return reflect.Value{}, fmt.Errorf("index out of bounds: %d", part.index)
+				return reflect.Value{}, pathPart{}, fmt.Errorf("index out of bounds: %d", part.index)
 			}
 			current = current.Index(part.index)
 		} else if current.Kind() == reflect.Map {
 			keyType := current.Type().Key()
 			var keyVal reflect.Value
+			key := part.key
+			if key == "" && part.isIndex {
+				key = strconv.Itoa(part.index)
+			}
 			if keyType.Kind() == reflect.String {
-				keyVal = reflect.ValueOf(part.key)
+				keyVal = reflect.ValueOf(key)
 			} else if keyType.Kind() == reflect.Int {
-				i, err := strconv.Atoi(part.key)
+				i, err := strconv.Atoi(key)
 				if err != nil {
-					return reflect.Value{}, fmt.Errorf("invalid int key: %s", part.key)
+					return reflect.Value{}, pathPart{}, fmt.Errorf("invalid int key: %s", key)
 				}
 				keyVal = reflect.ValueOf(i)
 			} else {
-				return reflect.Value{}, fmt.Errorf("unsupported map key type for path: %v", keyType)
+				return reflect.Value{}, pathPart{}, fmt.Errorf("unsupported map key type for path: %v", keyType)
 			}
 
 			val := current.MapIndex(keyVal)
 			if !val.IsValid() {
-				return reflect.Value{}, nil
+				return reflect.Value{}, pathPart{}, nil
 			}
 			current = val
 		} else {
 			if current.Kind() != reflect.Struct {
-				return reflect.Value{}, fmt.Errorf("cannot access field %s on %v", part.key, current.Type())
+				return reflect.Value{}, pathPart{}, fmt.Errorf("cannot access field %s on %v", part.key, current.Type())
+			}
+
+			key := part.key
+			if key == "" && part.isIndex {
+				key = strconv.Itoa(part.index)
 			}
 
 			// We use FieldByName and disableRO to support unexported fields.
-			f := current.FieldByName(part.key)
+			f := current.FieldByName(key)
 			if !f.IsValid() {
-				return reflect.Value{}, fmt.Errorf("field %s not found", part.key)
+				return reflect.Value{}, pathPart{}, fmt.Errorf("field %s not found", key)
 			}
 			unsafe.DisableRO(&f)
 			current = f
@@ -77,10 +100,134 @@ func (p Path) resolve(v reflect.Value) (reflect.Value, error) {
 
 		current, err = dereference(current)
 		if err != nil {
-			return reflect.Value{}, err
+			return reflect.Value{}, pathPart{}, err
+		}
+		if len(parts) > 0 && part == parts[len(parts)-1] {
+			return current, part, nil
 		}
 	}
-	return current, nil
+	return current, pathPart{}, nil
+}
+
+func (p Path) set(v reflect.Value, val reflect.Value) error {
+	parent, lastPart, err := p.resolveParent(v)
+	if err != nil {
+		// If path is root, set v directly if possible.
+		if string(p) == "" || string(p) == "/" {
+			if !v.CanSet() {
+				return fmt.Errorf("cannot set root value")
+			}
+			v.Set(val)
+			return nil
+		}
+		return err
+	}
+
+	switch parent.Kind() {
+	case reflect.Map:
+		keyType := parent.Type().Key()
+		var keyVal reflect.Value
+		key := lastPart.key
+		if key == "" && lastPart.isIndex {
+			key = strconv.Itoa(lastPart.index)
+		}
+		if keyType.Kind() == reflect.String {
+			keyVal = reflect.ValueOf(key)
+		} else if keyType.Kind() == reflect.Int {
+			i, _ := strconv.Atoi(key)
+			keyVal = reflect.ValueOf(i)
+		}
+		parent.SetMapIndex(keyVal, convertValue(val, parent.Type().Elem()))
+		return nil
+	case reflect.Slice:
+		idx := lastPart.index
+		if !lastPart.isIndex {
+			idx, err = strconv.Atoi(lastPart.key)
+			if err != nil {
+				return fmt.Errorf("invalid slice index: %s", lastPart.key)
+			}
+		}
+		if idx < 0 || idx > parent.Len() {
+			return fmt.Errorf("index out of bounds: %d", idx)
+		}
+		if idx == parent.Len() {
+			parent.Set(reflect.Append(parent, convertValue(val, parent.Type().Elem())))
+		} else {
+			parent.Index(idx).Set(convertValue(val, parent.Type().Elem()))
+		}
+		return nil
+	case reflect.Struct:
+		key := lastPart.key
+		if key == "" && lastPart.isIndex {
+			key = strconv.Itoa(lastPart.index)
+		}
+		f := parent.FieldByName(key)
+		if !f.IsValid() {
+			return fmt.Errorf("field %s not found", key)
+		}
+		if !f.CanSet() {
+			unsafe.DisableRO(&f)
+		}
+		f.Set(convertValue(val, f.Type()))
+		return nil
+	default:
+		return fmt.Errorf("cannot set value in %v", parent.Kind())
+	}
+}
+
+func (p Path) delete(v reflect.Value) error {
+	parent, lastPart, err := p.resolveParent(v)
+	if err != nil {
+		return err
+	}
+
+	switch parent.Kind() {
+	case reflect.Map:
+		keyType := parent.Type().Key()
+		var keyVal reflect.Value
+		key := lastPart.key
+		if key == "" && lastPart.isIndex {
+			key = strconv.Itoa(lastPart.index)
+		}
+		if keyType.Kind() == reflect.String {
+			keyVal = reflect.ValueOf(key)
+		} else if keyType.Kind() == reflect.Int {
+			i, _ := strconv.Atoi(key)
+			keyVal = reflect.ValueOf(i)
+		}
+		parent.SetMapIndex(keyVal, reflect.Value{})
+		return nil
+	case reflect.Slice:
+		idx := lastPart.index
+		if !lastPart.isIndex {
+			idx, err = strconv.Atoi(lastPart.key)
+			if err != nil {
+				return fmt.Errorf("invalid slice index: %s", lastPart.key)
+			}
+		}
+		if idx < 0 || idx >= parent.Len() {
+			return fmt.Errorf("index out of bounds: %d", idx)
+		}
+		newSlice := reflect.AppendSlice(parent.Slice(0, idx), parent.Slice(idx+1, parent.Len()))
+		parent.Set(newSlice)
+		return nil
+	case reflect.Struct:
+		key := lastPart.key
+		if key == "" && lastPart.isIndex {
+			key = strconv.Itoa(lastPart.index)
+		}
+		f := parent.FieldByName(key)
+		if !f.IsValid() {
+			return fmt.Errorf("field %s not found", key)
+		}
+		if !f.CanSet() {
+			unsafe.DisableRO(&f)
+		}
+		f.Set(reflect.Zero(f.Type()))
+		return nil
+	default:
+		return fmt.Errorf("cannot delete from %v", parent.Kind())
+	}
 }
 
 func dereference(v reflect.Value) (reflect.Value, error) {
@@ -152,7 +299,51 @@ type pathPart struct {
 	isIndex bool
 }
 
+func (p pathPart) equals(other pathPart) bool {
+	if p.isIndex != other.isIndex {
+		return false
+	}
+	if p.isIndex {
+		return p.index == other.index
+	}
+	return p.key == other.key
+}
+
+func (p Path) stripParts(prefix []pathPart) Path {
+	parts := parsePath(string(p))
+	if len(parts) < len(prefix) {
+		return p
+	}
+	for i := range prefix {
+		if !parts[i].equals(prefix[i]) {
+			return p
+		}
+	}
+	remaining := parts[len(prefix):]
+	if len(remaining) == 0 {
+		return ""
+	}
+	// Reconstruct as Go-style for internal relative path consistency.
+	var res strings.Builder
+	for i, part := range remaining {
+		if part.isIndex {
+			res.WriteByte('[')
+			res.WriteString(strconv.Itoa(part.index))
+			res.WriteByte(']')
+		} else {
+			if i > 0 {
+				res.WriteByte('.')
+			}
+			res.WriteString(part.key)
+		}
+	}
+	return Path(res.String())
+}
+
 func parsePath(path string) []pathPart {
+	if strings.HasPrefix(path, "/") {
+		return parseJSONPointer(path)
+	}
 	var parts []pathPart
 	var buf strings.Builder
 	flush := func() {
@@ -187,11 +378,29 @@ func parsePath(path string) []pathPart {
 	return parts
 }
 
+func parseJSONPointer(path string) []pathPart {
+	if path == "/" {
+		return nil
+	}
+	tokens := strings.Split(path, "/")[1:]
+	parts := make([]pathPart, len(tokens))
+	for i, token := range tokens {
+		token = strings.ReplaceAll(token, "~1", "/")
+		token = strings.ReplaceAll(token, "~0", "~")
+		if idx, err := strconv.Atoi(token); err == nil && idx >= 0 {
+			parts[i] = pathPart{key: token, index: idx, isIndex: true}
+		} else {
+			parts[i] = pathPart{key: token}
+		}
+	}
+	return parts
+}
+
 // rawCondition is the internal non-generic interface for conditions.
 type rawCondition interface {
 	Evaluate(v any) (bool, error)
 	paths() []Path
-	withRelativePaths(prefix string) rawCondition
+	withRelativeParts(prefix []pathPart) rawCondition
 }
 
 func toReflectValue(v any) reflect.Value {
@@ -224,9 +433,9 @@ func (c *rawCompareCondition) paths() []Path {
 	return []Path{c.Path}
 }
 
-func (c *rawCompareCondition) withRelativePaths(prefix string) rawCondition {
+func (c *rawCompareCondition) withRelativeParts(prefix []pathPart) rawCondition {
 	return &rawCompareCondition{
-		Path: Path(strings.TrimPrefix(strings.TrimPrefix(string(c.Path), prefix), ".")),
+		Path: c.Path.stripParts(prefix),
 		Val:  c.Val,
 		Op:   c.Op,
 	}
@@ -255,10 +464,10 @@ func (c *rawCompareFieldCondition) paths() []Path {
 	return []Path{c.Path1, c.Path2}
 }
 
-func (c *rawCompareFieldCondition) withRelativePaths(prefix string) rawCondition {
+func (c *rawCompareFieldCondition) withRelativeParts(prefix []pathPart) rawCondition {
 	return &rawCompareFieldCondition{
-		Path1: Path(strings.TrimPrefix(strings.TrimPrefix(string(c.Path1), prefix), ".")),
-		Path2: Path(strings.TrimPrefix(strings.TrimPrefix(string(c.Path2), prefix), ".")),
+		Path1: c.Path1.stripParts(prefix),
+		Path2: c.Path2.stripParts(prefix),
 		Op:    c.Op,
 	}
 }
@@ -288,10 +497,10 @@ func (c *rawAndCondition) paths() []Path {
 	return res
 }
 
-func (c *rawAndCondition) withRelativePaths(prefix string) rawCondition {
+func (c *rawAndCondition) withRelativeParts(prefix []pathPart) rawCondition {
 	res := &rawAndCondition{Conditions: make([]rawCondition, len(c.Conditions))}
 	for i, sub := range c.Conditions {
-		res.Conditions[i] = sub.withRelativePaths(prefix)
+		res.Conditions[i] = sub.withRelativeParts(prefix)
 	}
 	return res
 }
@@ -321,10 +530,10 @@ func (c *rawOrCondition) paths() []Path {
 	return res
 }
 
-func (c *rawOrCondition) withRelativePaths(prefix string) rawCondition {
+func (c *rawOrCondition) withRelativeParts(prefix []pathPart) rawCondition {
 	res := &rawOrCondition{Conditions: make([]rawCondition, len(c.Conditions))}
 	for i, sub := range c.Conditions {
-		res.Conditions[i] = sub.withRelativePaths(prefix)
+		res.Conditions[i] = sub.withRelativeParts(prefix)
 	}
 	return res
 }
@@ -345,8 +554,8 @@ func (c *rawNotCondition) paths() []Path {
 	return c.C.paths()
 }
 
-func (c *rawNotCondition) withRelativePaths(prefix string) rawCondition {
-	return &rawNotCondition{C: c.C.withRelativePaths(prefix)}
+func (c *rawNotCondition) withRelativeParts(prefix []pathPart) rawCondition {
+	return &rawNotCondition{C: c.C.withRelativeParts(prefix)}
 }
 
 type CompareCondition[T any] struct {
@@ -579,7 +788,7 @@ func (l *lexer) next() token {
 		return l.lexString(c)
 	case isDigit(c):
 		return l.lexNumber()
-	case isAlpha(c):
+	case isAlpha(c) || c == '/':
 		return l.lexIdent()
 	}
 	return token{kind: tokError, val: string(c)}
@@ -621,7 +830,7 @@ func (l *lexer) lexNumber() token {
 
 func (l *lexer) lexIdent() token {
 	start := l.pos
-	for l.pos < len(l.input) && (isAlpha(l.input[l.pos]) || isDigit(l.input[l.pos]) || l.input[l.pos] == '.' || l.input[l.pos] == '[' || l.input[l.pos] == ']') {
+	for l.pos < len(l.input) && (isAlpha(l.input[l.pos]) || isDigit(l.input[l.pos]) || l.input[l.pos] == '.' || l.input[l.pos] == '[' || l.input[l.pos] == ']' || l.input[l.pos] == '/' || l.input[l.pos] == '~') {
 		l.pos++
 	}
 	val := l.input[start:l.pos]

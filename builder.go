@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"reflect"
 	"strconv"
-	"strings"
 )
 
 // Builder allows constructing a Patch[T] manually with on-the-fly type validation.
@@ -44,7 +43,8 @@ func (b *Builder[T]) Root() *Node {
 		update: func(p diffPatch) {
 			b.patch = p
 		},
-		current: b.patch,
+		current:  b.patch,
+		fullPath: "",
 	}
 }
 
@@ -63,21 +63,21 @@ func (b *Builder[T]) AddCondition(expr string) *Builder[T] {
 	}
 
 	paths := raw.paths()
-	prefix := lcp(paths)
+	prefix := lcpParts(paths)
 
-	node, err := b.Root().navigate(prefix)
+	node, err := b.Root().navigateParts(prefix)
 	if err != nil {
 		b.err = err
 		return b
 	}
 
-	node.WithCondition(raw.withRelativePaths(prefix))
+	node.WithCondition(raw.withRelativeParts(prefix))
 	return b
 }
 
-func lcp(paths []Path) string {
+func lcpParts(paths []Path) []pathPart {
 	if len(paths) == 0 {
-		return ""
+		return nil
 	}
 
 	allParts := make([][]pathPart, len(paths))
@@ -93,41 +93,16 @@ func lcp(paths []Path) string {
 		}
 		common = common[:n]
 		for j := 0; j < n; j++ {
-			if common[j] != allParts[i][j] {
+			if !common[j].equals(allParts[i][j]) {
 				common = common[:j]
 				break
 			}
 		}
 	}
-
-	var res strings.Builder
-	for i, p := range common {
-		if i > 0 && !p.isIndex {
-			res.WriteByte('.')
-		}
-		if p.isIndex {
-			res.WriteByte('[')
-			res.WriteString(strconv.Itoa(p.index))
-			res.WriteByte(']')
-		} else {
-			res.WriteString(p.key)
-		}
-	}
-	return res.String()
+	return common
 }
 
-// Node represents a specific location within a value's structure.
-type Node struct {
-	typ     reflect.Type
-	update  func(diffPatch)
-	current diffPatch
-}
-
-func (n *Node) navigate(path string) (*Node, error) {
-	if path == "" {
-		return n, nil
-	}
-	parts := parsePath(path)
+func (n *Node) navigateParts(parts []pathPart) (*Node, error) {
 	curr := n
 	var err error
 	for _, part := range parts {
@@ -141,6 +116,21 @@ func (n *Node) navigate(path string) (*Node, error) {
 		}
 	}
 	return curr, nil
+}
+
+// Node represents a specific location within a value's structure.
+type Node struct {
+	typ      reflect.Type
+	update   func(diffPatch)
+	current  diffPatch
+	fullPath string
+}
+
+func (n *Node) navigate(path string) (*Node, error) {
+	if path == "" {
+		return n, nil
+	}
+	return n.navigateParts(parsePath(path))
 }
 
 func (n *Node) FieldOrMapKey(key string) (*Node, error) {
@@ -172,6 +162,66 @@ func (n *Node) Set(old, new any) *Node {
 	p := &valuePatch{
 		oldVal: deepCopyValue(vOld),
 		newVal: deepCopyValue(vNew),
+	}
+	if n.current != nil {
+		p.cond, p.ifCond, p.unlessCond = n.current.conditions()
+	}
+	n.update(p)
+	n.current = p
+	return n
+}
+
+// Test adds a test operation to the current node. The patch application
+// will fail if the value at this node does not match the expected value.
+func (n *Node) Test(expected any) *Node {
+	vExpected := reflect.ValueOf(expected)
+	p := &testPatch{
+		expected: deepCopyValue(vExpected),
+	}
+	if n.current != nil {
+		p.cond, p.ifCond, p.unlessCond = n.current.conditions()
+	}
+	n.update(p)
+	n.current = p
+	return n
+}
+
+// Copy copies a value from another path to the current node.
+func (n *Node) Copy(from string) *Node {
+	p := &copyPatch{
+		from: from,
+		path: n.fullPath,
+	}
+	if n.current != nil {
+		p.cond, p.ifCond, p.unlessCond = n.current.conditions()
+	}
+	n.update(p)
+	n.current = p
+	return n
+}
+
+// Move moves a value from another path to the current node.
+func (n *Node) Move(from string) *Node {
+	p := &movePatch{
+		from: from,
+		path: n.fullPath,
+	}
+	if n.current != nil {
+		p.cond, p.ifCond, p.unlessCond = n.current.conditions()
+	}
+	n.update(p)
+	n.current = p
+	return n
+}
+
+// Log adds a log operation to the current node. It prints a message
+// and the current value at the node during patch application.
+func (n *Node) Log(message string) *Node {
+	p := &logPatch{
+		message: message,
+	}
+	if n.current != nil {
+		p.cond, p.ifCond, p.unlessCond = n.current.conditions()
 	}
 	n.update(p)
 	n.current = p
@@ -223,6 +273,26 @@ func (n *Node) WithCondition(c any) *Node {
 	return n
 }
 
+// If attaches an 'if' condition to the current node. If the condition
+// evaluates to false, the operation at this node is skipped.
+func (n *Node) If(c any) *Node {
+	n.ensurePatch()
+	if n.current != nil {
+		n.current.setIfCondition(c)
+	}
+	return n
+}
+
+// Unless attaches an 'unless' condition to the current node. If the condition
+// evaluates to true, the operation at this node is skipped.
+func (n *Node) Unless(c any) *Node {
+	n.ensurePatch()
+	if n.current != nil {
+		n.current.setUnlessCondition(c)
+	}
+	return n
+}
+
 // Field returns a Node for the specified struct field. It automatically descends
 // into pointers and interfaces if necessary.
 func (n *Node) Field(name string) (*Node, error) {
@@ -245,7 +315,8 @@ func (n *Node) Field(name string) (*Node, error) {
 		update: func(p diffPatch) {
 			sp.fields[name] = p
 		},
-		current: sp.fields[name],
+		current:  sp.fields[name],
+		fullPath: n.fullPath + "/" + name,
 	}, nil
 }
 
@@ -271,7 +342,8 @@ func (n *Node) Index(i int) (*Node, error) {
 			update: func(p diffPatch) {
 				ap.indices[i] = p
 			},
-			current: ap.indices[i],
+			current:  ap.indices[i],
+			fullPath: n.fullPath + "/" + strconv.Itoa(i),
 		}, nil
 	}
 	sp, ok := n.current.(*slicePatch)
@@ -299,7 +371,8 @@ func (n *Node) Index(i int) (*Node, error) {
 		update: func(p diffPatch) {
 			modOp.Patch = p
 		},
-		current: modOp.Patch,
+		current:  modOp.Patch,
+		fullPath: n.fullPath + "/" + strconv.Itoa(i),
 	}, nil
 }
 
@@ -329,7 +402,8 @@ func (n *Node) MapKey(key any) (*Node, error) {
 		update: func(p diffPatch) {
 			mp.modified[key] = p
 		},
-		current: mp.modified[key],
+		current:  mp.modified[key],
+		fullPath: n.fullPath + "/" + fmt.Sprintf("%v", key),
 	}, nil
 }
 
@@ -359,10 +433,15 @@ func (n *Node) Elem() *Node {
 		updateFunc = func(p diffPatch) { ip.elemPatch = p }
 		currentPatch = ip.elemPatch
 	}
+	var nextTyp reflect.Type
+	if n.typ.Kind() == reflect.Ptr {
+		nextTyp = n.typ.Elem()
+	}
 	return &Node{
-		typ:     n.typ.Elem(),
-		update:  updateFunc,
-		current: currentPatch,
+		typ:      nextTyp,
+		update:   updateFunc,
+		current:  currentPatch,
+		fullPath: n.fullPath, // Elem doesn't add to path in JSON Pointer
 	}
 }
 

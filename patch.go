@@ -32,6 +32,9 @@ type Patch[T any] interface {
 
 	// Reverse returns a new Patch that undoes the changes in this patch.
 	Reverse() Patch[T]
+
+	// ToJSONPatch returns an RFC 6902 compliant JSON Patch representation of this patch.
+	ToJSONPatch() ([]byte, error)
 }
 
 // NewPatch returns a new, empty patch for type T.
@@ -56,7 +59,7 @@ func (p *typedPatch[T]) Apply(v *T) {
 		return
 	}
 	rv := reflect.ValueOf(v).Elem()
-	p.inner.apply(rv)
+	p.inner.apply(reflect.ValueOf(v), rv)
 }
 
 func (p *typedPatch[T]) ApplyChecked(v *T) error {
@@ -75,7 +78,7 @@ func (p *typedPatch[T]) ApplyChecked(v *T) error {
 	}
 
 	rv := reflect.ValueOf(v).Elem()
-	return p.inner.applyChecked(v, rv, p.strict)
+	return p.inner.applyChecked(reflect.ValueOf(v), rv, p.strict)
 }
 
 func (p *typedPatch[T]) WithCondition(c Condition[T]) Patch[T] {
@@ -102,6 +105,15 @@ func (p *typedPatch[T]) Reverse() Patch[T] {
 		inner:  p.inner.reverse(),
 		strict: p.strict,
 	}
+}
+
+func (p *typedPatch[T]) ToJSONPatch() ([]byte, error) {
+	if p.inner == nil {
+		return json.Marshal([]any{})
+	}
+	// We pass empty string because toJSONPatch prepends "/" when needed
+	// and handles root as "/".
+	return json.Marshal(p.inner.toJSONPatch(""))
 }
 
 func (p *typedPatch[T]) String() string {
@@ -199,51 +211,409 @@ func (p *typedPatch[T]) GobDecode(data []byte) error {
 	return nil
 }
 
+var ErrConditionSkipped = fmt.Errorf("condition skipped")
+
 // diffPatch is the internal recursive interface for all patch types.
 type diffPatch interface {
-	apply(v reflect.Value)
-	applyChecked(root any, v reflect.Value, strict bool) error
+	apply(root, v reflect.Value)
+	applyChecked(root, v reflect.Value, strict bool) error
 	reverse() diffPatch
 	format(indent int) string
 	setCondition(cond any)
+	setIfCondition(cond any)
+	setUnlessCondition(cond any)
+	conditions() (cond, ifCond, unlessCond any)
+	toJSONPatch(path string) []map[string]any
+}
+
+type patchMetadata struct {
+	cond       any
+	ifCond     any
+	unlessCond any
+}
+
+func (m *patchMetadata) setCondition(cond any)       { m.cond = cond }
+func (m *patchMetadata) setIfCondition(cond any)     { m.ifCond = cond }
+func (m *patchMetadata) setUnlessCondition(cond any) { m.unlessCond = cond }
+func (m *patchMetadata) conditions() (any, any, any) { return m.cond, m.ifCond, m.unlessCond }
+
+func checkConditions(p diffPatch, root, v reflect.Value) error {
+	cond, ifC, unlessC := p.conditions()
+	if err := checkIfUnless(ifC, unlessC, root); err != nil {
+		return err
+	}
+	return evaluateLocalCondition(cond, v)
 }
 
 func evaluateLocalCondition(cond any, v reflect.Value) error {
 	if cond == nil {
 		return nil
 	}
+	ok, err := evaluateCondition(cond, v)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("local condition failed for value %v", v.Interface())
+	}
+	return nil
+}
+
+func evaluateCondition(cond any, v reflect.Value) (bool, error) {
 	method := reflect.ValueOf(cond).MethodByName("Evaluate")
 	if !method.IsValid() {
-		return fmt.Errorf("local condition: method Evaluate not found on %T", cond)
+		return false, fmt.Errorf("local condition: method Evaluate not found on %T", cond)
 	}
-	ptr := reflect.New(v.Type())
-	ptr.Elem().Set(v)
-	results := method.Call([]reflect.Value{ptr})
+	argType := method.Type().In(0)
+	var arg reflect.Value
+	if v.Type().AssignableTo(argType) {
+		arg = v
+	} else if reflect.PtrTo(v.Type()).AssignableTo(argType) {
+		arg = reflect.New(v.Type())
+		arg.Elem().Set(v)
+	} else if v.Kind() == reflect.Ptr && v.Elem().Type().AssignableTo(argType) {
+		arg = v.Elem() // Wait, this is probably not what we want if it expects *T
+	} else {
+		// Try to convert
+		if v.CanConvert(argType) {
+			arg = v.Convert(argType)
+		} else {
+			return false, fmt.Errorf("cannot call Evaluate: argument type mismatch, expected %v, got %v", argType, v.Type())
+		}
+	}
+	results := method.Call([]reflect.Value{arg})
 	if !results[1].IsNil() {
-		return results[1].Interface().(error)
+		return false, results[1].Interface().(error)
 	}
-	if !results[0].Bool() {
-		return fmt.Errorf("local condition failed for value %v", v.Interface())
+	return results[0].Bool(), nil
+}
+
+func checkIfUnless(ifCond, unlessCond any, v reflect.Value) error {
+	if ifCond != nil {
+		ok, err := evaluateCondition(ifCond, v)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return ErrConditionSkipped
+		}
+	}
+	if unlessCond != nil {
+		ok, err := evaluateCondition(unlessCond, v)
+		if err != nil {
+			return err
+		}
+		if ok {
+			return ErrConditionSkipped
+		}
 	}
 	return nil
 }
 
 // valuePatch handles replacement of basic types and full replacement of complex types.
 type valuePatch struct {
+	patchMetadata
 	oldVal reflect.Value
 	newVal reflect.Value
-	cond   any
 }
 
-func (p *valuePatch) apply(v reflect.Value) {
+func (p *valuePatch) apply(root, v reflect.Value) {
 	if !v.CanSet() {
 		unsafe.DisableRO(&v)
 	}
 	setValue(v, p.newVal)
 }
 
-func (p *valuePatch) setCondition(cond any) {
-	p.cond = cond
+// testPatch handles equality checks without modifying the value.
+type testPatch struct {
+	patchMetadata
+	expected reflect.Value
+}
+
+func (p *testPatch) apply(root, v reflect.Value) {
+	// No-op
+}
+
+func (p *testPatch) applyChecked(root, v reflect.Value, strict bool) error {
+	if err := checkConditions(p, root, v); err != nil {
+		if err == ErrConditionSkipped {
+			return nil
+		}
+		return err
+	}
+	if p.expected.IsValid() {
+		if !v.IsValid() {
+			return fmt.Errorf("test failed: expected %v, got invalid", p.expected)
+		}
+		convertedExpected := convertValue(p.expected, v.Type())
+		if !reflect.DeepEqual(v.Interface(), convertedExpected.Interface()) {
+			return fmt.Errorf("test failed: expected %v, got %v", convertedExpected, v)
+		}
+	}
+
+	return nil
+}
+
+func (p *testPatch) reverse() diffPatch {
+	return p // Reversing a test is still a test
+}
+
+func (p *testPatch) format(indent int) string {
+	if p.expected.IsValid() {
+		return fmt.Sprintf("Test(%v)", p.expected)
+	}
+	return "Test()"
+}
+
+func (p *testPatch) toJSONPatch(path string) []map[string]any {
+	fullPath := path
+	if fullPath == "" {
+		fullPath = "/"
+	}
+	op := map[string]any{"op": "test", "path": fullPath, "value": valueToInterface(p.expected)}
+	addConditionsToOp(op, p)
+	return []map[string]any{op}
+}
+
+// copyPatch copies a value from another path.
+type copyPatch struct {
+	patchMetadata
+	from string
+	path string // target path for reversal
+}
+
+func (p *copyPatch) apply(root, v reflect.Value) {
+	p.applyChecked(root, v, false)
+}
+
+func (p *copyPatch) applyChecked(root, v reflect.Value, strict bool) error {
+	if err := checkConditions(p, root, v); err != nil {
+		if err == ErrConditionSkipped {
+			return nil
+		}
+		return err
+	}
+	rvRoot := root
+	if rvRoot.Kind() == reflect.Ptr {
+		rvRoot = rvRoot.Elem()
+	}
+	fromVal, err := Path(p.from).resolve(rvRoot)
+	if err != nil {
+		return fmt.Errorf("copy from %s failed: %w", p.from, err)
+	}
+	if !v.CanSet() {
+		unsafe.DisableRO(&v)
+	}
+	setValue(v, fromVal)
+	return nil
+}
+
+func (p *copyPatch) reverse() diffPatch {
+	// Reversing a copy is a removal of the target.
+	return &valuePatch{newVal: reflect.Value{}}
+}
+
+func (p *copyPatch) format(indent int) string {
+	return fmt.Sprintf("Copy(from: %s)", p.from)
+}
+
+func (p *copyPatch) toJSONPatch(path string) []map[string]any {
+	fullPath := path
+	if fullPath == "" {
+		fullPath = "/"
+	}
+	p.path = fullPath
+	op := map[string]any{"op": "copy", "from": p.from, "path": fullPath}
+	addConditionsToOp(op, p)
+	return []map[string]any{op}
+}
+
+// movePatch moves a value from another path.
+type movePatch struct {
+	patchMetadata
+	from string
+	path string // target path for reversal
+}
+
+func (p *movePatch) apply(root, v reflect.Value) {
+	// For document-wide operations like move, apply needs root.
+	// Since apply(v) might not be root (it's the node it's attached to),
+	// this is why move is better handled at document level.
+	// However, to keep it consistent, we can try to use v as root if we are at root.
+	p.applyChecked(root, v, false)
+}
+
+func (p *movePatch) applyChecked(root, v reflect.Value, strict bool) error {
+	if err := checkConditions(p, root, v); err != nil {
+		if err == ErrConditionSkipped {
+			return nil
+		}
+		return err
+	}
+	rvRoot := root
+	if rvRoot.Kind() != reflect.Ptr {
+		// We need a pointer to be able to delete/set values.
+		return fmt.Errorf("root must be a pointer for move operation")
+	}
+	rvRoot = rvRoot.Elem()
+
+	fromVal, err := Path(p.from).resolve(rvRoot)
+	if err != nil {
+		return fmt.Errorf("move from %s failed: %w", p.from, err)
+	}
+
+	// Deep copy because we might be deleting it from source next.
+	fromVal = deepCopyValue(fromVal)
+
+	// Remove from source.
+	if err := Path(p.from).delete(rvRoot); err != nil {
+		return fmt.Errorf("move delete from %s failed: %w", p.from, err)
+	}
+
+	if err := Path(p.path).set(rvRoot, fromVal); err != nil {
+		return fmt.Errorf("move set to %s failed: %w", p.path, err)
+	}
+	return nil
+}
+
+func (p *movePatch) reverse() diffPatch {
+	return &movePatch{from: p.path, path: p.from}
+}
+
+func (p *movePatch) format(indent int) string {
+	return fmt.Sprintf("Move(from: %s)", p.from)
+}
+
+func (p *movePatch) toJSONPatch(path string) []map[string]any {
+	fullPath := path
+	if fullPath == "" {
+		fullPath = "/"
+	}
+	p.path = fullPath // capture path for potential reversal
+	op := map[string]any{"op": "move", "from": p.from, "path": fullPath}
+	addConditionsToOp(op, p)
+	return []map[string]any{op}
+}
+
+func addConditionsToOp(op map[string]any, p diffPatch) {
+	_, ifC, unlessC := p.conditions()
+	if ifC != nil {
+		op["if"] = conditionToPredicate(ifC)
+	}
+	if unlessC != nil {
+		op["unless"] = conditionToPredicate(unlessC)
+	}
+}
+
+func conditionToPredicate(c any) any {
+	if c == nil {
+		return nil
+	}
+
+	v := reflect.ValueOf(c)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		v = v.Elem()
+	}
+
+	typeName := v.Type().Name()
+	if strings.HasPrefix(typeName, "typedRawCondition") || strings.HasPrefix(typeName, "typedCondition") {
+		raw := v.FieldByName("raw")
+		unsafe.DisableRO(&raw)
+		return conditionToPredicate(raw.Interface())
+	}
+
+	if strings.HasPrefix(typeName, "rawCompareCondition") || strings.HasPrefix(typeName, "CompareCondition") {
+		path := v.FieldByName("Path").String()
+		val := v.FieldByName("Val").Interface()
+		op := v.FieldByName("Op").String()
+
+		switch op {
+		case "==":
+			return map[string]any{"op": "test", "path": path, "value": val}
+		case "!=":
+			return map[string]any{"op": "not", "apply": []any{map[string]any{"op": "test", "path": path, "value": val}}}
+		case "<":
+			return map[string]any{"op": "less", "path": path, "value": val}
+		case ">":
+			return map[string]any{"op": "more", "path": path, "value": val}
+		case "<=":
+			return map[string]any{"op": "or", "apply": []any{
+				map[string]any{"op": "less", "path": path, "value": val},
+				map[string]any{"op": "test", "path": path, "value": val},
+			}}
+		case ">=":
+			return map[string]any{"op": "or", "apply": []any{
+				map[string]any{"op": "more", "path": path, "value": val},
+				map[string]any{"op": "test", "path": path, "value": val},
+			}}
+		}
+	}
+
+	if strings.HasPrefix(typeName, "AndCondition") {
+		condsVal := v.FieldByName("Conditions")
+		apply := make([]any, 0, condsVal.Len())
+		for i := 0; i < condsVal.Len(); i++ {
+			apply = append(apply, conditionToPredicate(condsVal.Index(i).Interface()))
+		}
+		return map[string]any{"op": "and", "apply": apply}
+	}
+
+	if strings.HasPrefix(typeName, "OrCondition") {
+		condsVal := v.FieldByName("Conditions")
+		apply := make([]any, 0, condsVal.Len())
+		for i := 0; i < condsVal.Len(); i++ {
+			apply = append(apply, conditionToPredicate(condsVal.Index(i).Interface()))
+		}
+		return map[string]any{"op": "or", "apply": apply}
+	}
+
+	if strings.HasPrefix(typeName, "NotCondition") {
+		sub := conditionToPredicate(v.FieldByName("C").Interface())
+		return map[string]any{"op": "not", "apply": []any{sub}}
+	}
+
+	// CompareFieldCondition is not directly supported by standard JSON Predicates
+	// but we can export it if needed. Standard predicates usually compare path vs value.
+	return nil
+}
+
+// logPatch logs a message without modifying the value.
+type logPatch struct {
+	patchMetadata
+	message string
+}
+
+func (p *logPatch) apply(root, v reflect.Value) {
+	fmt.Printf("DEEP LOG: %s (value: %v)\n", p.message, v.Interface())
+}
+
+func (p *logPatch) applyChecked(root, v reflect.Value, strict bool) error {
+	if err := checkConditions(p, root, v); err != nil {
+		if err == ErrConditionSkipped {
+			return nil
+		}
+		return err
+	}
+	p.apply(root, v)
+	return nil
+}
+
+func (p *logPatch) reverse() diffPatch {
+	return p // Reversing a log is still a log
+}
+
+func (p *logPatch) format(indent int) string {
+	return fmt.Sprintf("Log(%q)", p.message)
+}
+
+func (p *logPatch) toJSONPatch(path string) []map[string]any {
+	fullPath := path
+	if fullPath == "" {
+		fullPath = "/"
+	}
+	op := map[string]any{"op": "log", "path": fullPath, "value": p.message}
+	addConditionsToOp(op, p)
+	return []map[string]any{op}
 }
 
 func init() {
@@ -253,7 +623,13 @@ func init() {
 	gob.Register([]map[string]any{})
 }
 
-func (p *valuePatch) applyChecked(root any, v reflect.Value, strict bool) error {
+func (p *valuePatch) applyChecked(root, v reflect.Value, strict bool) error {
+	if err := checkConditions(p, root, v); err != nil {
+		if err == ErrConditionSkipped {
+			return nil
+		}
+		return err
+	}
 	if strict && p.oldVal.IsValid() {
 		if v.IsValid() {
 			convertedOldVal := convertValue(p.oldVal, v.Type())
@@ -265,16 +641,12 @@ func (p *valuePatch) applyChecked(root any, v reflect.Value, strict bool) error 
 		}
 	}
 
-	if err := evaluateLocalCondition(p.cond, v); err != nil {
-		return err
-	}
-
-	p.apply(v)
+	p.apply(root, v)
 	return nil
 }
 
 func (p *valuePatch) reverse() diffPatch {
-	return &valuePatch{oldVal: p.newVal, newVal: p.oldVal, cond: p.cond}
+	return &valuePatch{oldVal: p.newVal, newVal: p.oldVal, patchMetadata: p.patchMetadata}
 }
 
 func (p *valuePatch) format(indent int) string {
@@ -292,71 +664,99 @@ func (p *valuePatch) format(indent int) string {
 	return fmt.Sprintf("%s -> %s", oldStr, newStr)
 }
 
+func (p *valuePatch) toJSONPatch(path string) []map[string]any {
+	fullPath := path
+	if fullPath == "" {
+		fullPath = "/"
+	}
+	var op map[string]any
+	if !p.newVal.IsValid() {
+		op = map[string]any{"op": "remove", "path": fullPath}
+	} else if !p.oldVal.IsValid() {
+		op = map[string]any{"op": "add", "path": fullPath, "value": valueToInterface(p.newVal)}
+	} else {
+		op = map[string]any{"op": "replace", "path": fullPath, "value": valueToInterface(p.newVal)}
+	}
+	addConditionsToOp(op, p)
+	return []map[string]any{op}
+}
+
 // ptrPatch handles changes to the content pointed to by a pointer.
+
 type ptrPatch struct {
+	patchMetadata
+
 	elemPatch diffPatch
-	cond      any
 }
 
-func (p *ptrPatch) setCondition(cond any) {
-	p.cond = cond
-}
-
-func (p *ptrPatch) apply(v reflect.Value) {
+func (p *ptrPatch) apply(root, v reflect.Value) {
 	if v.IsNil() {
 		val := reflect.New(v.Type().Elem())
-		p.elemPatch.apply(val.Elem())
+		p.elemPatch.apply(root, val.Elem())
 		v.Set(val)
 		return
 	}
-	p.elemPatch.apply(v.Elem())
+	p.elemPatch.apply(root, v.Elem())
 }
 
-func (p *ptrPatch) applyChecked(root any, v reflect.Value, strict bool) error {
+func (p *ptrPatch) applyChecked(root, v reflect.Value, strict bool) error {
+	if err := checkConditions(p, root, v); err != nil {
+		if err == ErrConditionSkipped {
+			return nil
+		}
+		return err
+	}
 	if v.IsNil() {
 		return fmt.Errorf("cannot apply pointer patch to nil value")
-	}
-	if err := evaluateLocalCondition(p.cond, v); err != nil {
-		return err
 	}
 	return p.elemPatch.applyChecked(root, v.Elem(), strict)
 }
 
 func (p *ptrPatch) reverse() diffPatch {
-	return &ptrPatch{elemPatch: p.elemPatch.reverse(), cond: p.cond}
+	return &ptrPatch{
+		patchMetadata: p.patchMetadata,
+		elemPatch:     p.elemPatch.reverse(),
+	}
 }
 
 func (p *ptrPatch) format(indent int) string {
 	return p.elemPatch.format(indent)
 }
 
+func (p *ptrPatch) toJSONPatch(path string) []map[string]any {
+	ops := p.elemPatch.toJSONPatch(path)
+	for _, op := range ops {
+		addConditionsToOp(op, p)
+	}
+	return ops
+}
+
 // interfacePatch handles changes to the value stored in an interface.
 type interfacePatch struct {
+	patchMetadata
 	elemPatch diffPatch
-	cond      any
 }
 
-func (p *interfacePatch) setCondition(cond any) {
-	p.cond = cond
-}
-
-func (p *interfacePatch) apply(v reflect.Value) {
+func (p *interfacePatch) apply(root, v reflect.Value) {
 	if v.IsNil() {
 		return
 	}
 	elem := v.Elem()
 	newElem := reflect.New(elem.Type()).Elem()
 	newElem.Set(elem)
-	p.elemPatch.apply(newElem)
+	p.elemPatch.apply(root, newElem)
 	v.Set(newElem)
 }
 
-func (p *interfacePatch) applyChecked(root any, v reflect.Value, strict bool) error {
+func (p *interfacePatch) applyChecked(root, v reflect.Value, strict bool) error {
+	if err := checkConditions(p, root, v); err != nil {
+		if err == ErrConditionSkipped {
+			return nil
+		}
+		return err
+	}
 	if v.IsNil() {
 		return fmt.Errorf("cannot apply interface patch to nil value")
-	}
-	if err := evaluateLocalCondition(p.cond, v); err != nil {
-		return err
 	}
 	elem := v.Elem()
 	newElem := reflect.New(elem.Type()).Elem()
@@ -369,37 +769,47 @@ func (p *interfacePatch) applyChecked(root any, v reflect.Value, strict bool) er
 }
 
 func (p *interfacePatch) reverse() diffPatch {
-	return &interfacePatch{elemPatch: p.elemPatch.reverse(), cond: p.cond}
+	return &interfacePatch{
+		patchMetadata: p.patchMetadata,
+		elemPatch:     p.elemPatch.reverse(),
+	}
 }
 
 func (p *interfacePatch) format(indent int) string {
 	return p.elemPatch.format(indent)
 }
 
+func (p *interfacePatch) toJSONPatch(path string) []map[string]any {
+	ops := p.elemPatch.toJSONPatch(path)
+	for _, op := range ops {
+		addConditionsToOp(op, p)
+	}
+	return ops
+}
+
 // structPatch handles field-level modifications in a struct.
 type structPatch struct {
+	patchMetadata
 	fields map[string]diffPatch
-	cond   any
 }
 
-func (p *structPatch) setCondition(cond any) {
-	p.cond = cond
-}
-
-func (p *structPatch) apply(v reflect.Value) {
+func (p *structPatch) apply(root, v reflect.Value) {
 	for name, patch := range p.fields {
 		f := v.FieldByName(name)
 		if f.IsValid() {
 			if !f.CanSet() {
 				unsafe.DisableRO(&f)
 			}
-			patch.apply(f)
+			patch.apply(root, f)
 		}
 	}
 }
 
-func (p *structPatch) applyChecked(root any, v reflect.Value, strict bool) error {
-	if err := evaluateLocalCondition(p.cond, v); err != nil {
+func (p *structPatch) applyChecked(root, v reflect.Value, strict bool) error {
+	if err := checkConditions(p, root, v); err != nil {
+		if err == ErrConditionSkipped {
+			return nil
+		}
 		return err
 	}
 	for name, patch := range p.fields {
@@ -422,7 +832,10 @@ func (p *structPatch) reverse() diffPatch {
 	for k, v := range p.fields {
 		newFields[k] = v.reverse()
 	}
-	return &structPatch{fields: newFields, cond: p.cond}
+	return &structPatch{
+		patchMetadata: p.patchMetadata,
+		fields:        newFields,
+	}
 }
 
 func (p *structPatch) format(indent int) string {
@@ -436,30 +849,42 @@ func (p *structPatch) format(indent int) string {
 	return b.String()
 }
 
+func (p *structPatch) toJSONPatch(path string) []map[string]any {
+	var ops []map[string]any
+	for name, patch := range p.fields {
+		fullPath := path + "/" + name
+		subOps := patch.toJSONPatch(fullPath)
+		for _, op := range subOps {
+			addConditionsToOp(op, p)
+		}
+		ops = append(ops, subOps...)
+	}
+	return ops
+}
+
 // arrayPatch handles index-level modifications in a fixed-size array.
 type arrayPatch struct {
+	patchMetadata
 	indices map[int]diffPatch
-	cond    any
 }
 
-func (p *arrayPatch) setCondition(cond any) {
-	p.cond = cond
-}
-
-func (p *arrayPatch) apply(v reflect.Value) {
+func (p *arrayPatch) apply(root, v reflect.Value) {
 	for i, patch := range p.indices {
 		if i < v.Len() {
 			e := v.Index(i)
 			if !e.CanSet() {
 				unsafe.DisableRO(&e)
 			}
-			patch.apply(e)
+			patch.apply(root, e)
 		}
 	}
 }
 
-func (p *arrayPatch) applyChecked(root any, v reflect.Value, strict bool) error {
-	if err := evaluateLocalCondition(p.cond, v); err != nil {
+func (p *arrayPatch) applyChecked(root, v reflect.Value, strict bool) error {
+	if err := checkConditions(p, root, v); err != nil {
+		if err == ErrConditionSkipped {
+			return nil
+		}
 		return err
 	}
 	for i, patch := range p.indices {
@@ -482,7 +907,10 @@ func (p *arrayPatch) reverse() diffPatch {
 	for k, v := range p.indices {
 		newIndices[k] = v.reverse()
 	}
-	return &arrayPatch{indices: newIndices, cond: p.cond}
+	return &arrayPatch{
+		patchMetadata: p.patchMetadata,
+		indices:       newIndices,
+	}
 }
 
 func (p *arrayPatch) format(indent int) string {
@@ -496,20 +924,29 @@ func (p *arrayPatch) format(indent int) string {
 	return b.String()
 }
 
+func (p *arrayPatch) toJSONPatch(path string) []map[string]any {
+	var ops []map[string]any
+	for i, patch := range p.indices {
+		fullPath := fmt.Sprintf("%s/%d", path, i)
+		subOps := patch.toJSONPatch(fullPath)
+		for _, op := range subOps {
+			addConditionsToOp(op, p)
+		}
+		ops = append(ops, subOps...)
+	}
+	return ops
+}
+
 // mapPatch handles additions, removals, and modifications in a map.
 type mapPatch struct {
+	patchMetadata
 	added    map[interface{}]reflect.Value
 	removed  map[interface{}]reflect.Value
 	modified map[interface{}]diffPatch
 	keyType  reflect.Type
-	cond     any
 }
 
-func (p *mapPatch) setCondition(cond any) {
-	p.cond = cond
-}
-
-func (p *mapPatch) apply(v reflect.Value) {
+func (p *mapPatch) apply(root, v reflect.Value) {
 	if v.IsNil() {
 		if len(p.added) > 0 {
 			newMap := reflect.MakeMap(v.Type())
@@ -527,7 +964,7 @@ func (p *mapPatch) apply(v reflect.Value) {
 		if elem.IsValid() {
 			newElem := reflect.New(elem.Type()).Elem()
 			newElem.Set(elem)
-			patch.apply(newElem)
+			patch.apply(root, newElem)
 			v.SetMapIndex(keyVal, newElem)
 		}
 	}
@@ -537,8 +974,11 @@ func (p *mapPatch) apply(v reflect.Value) {
 	}
 }
 
-func (p *mapPatch) applyChecked(root any, v reflect.Value, strict bool) error {
-	if err := evaluateLocalCondition(p.cond, v); err != nil {
+func (p *mapPatch) applyChecked(root, v reflect.Value, strict bool) error {
+	if err := checkConditions(p, root, v); err != nil {
+		if err == ErrConditionSkipped {
+			return nil
+		}
 		return err
 	}
 	if v.IsNil() {
@@ -592,11 +1032,11 @@ func (p *mapPatch) reverse() diffPatch {
 		newModified[k] = v.reverse()
 	}
 	return &mapPatch{
-		added:    p.removed,
-		removed:  p.added,
-		modified: newModified,
-		keyType:  p.keyType,
-		cond:     p.cond,
+		patchMetadata: p.patchMetadata,
+		added:         p.removed,
+		removed:       p.added,
+		modified:      newModified,
+		keyType:       p.keyType,
 	}
 }
 
@@ -617,6 +1057,31 @@ func (p *mapPatch) format(indent int) string {
 	return b.String()
 }
 
+func (p *mapPatch) toJSONPatch(path string) []map[string]any {
+	var ops []map[string]any
+	for k := range p.removed {
+		fullPath := fmt.Sprintf("%s/%v", path, k)
+		op := map[string]any{"op": "remove", "path": fullPath}
+		addConditionsToOp(op, p)
+		ops = append(ops, op)
+	}
+	for k, patch := range p.modified {
+		fullPath := fmt.Sprintf("%s/%v", path, k)
+		subOps := patch.toJSONPatch(fullPath)
+		for _, op := range subOps {
+			addConditionsToOp(op, p)
+		}
+		ops = append(ops, subOps...)
+	}
+	for k, val := range p.added {
+		fullPath := fmt.Sprintf("%s/%v", path, k)
+		op := map[string]any{"op": "add", "path": fullPath, "value": valueToInterface(val)}
+		addConditionsToOp(op, p)
+		ops = append(ops, op)
+	}
+	return ops
+}
+
 type opKind int
 
 const (
@@ -634,15 +1099,11 @@ type sliceOp struct {
 
 // slicePatch handles complex edits (insertions, deletions, modifications) in a slice.
 type slicePatch struct {
-	ops  []sliceOp
-	cond any
+	patchMetadata
+	ops []sliceOp
 }
 
-func (p *slicePatch) setCondition(cond any) {
-	p.cond = cond
-}
-
-func (p *slicePatch) apply(v reflect.Value) {
+func (p *slicePatch) apply(root, v reflect.Value) {
 	newSlice := reflect.MakeSlice(v.Type(), 0, v.Len())
 	curIdx := 0
 	for _, op := range p.ops {
@@ -661,9 +1122,10 @@ func (p *slicePatch) apply(v reflect.Value) {
 			curIdx++
 		case opMod:
 			if curIdx < v.Len() {
-				elem := deepCopyValue(v.Index(curIdx))
+				elem := reflect.New(v.Type().Elem()).Elem()
+				elem.Set(deepCopyValue(v.Index(curIdx)))
 				if op.Patch != nil {
-					op.Patch.apply(elem)
+					op.Patch.apply(root, elem)
 				}
 				newSlice = reflect.Append(newSlice, elem)
 				curIdx++
@@ -676,8 +1138,11 @@ func (p *slicePatch) apply(v reflect.Value) {
 	v.Set(newSlice)
 }
 
-func (p *slicePatch) applyChecked(root any, v reflect.Value, strict bool) error {
-	if err := evaluateLocalCondition(p.cond, v); err != nil {
+func (p *slicePatch) applyChecked(root, v reflect.Value, strict bool) error {
+	if err := checkConditions(p, root, v); err != nil {
+		if err == ErrConditionSkipped {
+			return nil
+		}
 		return err
 	}
 	newSlice := reflect.MakeSlice(v.Type(), 0, v.Len())
@@ -710,7 +1175,8 @@ func (p *slicePatch) applyChecked(root any, v reflect.Value, strict bool) error 
 			if curIdx >= v.Len() {
 				return fmt.Errorf("slice modification index %d out of bounds", curIdx)
 			}
-			elem := deepCopyValue(v.Index(curIdx))
+			elem := reflect.New(v.Type().Elem()).Elem()
+			elem.Set(deepCopyValue(v.Index(curIdx)))
 			if err := op.Patch.applyChecked(root, elem, strict); err != nil {
 				return fmt.Errorf("slice index %d: %w", curIdx, err)
 			}
@@ -758,7 +1224,10 @@ func (p *slicePatch) reverse() diffPatch {
 			curB++
 		}
 	}
-	return &slicePatch{ops: revOps, cond: p.cond}
+	return &slicePatch{
+		patchMetadata: p.patchMetadata,
+		ops:           revOps,
+	}
 }
 
 func (p *slicePatch) format(indent int) string {
@@ -779,18 +1248,66 @@ func (p *slicePatch) format(indent int) string {
 	return b.String()
 }
 
+func (p *slicePatch) toJSONPatch(path string) []map[string]any {
+	var ops []map[string]any
+	// JSON Patch array indices shift as we add/remove elements.
+	// However, if we process them in descending order of index for removals
+	// and ascending for additions, it might be complicated.
+	// Actually, the simplest is to just emit them and hope for the best,
+	// OR calculate the shifted index.
+
+	shift := 0
+	for _, op := range p.ops {
+		fullPath := fmt.Sprintf("%s/%d", path, op.Index+shift)
+		switch op.Kind {
+		case opAdd:
+			jsonOp := map[string]any{"op": "add", "path": fullPath, "value": valueToInterface(op.Val)}
+			addConditionsToOp(jsonOp, p)
+			ops = append(ops, jsonOp)
+			shift++
+		case opDel:
+			jsonOp := map[string]any{"op": "remove", "path": fullPath}
+			addConditionsToOp(jsonOp, p)
+			ops = append(ops, jsonOp)
+			shift--
+		case opMod:
+			subOps := op.Patch.toJSONPatch(fullPath)
+			for _, sop := range subOps {
+				addConditionsToOp(sop, p)
+			}
+			ops = append(ops, subOps...)
+		}
+	}
+	return ops
+}
+
 type patchSurrogate struct {
 	Kind string `json:"k" gob:"k"`
 	Data any    `json:"d,omitempty" gob:"d,omitempty"`
 }
 
-func makeSurrogate(kind string, data map[string]any, cond any) (*patchSurrogate, error) {
+func makeSurrogate(kind string, data map[string]any, p diffPatch) (*patchSurrogate, error) {
+	cond, ifCond, unlessCond := p.conditions()
 	c, err := marshalConditionAny(cond)
 	if err != nil {
 		return nil, err
 	}
 	if c != nil {
 		data["c"] = c
+	}
+	ic, err := marshalConditionAny(ifCond)
+	if err != nil {
+		return nil, err
+	}
+	if ic != nil {
+		data["if"] = ic
+	}
+	uc, err := marshalConditionAny(unlessCond)
+	if err != nil {
+		return nil, err
+	}
+	if uc != nil {
+		data["un"] = uc
 	}
 	return &patchSurrogate{Kind: kind, Data: data}, nil
 }
@@ -804,7 +1321,7 @@ func marshalDiffPatch(p diffPatch) (any, error) {
 		return makeSurrogate("value", map[string]any{
 			"o": valueToInterface(v.oldVal),
 			"n": valueToInterface(v.newVal),
-		}, v.cond)
+		}, v)
 	case *ptrPatch:
 		elem, err := marshalDiffPatch(v.elemPatch)
 		if err != nil {
@@ -812,7 +1329,7 @@ func marshalDiffPatch(p diffPatch) (any, error) {
 		}
 		return makeSurrogate("ptr", map[string]any{
 			"p": elem,
-		}, v.cond)
+		}, v)
 	case *interfacePatch:
 		elem, err := marshalDiffPatch(v.elemPatch)
 		if err != nil {
@@ -820,7 +1337,7 @@ func marshalDiffPatch(p diffPatch) (any, error) {
 		}
 		return makeSurrogate("interface", map[string]any{
 			"p": elem,
-		}, v.cond)
+		}, v)
 	case *structPatch:
 		fields := make(map[string]any)
 		for name, patch := range v.fields {
@@ -832,7 +1349,7 @@ func marshalDiffPatch(p diffPatch) (any, error) {
 		}
 		return makeSurrogate("struct", map[string]any{
 			"f": fields,
-		}, v.cond)
+		}, v)
 	case *arrayPatch:
 		indices := make(map[string]any)
 		for idx, patch := range v.indices {
@@ -844,7 +1361,7 @@ func marshalDiffPatch(p diffPatch) (any, error) {
 		}
 		return makeSurrogate("array", map[string]any{
 			"i": indices,
-		}, v.cond)
+		}, v)
 	case *mapPatch:
 		added := make([]map[string]any, 0, len(v.added))
 		for k, val := range v.added {
@@ -866,7 +1383,7 @@ func marshalDiffPatch(p diffPatch) (any, error) {
 			"a": added,
 			"r": removed,
 			"m": modified,
-		}, v.cond)
+		}, v)
 	case *slicePatch:
 		ops := make([]map[string]any, 0, len(v.ops))
 		for _, op := range v.ops {
@@ -883,7 +1400,23 @@ func marshalDiffPatch(p diffPatch) (any, error) {
 		}
 		return makeSurrogate("slice", map[string]any{
 			"o": ops,
-		}, v.cond)
+		}, v)
+	case *testPatch:
+		return makeSurrogate("test", map[string]any{
+			"e": valueToInterface(v.expected),
+		}, v)
+	case *copyPatch:
+		return makeSurrogate("copy", map[string]any{
+			"f": v.from,
+		}, v)
+	case *movePatch:
+		return makeSurrogate("move", map[string]any{
+			"f": v.from,
+		}, v)
+	case *logPatch:
+		return makeSurrogate("log", map[string]any{
+			"m": v.message,
+		}, v)
 	}
 	return nil, fmt.Errorf("unknown patch type: %T", p)
 }
@@ -896,8 +1429,8 @@ func unmarshalDiffPatch(data []byte) (diffPatch, error) {
 	return convertFromSurrogate(&s)
 }
 
-func unmarshalCondFromMap(d map[string]any) any {
-	if cData, ok := d["c"]; ok && cData != nil {
+func unmarshalCondFromMap(d map[string]any, key string) any {
+	if cData, ok := d[key]; ok && cData != nil {
 		jsonData, _ := json.Marshal(cData)
 		c, _ := unmarshalCondition[any](jsonData)
 		return c
@@ -930,7 +1463,11 @@ func convertFromSurrogate(s any) (diffPatch, error) {
 		return &valuePatch{
 			oldVal: interfaceToValue(d["o"]),
 			newVal: interfaceToValue(d["n"]),
-			cond:   unmarshalCondFromMap(d),
+			patchMetadata: patchMetadata{
+				cond:       unmarshalCondFromMap(d, "c"),
+				ifCond:     unmarshalCondFromMap(d, "if"),
+				unlessCond: unmarshalCondFromMap(d, "un"),
+			},
 		}, nil
 	case "ptr":
 		d := data.(map[string]any)
@@ -938,14 +1475,28 @@ func convertFromSurrogate(s any) (diffPatch, error) {
 		if err != nil {
 			return nil, err
 		}
-		return &ptrPatch{elemPatch: elem, cond: unmarshalCondFromMap(d)}, nil
+		return &ptrPatch{
+			elemPatch: elem,
+			patchMetadata: patchMetadata{
+				cond:       unmarshalCondFromMap(d, "c"),
+				ifCond:     unmarshalCondFromMap(d, "if"),
+				unlessCond: unmarshalCondFromMap(d, "un"),
+			},
+		}, nil
 	case "interface":
 		d := data.(map[string]any)
 		elem, err := convertFromSurrogate(d["p"])
 		if err != nil {
 			return nil, err
 		}
-		return &interfacePatch{elemPatch: elem, cond: unmarshalCondFromMap(d)}, nil
+		return &interfacePatch{
+			elemPatch: elem,
+			patchMetadata: patchMetadata{
+				cond:       unmarshalCondFromMap(d, "c"),
+				ifCond:     unmarshalCondFromMap(d, "if"),
+				unlessCond: unmarshalCondFromMap(d, "un"),
+			},
+		}, nil
 	case "struct":
 		d := data.(map[string]any)
 		fieldsData := d["f"].(map[string]any)
@@ -957,7 +1508,14 @@ func convertFromSurrogate(s any) (diffPatch, error) {
 			}
 			fields[name] = p
 		}
-		return &structPatch{fields: fields, cond: unmarshalCondFromMap(d)}, nil
+		return &structPatch{
+			fields: fields,
+			patchMetadata: patchMetadata{
+				cond:       unmarshalCondFromMap(d, "c"),
+				ifCond:     unmarshalCondFromMap(d, "if"),
+				unlessCond: unmarshalCondFromMap(d, "un"),
+			},
+		}, nil
 	case "array":
 		d := data.(map[string]any)
 		indicesData := d["i"].(map[string]any)
@@ -971,7 +1529,14 @@ func convertFromSurrogate(s any) (diffPatch, error) {
 			}
 			indices[idx] = p
 		}
-		return &arrayPatch{indices: indices, cond: unmarshalCondFromMap(d)}, nil
+		return &arrayPatch{
+			indices: indices,
+			patchMetadata: patchMetadata{
+				cond:       unmarshalCondFromMap(d, "c"),
+				ifCond:     unmarshalCondFromMap(d, "if"),
+				unlessCond: unmarshalCondFromMap(d, "un"),
+			},
+		}, nil
 	case "map":
 		d := data.(map[string]any)
 		added := make(map[interface{}]reflect.Value)
@@ -1025,7 +1590,11 @@ func convertFromSurrogate(s any) (diffPatch, error) {
 			added:    added,
 			removed:  removed,
 			modified: modified,
-			cond:     unmarshalCondFromMap(d),
+			patchMetadata: patchMetadata{
+				cond:       unmarshalCondFromMap(d, "c"),
+				ifCond:     unmarshalCondFromMap(d, "if"),
+				unlessCond: unmarshalCondFromMap(d, "un"),
+			},
 		}, nil
 	case "slice":
 		d := data.(map[string]any)
@@ -1075,7 +1644,54 @@ func convertFromSurrogate(s any) (diffPatch, error) {
 				Patch: p,
 			})
 		}
-		return &slicePatch{ops: ops, cond: unmarshalCondFromMap(d)}, nil
+		return &slicePatch{
+			ops: ops,
+			patchMetadata: patchMetadata{
+				cond:       unmarshalCondFromMap(d, "c"),
+				ifCond:     unmarshalCondFromMap(d, "if"),
+				unlessCond: unmarshalCondFromMap(d, "un"),
+			},
+		}, nil
+	case "test":
+		d := data.(map[string]any)
+		return &testPatch{
+			expected: interfaceToValue(d["e"]),
+			patchMetadata: patchMetadata{
+				cond:       unmarshalCondFromMap(d, "c"),
+				ifCond:     unmarshalCondFromMap(d, "if"),
+				unlessCond: unmarshalCondFromMap(d, "un"),
+			},
+		}, nil
+	case "copy":
+		d := data.(map[string]any)
+		return &copyPatch{
+			from: d["f"].(string),
+			patchMetadata: patchMetadata{
+				cond:       unmarshalCondFromMap(d, "c"),
+				ifCond:     unmarshalCondFromMap(d, "if"),
+				unlessCond: unmarshalCondFromMap(d, "un"),
+			},
+		}, nil
+	case "move":
+		d := data.(map[string]any)
+		return &movePatch{
+			from: d["f"].(string),
+			patchMetadata: patchMetadata{
+				cond:       unmarshalCondFromMap(d, "c"),
+				ifCond:     unmarshalCondFromMap(d, "if"),
+				unlessCond: unmarshalCondFromMap(d, "un"),
+			},
+		}, nil
+	case "log":
+		d := data.(map[string]any)
+		return &logPatch{
+			message: d["m"].(string),
+			patchMetadata: patchMetadata{
+				cond:       unmarshalCondFromMap(d, "c"),
+				ifCond:     unmarshalCondFromMap(d, "if"),
+				unlessCond: unmarshalCondFromMap(d, "un"),
+			},
+		}, nil
 	}
 	return nil, fmt.Errorf("unknown patch kind: %s", kind)
 }

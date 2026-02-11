@@ -114,7 +114,11 @@ func recursiveCopy(v reflect.Value, pointers pointersMap,
 		reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32,
 		reflect.Uint64, reflect.Uintptr, reflect.Float32, reflect.Float64,
 		reflect.Complex64, reflect.Complex128, reflect.String:
-		// Direct type, just copy it.
+		// Direct type. We return a new reflect.Value with the same value
+		// to ensure it's not tied to a struct field (breaking addressability).
+		if v.CanInterface() {
+			return reflect.ValueOf(v.Interface()), nil
+		}
 		return v, nil
 	case reflect.Array:
 		return recursiveCopyArray(v, pointers, skipUnsupported)

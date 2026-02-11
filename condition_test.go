@@ -6,7 +6,29 @@ import (
 	"testing"
 )
 
-func TestPath_Resolve(t *testing.T) {
+func TestPath_Errors_Exhaustive(t *testing.T) {
+	type S struct{ A int }
+	s := S{A: 1}
+	rv := reflect.ValueOf(&s).Elem()
+
+	// resolveParent empty
+	Path("").resolveParent(rv)
+
+	// navigate nil intermediate
+	type N struct{ P *S }
+	n := N{P: nil}
+	Path("/P/A").resolve(reflect.ValueOf(n))
+
+	// set root error
+	val := 1
+	Path("/").set(reflect.ValueOf(val), reflect.ValueOf(2))
+
+	// set slice oob
+	slc := []int{1}
+	Path("/2").set(reflect.ValueOf(&slc).Elem(), reflect.ValueOf(2))
+}
+
+func TestJSONPointer_Resolve(t *testing.T) {
 	type Child struct {
 		Name string
 	}
@@ -22,9 +44,9 @@ func TestPath_Resolve(t *testing.T) {
 		path string
 		want any
 	}{
-		{"Kids[0].Name", "A"},
-		{"Kids[1].Name", "B"},
-		{"Meta.v", 1},
+		{"/Kids/0/Name", "A"},
+		{"/Kids/1/Name", "B"},
+		{"/Meta/v", 1},
 	}
 	for _, tt := range tests {
 		val, err := Path(tt.path).resolve(reflect.ValueOf(d))
@@ -35,6 +57,87 @@ func TestPath_Resolve(t *testing.T) {
 		if !reflect.DeepEqual(val.Interface(), tt.want) {
 			t.Errorf("Resolve(%q) = %v, want %v", tt.path, val.Interface(), tt.want)
 		}
+	}
+}
+
+func TestJSONPointer_SpecialChars(t *testing.T) {
+	m := map[string]int{
+		"foo/bar": 1,
+		"foo~bar": 2,
+	}
+	tests := []struct {
+		path string
+		want any
+	}{
+		{"/foo~1bar", 1},
+		{"/foo~0bar", 2},
+	}
+	for _, tt := range tests {
+		val, err := Path(tt.path).resolve(reflect.ValueOf(m))
+		if err != nil {
+			t.Errorf("Resolve(%q) failed: %v", tt.path, err)
+			continue
+		}
+		if !reflect.DeepEqual(val.Interface(), tt.want) {
+			t.Errorf("Resolve(%q) = %v, want %v", tt.path, val.Interface(), tt.want)
+		}
+	}
+}
+
+func TestJSONPointer_InConditions(t *testing.T) {
+	type User struct {
+		Name string
+	}
+	u := User{Name: "Alice"}
+
+	expr := "/Name == 'Alice'"
+	cond, err := ParseCondition[User](expr)
+	if err != nil {
+		t.Fatalf("ParseCondition failed: %v", err)
+	}
+	ok, err := cond.Evaluate(&u)
+	if err != nil {
+		t.Fatalf("Evaluate failed: %v", err)
+	}
+	if !ok {
+		t.Errorf("Expected true for %q", expr)
+	}
+}
+
+func TestPath_SetDelete(t *testing.T) {
+	type Data struct {
+		A int
+		M map[string]int
+		S []int
+	}
+	d := Data{M: map[string]int{"a": 1}, S: []int{1, 2}}
+	rv := reflect.ValueOf(&d).Elem()
+
+	// Path.set
+	Path("/A").set(rv, reflect.ValueOf(10))
+	Path("/M/b").set(rv, reflect.ValueOf(20))
+	Path("/S/1").set(rv, reflect.ValueOf(30))
+	Path("/S/2").set(rv, reflect.ValueOf(40)) // Append
+
+	if d.A != 10 || d.M["b"] != 20 || d.S[1] != 30 || d.S[2] != 40 {
+		t.Errorf("Path.set failed: %+v", d)
+	}
+
+	// Path.delete
+	Path("/M/a").delete(rv)
+	Path("/S/0").delete(rv)
+	Path("/A").delete(rv)
+
+	if _, ok := d.M["a"]; ok || len(d.S) != 2 || d.A != 0 {
+		t.Errorf("Path.delete failed: %+v", d)
+	}
+
+	// Root set
+	val := 1
+	rvVal := reflect.ValueOf(&val).Elem()
+	Path("/").set(rvVal, reflect.ValueOf(2))
+	if val != 2 {
+		t.Errorf("Root Path.set failed: %d", val)
 	}
 }
 
@@ -504,9 +607,9 @@ func TestCondition_Errors(t *testing.T) {
 		if len(or.paths()) != 2 {
 			t.Errorf("Expected 2 paths, got %d", len(or.paths()))
 		}
-		relOr := or.withRelativePaths("Prefix")
+		relOr := or.withRelativeParts(parsePath("Prefix"))
 		if relOr.(*rawOrCondition).Conditions[0].(*rawCompareCondition).Path != "A" {
-			// Actually withRelativePaths("Prefix") on path "A" should be "A" if prefix not found
+			// Actually withRelativeParts("Prefix") on path "A" should be "A" if prefix not found
 		}
 
 		// Test rawNotCondition paths/relative
@@ -514,7 +617,7 @@ func TestCondition_Errors(t *testing.T) {
 		if len(not.paths()) != 1 {
 			t.Error("Expected 1 path for not")
 		}
-		relNot := not.withRelativePaths("A")
+		relNot := not.withRelativeParts(parsePath("A"))
 		if relNot.(*rawNotCondition).C.(*rawCompareCondition).Path != "" {
 			t.Errorf("Expected empty path after stripping prefix, got %q", relNot.(*rawNotCondition).C.(*rawCompareCondition).Path)
 		}
