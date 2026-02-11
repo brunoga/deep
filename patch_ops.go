@@ -798,11 +798,13 @@ const (
 	opAdd opKind = iota
 	opDel
 	opMod
+	opMove
 )
 
 type sliceOp struct {
 	Kind  opKind
 	Index int
+	From  int // For opMove
 	Val   reflect.Value
 	Patch diffPatch
 }

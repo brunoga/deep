@@ -448,17 +448,35 @@ func diffSlice(a, b reflect.Value, visited map[visitKey]bool, config *diffConfig
 		return nil, nil
 	}
 
+	keyField, hasKey := getKeyField(a.Type().Elem())
+
 	// 3. Diff the middle part
-	ops := computeSliceEdits(a, b, midAStart, midAEnd, midBStart, midBEnd)
+	ops := computeSliceEdits(a, b, midAStart, midAEnd, midBStart, midBEnd, keyField, hasKey)
 
 	return &slicePatch{ops: ops}, nil
 }
 
 // computeSliceEdits uses dynamic programming to find the shortest edit script
 // for the middle portion of two slices.
-func computeSliceEdits(a, b reflect.Value, aStart, aEnd, bStart, bEnd int) []sliceOp {
+func computeSliceEdits(a, b reflect.Value, aStart, aEnd, bStart, bEnd, keyField int, hasKey bool) []sliceOp {
 	n := aEnd - aStart
 	m := bEnd - bStart
+
+	same := func(v1, v2 reflect.Value) bool {
+		if hasKey {
+			k1 := v1
+			k2 := v2
+			if k1.Kind() == reflect.Ptr {
+				if k1.IsNil() || k2.IsNil() {
+					return k1.IsNil() && k2.IsNil()
+				}
+				k1 = k1.Elem()
+				k2 = k2.Elem()
+			}
+			return reflect.DeepEqual(k1.Field(keyField).Interface(), k2.Field(keyField).Interface())
+		}
+		return reflect.DeepEqual(v1.Interface(), v2.Interface())
+	}
 
 	dp := make([][]int, n+1)
 	for i := range dp {
@@ -478,7 +496,7 @@ func computeSliceEdits(a, b reflect.Value, aStart, aEnd, bStart, bEnd int) []sli
 			vB := b.Index(bStart + j - 1)
 
 			cost := 1
-			if reflect.DeepEqual(vA.Interface(), vB.Interface()) {
+			if same(vA, vB) {
 				cost = 0
 			}
 
@@ -504,25 +522,35 @@ func computeSliceEdits(a, b reflect.Value, aStart, aEnd, bStart, bEnd int) []sli
 			vA := a.Index(aStart + i - 1)
 			vB := b.Index(bStart + j - 1)
 
-			cost := 1
-			if reflect.DeepEqual(vA.Interface(), vB.Interface()) {
-				cost = 0
-			}
-
-			if dp[i][j] == dp[i-1][j-1]+cost {
-				if cost == 1 {
-					// NOTE: We pass empty config here for now as slice edits don't support
-					// nested path-based ignoring easily yet without knowing the final index.
+			if same(vA, vB) {
+				if dp[i][j] == dp[i-1][j-1] {
+					if !reflect.DeepEqual(vA.Interface(), vB.Interface()) {
+						// Items are same by key but differ in content.
+						p, _ := diffRecursive(vA, vB, make(map[visitKey]bool), &diffConfig{ignoredPaths: make(map[string]bool)}, "", false)
+						ops = append(ops, sliceOp{
+							Kind:  opMod,
+							Index: aStart + i - 1,
+							Patch: p,
+						})
+					}
+					i--
+					j--
+					continue
+				}
+			} else {
+				if dp[i][j] == dp[i-1][j-1]+1 {
+					// Substitution (treated as Mod here for simplicity in Myers' but we 
+					// could also treat as Delete+Add).
 					p, _ := diffRecursive(vA, vB, make(map[visitKey]bool), &diffConfig{ignoredPaths: make(map[string]bool)}, "", false)
 					ops = append(ops, sliceOp{
 						Kind:  opMod,
 						Index: aStart + i - 1,
 						Patch: p,
 					})
+					i--
+					j--
+					continue
 				}
-				i--
-				j--
-				continue
 			}
 		}
 

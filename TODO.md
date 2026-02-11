@@ -10,7 +10,7 @@ This document tracks planned features and improvements to make the `deep` librar
 - [x] **Custom Differs**: Allow types to implement a `Differ` interface to provide their own optimized patch generation logic.
 
 ## 2. Advanced Data Synchronization
-- [ ] **Keyed Slice Alignment**: Support "Identity" for slice elements to handle moves, insertions, and deletions gracefully.
+- [x] **Keyed Slice Alignment**: Support "Identity" for slice elements to handle moves, insertions, and deletions gracefully.
     - Use `deep:"key:FieldName"` tags or registry to identify the primary key of a struct within a slice.
     - Update the diff algorithm to align by key before performing LCS/Myers diff.
 - [ ] **Map Key Normalization**: Support custom equality logic for complex map keys.
