@@ -432,7 +432,10 @@ func (p *dummyPatch) apply(root, v reflect.Value)                           {}
 func (p *dummyPatch) applyChecked(root, v reflect.Value, strict bool) error { return nil }
 func (p *dummyPatch) reverse() diffPatch                                    { return p }
 func (p *dummyPatch) format(indent int) string                              { return "" }
-func (p *dummyPatch) toJSONPatch(path string) []map[string]any              { return nil }
+func (p *dummyPatch) walk(path string, fn func(path string, op OpKind, old, new any) error) error {
+	return nil
+}
+func (p *dummyPatch) toJSONPatch(path string) []map[string]any { return nil }
 
 func TestPatch_MarshalUnknown(t *testing.T) {
 	_, err := marshalDiffPatch(&dummyPatch{})

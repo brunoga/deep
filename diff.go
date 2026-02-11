@@ -423,7 +423,7 @@ func diffSlice(a, b reflect.Value, visited map[visitKey]bool, config *diffConfig
 		var ops []sliceOp
 		for i := midBStart; i < midBEnd; i++ {
 			ops = append(ops, sliceOp{
-				Kind:  opAdd,
+				Kind:  OpAdd,
 				Index: i,
 				Val:   deepCopyValue(b.Index(i)),
 			})
@@ -436,7 +436,7 @@ func diffSlice(a, b reflect.Value, visited map[visitKey]bool, config *diffConfig
 		var ops []sliceOp
 		for i := midAStart; i < midAEnd; i++ {
 			ops = append(ops, sliceOp{
-				Kind:  opDel,
+				Kind:  OpRemove,
 				Index: i,
 				Val:   deepCopyValue(a.Index(i)),
 			})
@@ -528,7 +528,7 @@ func computeSliceEdits(a, b reflect.Value, aStart, aEnd, bStart, bEnd, keyField 
 						// Items are same by key but differ in content.
 						p, _ := diffRecursive(vA, vB, make(map[visitKey]bool), &diffConfig{ignoredPaths: make(map[string]bool)}, "", false)
 						ops = append(ops, sliceOp{
-							Kind:  opMod,
+							Kind:  OpReplace,
 							Index: aStart + i - 1,
 							Patch: p,
 						})
@@ -543,7 +543,7 @@ func computeSliceEdits(a, b reflect.Value, aStart, aEnd, bStart, bEnd, keyField 
 					// could also treat as Delete+Add).
 					p, _ := diffRecursive(vA, vB, make(map[visitKey]bool), &diffConfig{ignoredPaths: make(map[string]bool)}, "", false)
 					ops = append(ops, sliceOp{
-						Kind:  opMod,
+						Kind:  OpReplace,
 						Index: aStart + i - 1,
 						Patch: p,
 					})
@@ -556,7 +556,7 @@ func computeSliceEdits(a, b reflect.Value, aStart, aEnd, bStart, bEnd, keyField 
 
 		if i > 0 && dp[i][j] == dp[i-1][j]+1 {
 			ops = append(ops, sliceOp{
-				Kind:  opDel,
+				Kind:  OpRemove,
 				Index: aStart + i - 1,
 				Val:   deepCopyValue(a.Index(aStart + i - 1)),
 			})
@@ -566,7 +566,7 @@ func computeSliceEdits(a, b reflect.Value, aStart, aEnd, bStart, bEnd, keyField 
 
 		if j > 0 && dp[i][j] == dp[i][j-1]+1 {
 			ops = append(ops, sliceOp{
-				Kind:  opAdd,
+				Kind:  OpAdd,
 				Index: aStart + i,
 				Val:   deepCopyValue(b.Index(bStart + j - 1)),
 			})

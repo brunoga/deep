@@ -7,6 +7,40 @@ import (
 	"reflect"
 )
 
+// OpKind represents the type of operation in a patch.
+type OpKind int
+
+const (
+	OpAdd OpKind = iota
+	OpRemove
+	OpReplace
+	OpMove
+	OpCopy
+	OpTest
+	OpLog
+)
+
+func (k OpKind) String() string {
+	switch k {
+	case OpAdd:
+		return "add"
+	case OpRemove:
+		return "remove"
+	case OpReplace:
+		return "replace"
+	case OpMove:
+		return "move"
+	case OpCopy:
+		return "copy"
+	case OpTest:
+		return "test"
+	case OpLog:
+		return "log"
+	default:
+		return "unknown"
+	}
+}
+
 // Patch represents a set of changes that can be applied to a value of type T.
 type Patch[T any] interface {
 	fmt.Stringer
@@ -20,6 +54,11 @@ type Patch[T any] interface {
 	// 2. If Strict mode is enabled, every modification must match the 'oldVal' recorded in the patch.
 	// 3. Any local per-field conditions must evaluate to true.
 	ApplyChecked(v *T) error
+
+	// Walk calls fn for every operation in the patch.
+	// The path is a Go-style dot-notation path (e.g. "Field.SubField[0]").
+	// If fn returns an error, walking stops and that error is returned.
+	Walk(fn func(path string, op OpKind, old, new any) error) error
 
 	// WithCondition returns a new Patch with the given global condition attached.
 	WithCondition(c Condition[T]) Patch[T]
@@ -84,6 +123,13 @@ func (p *typedPatch[T]) ApplyChecked(v *T) error {
 
 	rv := reflect.ValueOf(v).Elem()
 	return p.inner.applyChecked(reflect.ValueOf(v), rv, p.strict)
+}
+
+func (p *typedPatch[T]) Walk(fn func(path string, op OpKind, old, new any) error) error {
+	if p.inner == nil {
+		return nil
+	}
+	return p.inner.walk("", fn)
 }
 
 func (p *typedPatch[T]) WithCondition(c Condition[T]) Patch[T] {

@@ -16,7 +16,7 @@ This document tracks planned features and improvements to make the `deep` librar
 - [ ] **Map Key Normalization**: Support custom equality logic for complex map keys.
 
 ## 3. Observability & Auditing
-- [ ] **Patch Walking API**: Implement a visitor pattern to allow applications to inspect a patch without applying it.
+- [x] **Patch Walking API**: Implement a visitor pattern to allow applications to inspect a patch without applying it.
     ```go
     patch.Walk(func(path Path, op OpKind, old, new any) error)
     ```

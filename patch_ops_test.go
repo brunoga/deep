@@ -60,9 +60,9 @@ func TestPatch_ReverseFormat_Exhaustive(t *testing.T) {
 	t.Run("slicePatch", func(t *testing.T) {
 		p := &slicePatch{
 			ops: []sliceOp{
-				{Kind: opAdd, Index: 0, Val: reflect.ValueOf(1)},
-				{Kind: opDel, Index: 1, Val: reflect.ValueOf(2)},
-				{Kind: opMod, Index: 2, Patch: &valuePatch{}},
+				{Kind: OpAdd, Index: 0, Val: reflect.ValueOf(1)},
+				{Kind: OpRemove, Index: 1, Val: reflect.ValueOf(2)},
+				{Kind: OpReplace, Index: 2, Patch: &valuePatch{}},
 			},
 		}
 		p.reverse()
@@ -157,9 +157,9 @@ func TestPatch_MiscCoverage(t *testing.T) {
 	t.Run("slicePatch", func(t *testing.T) {
 		p := &slicePatch{
 			ops: []sliceOp{
-				{Kind: opAdd, Index: 0, Val: reflect.ValueOf(1)},
-				{Kind: opDel, Index: 1, Val: reflect.ValueOf(2)},
-				{Kind: opMod, Index: 2, Patch: &valuePatch{newVal: reflect.ValueOf(3)}},
+				{Kind: OpAdd, Index: 0, Val: reflect.ValueOf(1)},
+				{Kind: OpRemove, Index: 1, Val: reflect.ValueOf(2)},
+				{Kind: OpReplace, Index: 2, Patch: &valuePatch{newVal: reflect.ValueOf(3)}},
 			},
 		}
 		p.format(0)
