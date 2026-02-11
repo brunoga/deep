@@ -33,8 +33,8 @@ This document tracks planned features and improvements to make the `deep` librar
 - [ ] **SIMD Comparisons**: Investigate using SIMD for basic type comparisons in large slices/arrays.
 
 ## 6. JSON Patch & RFC Interoperability
-- [ ] **Move & Copy Operations**: Implement internal `movePatch` and `copyPatch` to handle value re-ordering efficiently without redundant data.
-- [ ] **Atomic Test Operation**: Allow patches to include "pre-condition only" paths that must match a value but are not changed by the patch.
-- [ ] **JSON Pointer Support**: Support RFC 6901 (`/path/to/item`) as an alternative to Go-style dot notation.
-- [ ] **Standard Export**: Provide a `ToJSONPatch()` method to generate RFC 6902 compliant JSON for interoperability with web frontends.
-- [ ] **Soft Conditions**: Support skipping operations (If/Unless logic) instead of failing the entire application on condition mismatch.
+- [x] **Move & Copy Operations**: Implement internal `movePatch` and `copyPatch` to handle value re-ordering efficiently without redundant data.
+- [x] **Atomic Test Operation**: Allow patches to include "pre-condition only" paths that must match a value but are not changed by the patch.
+- [x] **JSON Pointer Support**: Support RFC 6901 (`/path/to/item`) as an alternative to Go-style dot notation.
+- [x] **Standard Export**: Provide a `ToJSONPatch()` method to generate RFC 6902 compliant JSON for interoperability with web frontends.
+- [x] **Soft Conditions**: Support skipping operations (If/Unless logic) instead of failing the entire application on condition mismatch.

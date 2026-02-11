@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/gob"
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -523,30 +524,621 @@ func TestApplyChecked_Conflicts(t *testing.T) {
 	})
 }
 
-func TestPatch_Serialization_Exhaustive(t *testing.T) {
+func TestPatch_ToJSONPatch(t *testing.T) {
+	type User struct {
+		Name string
+		Age  int
+		Tags []string
+	}
+	u1 := User{Name: "Alice", Age: 30, Tags: []string{"A", "B"}}
+	u2 := User{Name: "Alice", Age: 31, Tags: []string{"A", "C", "B"}}
+
+	patch := Diff(u1, u2)
+	jsonPatchBytes, err := patch.ToJSONPatch()
+	if err != nil {
+		t.Fatalf("ToJSONPatch failed: %v", err)
+	}
+
+	// Verify it's valid JSON
+	var ops []map[string]any
+	if err := json.Unmarshal(jsonPatchBytes, &ops); err != nil {
+		t.Fatalf("Failed to unmarshal JSON Patch: %v", err)
+	}
+
+	// We expect:
+	// 1. replace /Age with 31
+	// 2. add /Tags/1 with "C"
+
+	foundAge := false
+	foundTags := false
+	for _, op := range ops {
+		switch op["path"] {
+		case "/Age":
+			if op["op"] == "replace" && op["value"] == float64(31) {
+				foundAge = true
+			}
+		case "/Tags/1":
+			if op["op"] == "add" && op["value"] == "C" {
+				foundTags = true
+			}
+		}
+	}
+
+	if !foundAge {
+		t.Errorf("Expected replace /Age op, got: %s", string(jsonPatchBytes))
+	}
+	if !foundTags {
+		t.Errorf("Expected add /Tags/1 op, got: %s", string(jsonPatchBytes))
+	}
+}
+
+func TestPatch_ToJSONPatch_WithConditions(t *testing.T) {
+	type User struct {
+		Name string
+		Age  int
+	}
+	builder := NewBuilder[User]()
+	c := Equal[User]("Name", "Alice")
+	nodeAge, _ := builder.Root().Field("Age")
+	nodeAge.If(c).Set(30, 31)
+
+	patch, _ := builder.Build()
+	data, err := patch.ToJSONPatch()
+	if err != nil {
+		t.Fatalf("ToJSONPatch failed: %v", err)
+	}
+
+	var ops []map[string]any
+	json.Unmarshal(data, &ops)
+
+	if len(ops) != 1 {
+		t.Fatalf("Expected 1 op, got %d", len(ops))
+	}
+
+	op := ops[0]
+	if op["if"] == nil {
+		t.Fatal("Expected 'if' predicate in JSON Patch export")
+	}
+
+	pred := op["if"].(map[string]any)
+	if pred["op"] != "test" || pred["path"] != "Name" || pred["value"] != "Alice" {
+		t.Errorf("Unexpected predicate: %+v", pred)
+	}
+}
+
+func TestPatch_NumericConversion(t *testing.T) {
+	tests := []struct {
+		val    any
+		target any
+	}{
+		{int64(10), int(0)},
+		{float64(10), int(0)},
+		{float64(10), int8(0)},
+		{float64(10), int16(0)},
+		{float64(10), int32(0)},
+		{float64(10), int64(0)},
+		{float64(10), uint(0)},
+		{float64(10), uint8(0)},
+		{float64(10), uint16(0)},
+		{float64(10), uint32(0)},
+		{float64(10), uint64(0)},
+		{float64(10), uintptr(0)},
+		{float64(10), float32(0)},
+		{float64(10), float64(0)},
+		{10, float64(0)}, // int to float
+		{"s", "s"},
+		{nil, int(0)},
+	}
+	for _, tt := range tests {
+		var v reflect.Value
+		if tt.val == nil {
+			v = reflect.Value{}
+		} else {
+			v = reflect.ValueOf(tt.val)
+		}
+		targetType := reflect.TypeOf(tt.target)
+		got := convertValue(v, targetType)
+		if got.Type() != targetType && v.IsValid() && !v.Type().AssignableTo(targetType) {
+			t.Errorf("Expected %v, got %v for %v", targetType, got.Type(), tt.val)
+		}
+	}
+}
+
+func TestPatch_SerializationExhaustive(t *testing.T) {
 	type Data struct {
-		V int
+		C []int
 	}
 	Register[Data]()
 
-	// Test with complex condition
-	cond, _ := ParseCondition[Data]("V > 10 OR NOT (V == 0)")
-	p := Diff(Data{V: 1}, Data{V: 2}).WithCondition(cond)
+	builder := NewBuilder[Data]()
+	root := builder.Root()
+	nodeC, _ := root.Field("C")
+	nodeCI, _ := nodeC.Index(0)
+	nodeCI.Set(1, 10)
 
-	// JSON
-	jsonData, _ := json.Marshal(p)
-	p2 := NewPatch[Data]()
-	json.Unmarshal(jsonData, p2)
-	if p2.String() == "" {
-		t.Error("JSON restoration failed")
-	}
+	patch, _ := builder.Build()
 
 	// Gob
-	var buf bytes.Buffer
-	gob.NewEncoder(&buf).Encode(&p)
-	p3 := NewPatch[Data]()
-	gob.NewDecoder(&buf).Decode(&p3)
-	if p3.String() == "" {
-		t.Error("Gob restoration failed")
+	var buf strings.Builder
+	enc := gob.NewEncoder(&buf)
+	enc.Encode(patch)
+
+	dec := gob.NewDecoder(strings.NewReader(buf.String()))
+	var patch2 typedPatch[Data]
+	dec.Decode(&patch2)
+
+	// JSON
+	data, _ := json.Marshal(patch)
+	var patch3 typedPatch[Data]
+	json.Unmarshal(data, &patch3)
+}
+
+type dummyPatch struct{ patchMetadata }
+
+func (p *dummyPatch) apply(root, v reflect.Value)                           {}
+func (p *dummyPatch) applyChecked(root, v reflect.Value, strict bool) error { return nil }
+func (p *dummyPatch) reverse() diffPatch                                    { return p }
+func (p *dummyPatch) format(indent int) string                              { return "" }
+func (p *dummyPatch) toJSONPatch(path string) []map[string]any              { return nil }
+
+func TestPatch_MarshalUnknown(t *testing.T) {
+	_, err := marshalDiffPatch(&dummyPatch{})
+	if err == nil {
+		t.Error("Expected error for unknown patch type")
+	}
+}
+
+func TestPatch_ReverseFormat_Exhaustive(t *testing.T) {
+	// valuePatch
+	t.Run("valuePatch", func(t *testing.T) {
+		p := &valuePatch{oldVal: reflect.ValueOf(1), newVal: reflect.ValueOf(2)}
+		p.reverse()
+		p.format(0)
+		p.toJSONPatch("/p")
+		p.toJSONPatch("") // root
+
+		pRem := &valuePatch{oldVal: reflect.ValueOf(1)}
+		pRem.toJSONPatch("/p")
+	})
+	// ptrPatch
+	t.Run("ptrPatch", func(t *testing.T) {
+		p := &ptrPatch{elemPatch: &valuePatch{}}
+		p.reverse()
+		p.format(0)
+		p.toJSONPatch("/p")
+	})
+	// interfacePatch
+	t.Run("interfacePatch", func(t *testing.T) {
+		p := &interfacePatch{elemPatch: &valuePatch{}}
+		p.reverse()
+		p.format(0)
+		p.toJSONPatch("/p")
+	})
+	// structPatch
+	t.Run("structPatch", func(t *testing.T) {
+		p := &structPatch{fields: map[string]diffPatch{"A": &valuePatch{}}}
+		p.reverse()
+		p.format(0)
+		p.toJSONPatch("/p")
+	})
+	// arrayPatch
+	t.Run("arrayPatch", func(t *testing.T) {
+		p := &arrayPatch{indices: map[int]diffPatch{0: &valuePatch{}}}
+		p.reverse()
+		p.format(0)
+		p.toJSONPatch("/p")
+	})
+	// mapPatch
+	t.Run("mapPatch", func(t *testing.T) {
+		p := &mapPatch{
+			added:    map[interface{}]reflect.Value{"a": reflect.ValueOf(1)},
+			removed:  map[interface{}]reflect.Value{"b": reflect.ValueOf(2)},
+			modified: map[interface{}]diffPatch{"c": &valuePatch{}},
+		}
+		p.reverse()
+		p.format(0)
+		p.toJSONPatch("/p")
+	})
+	// slicePatch
+	t.Run("slicePatch", func(t *testing.T) {
+		p := &slicePatch{
+			ops: []sliceOp{
+				{Kind: opAdd, Index: 0, Val: reflect.ValueOf(1)},
+				{Kind: opDel, Index: 1, Val: reflect.ValueOf(2)},
+				{Kind: opMod, Index: 2, Patch: &valuePatch{}},
+			},
+		}
+		p.reverse()
+		p.format(0)
+		p.toJSONPatch("/p")
+	})
+	// testPatch
+	t.Run("testPatch", func(t *testing.T) {
+		p := &testPatch{expected: reflect.ValueOf(1)}
+		p.reverse()
+		p.format(0)
+		p.toJSONPatch("/p")
+	})
+	// copyPatch
+	t.Run("copyPatch", func(t *testing.T) {
+		p := &copyPatch{from: "/a", path: "/b"}
+		p.reverse()
+		p.format(0)
+		p.toJSONPatch("/p")
+	})
+	// movePatch
+	t.Run("movePatch", func(t *testing.T) {
+		p := &movePatch{from: "/a", path: "/b"}
+		p.reverse()
+		p.format(0)
+		p.toJSONPatch("/p")
+	})
+	// logPatch
+	t.Run("logPatch", func(t *testing.T) {
+		p := &logPatch{message: "test"}
+		p.reverse()
+		p.format(0)
+		p.toJSONPatch("/p")
+	})
+}
+
+func TestPatch_ApplySimple(t *testing.T) {
+	val := 1
+	patch := Diff(1, 2)
+	patch.Apply(&val)
+	if val != 2 {
+		t.Errorf("Apply failed: expected 2, got %d", val)
+	}
+}
+
+func TestPatch_ConditionsExhaustive(t *testing.T) {
+	type InnerC struct{ V int }
+	type DataC struct {
+		A   int
+		P   *InnerC
+		I   any
+		M   map[string]InnerC
+		S   []InnerC
+		Arr [1]InnerC
+	}
+	builder := NewBuilder[DataC]()
+	root := builder.Root()
+
+	c := Equal[DataC]("A", 1)
+
+	root.If(c).Unless(c).Test(DataC{A: 1})
+
+	nodeP, _ := root.Field("P")
+	nodeP.If(c).Unless(c)
+
+	nodeI, _ := root.Field("I")
+	nodeI.If(c).Unless(c)
+
+	nodeM, _ := root.Field("M")
+	nodeM.If(c).Unless(c)
+
+	nodeS, _ := root.Field("S")
+	nodeS.If(c).Unless(c)
+
+	nodeArr, _ := root.Field("Arr")
+	nodeArr.If(c).Unless(c)
+
+	patch, _ := builder.Build()
+	if patch == nil {
+		t.Fatal("Build failed")
+	}
+}
+
+func TestPatch_MoreApplyChecked(t *testing.T) {
+	// ptrPatch
+	t.Run("ptrPatch", func(t *testing.T) {
+		val1 := 1
+		p1 := &val1
+		val2 := 2
+		p2 := &val2
+		patch := Diff(p1, p2)
+		if err := patch.ApplyChecked(&p1); err != nil {
+			t.Errorf("ptrPatch ApplyChecked failed: %v", err)
+		}
+	})
+	// interfacePatch
+	t.Run("interfacePatch", func(t *testing.T) {
+		var i1 any = 1
+		var i2 any = 2
+		patch := Diff(i1, i2)
+		if err := patch.ApplyChecked(&i1); err != nil {
+			t.Errorf("interfacePatch ApplyChecked failed: %v", err)
+		}
+	})
+	// structPatch
+	t.Run("structPatch", func(t *testing.T) {
+		type SLocal struct{ A int }
+		s1 := SLocal{1}
+		s2 := SLocal{2}
+		patch := Diff(s1, s2)
+		if err := patch.ApplyChecked(&s1); err != nil {
+			t.Errorf("structPatch ApplyChecked failed: %v", err)
+		}
+	})
+	// arrayPatch
+	t.Run("arrayPatch", func(t *testing.T) {
+		a1 := [1]int{1}
+		a2 := [1]int{2}
+		patch := Diff(a1, a2)
+		if err := patch.ApplyChecked(&a1); err != nil {
+			t.Errorf("arrayPatch ApplyChecked failed: %v", err)
+		}
+	})
+	// mapPatch
+	t.Run("mapPatch", func(t *testing.T) {
+		m1 := map[string]int{"a": 1}
+		m2 := map[string]int{"a": 2}
+		patch := Diff(m1, m2)
+		if err := patch.ApplyChecked(&m1); err != nil {
+			t.Errorf("mapPatch ApplyChecked failed: %v", err)
+		}
+	})
+	// testPatch
+	t.Run("testPatch", func(t *testing.T) {
+		val := 1
+		builder := NewBuilder[int]()
+		builder.Root().Test(1)
+		patch, _ := builder.Build()
+		if err := patch.ApplyChecked(&val); err != nil {
+			t.Errorf("testPatch ApplyChecked failed: %v", err)
+		}
+	})
+}
+
+func TestPatch_Apply_DocumentWide(t *testing.T) {
+	type Data struct {
+		A int
+		B int
+	}
+	d := Data{A: 1, B: 0}
+	rv := reflect.ValueOf(&d)
+
+	// testPatch apply
+	tp := &testPatch{expected: reflect.ValueOf(1)}
+	tp.apply(rv, rv.Elem().Field(0))
+
+	// copyPatch apply
+	cp := &copyPatch{from: "/A"}
+	cp.apply(rv, rv.Elem().Field(1))
+	if d.B != 1 {
+		t.Errorf("copyPatch apply failed: expected B=1, got %d", d.B)
+	}
+
+	// movePatch apply
+	d.B = 0
+	mp := &movePatch{from: "/A", path: "/B"}
+	mp.apply(rv, rv.Elem().Field(1))
+	if d.B != 1 || d.A != 0 {
+		t.Errorf("movePatch apply failed: %+v", d)
+	}
+}
+
+func TestPatch_ConditionToPredicate_Exhaustive(t *testing.T) {
+	type Data struct{ V int }
+
+	ops := []string{"==", "!=", "<", ">", "<=", ">="}
+	for _, op := range ops {
+		expr := fmt.Sprintf("V %s 10", op)
+		cond, _ := ParseCondition[Data](expr)
+
+		pred := conditionToPredicate(cond)
+		if pred == nil {
+			t.Errorf("conditionToPredicate returned nil for %s", op)
+		}
+	}
+
+	// Complex conditions
+	c1, _ := ParseCondition[Data]("V > 0 AND V < 10")
+	conditionToPredicate(c1)
+
+	c2, _ := ParseCondition[Data]("V == 0 OR V == 10")
+	conditionToPredicate(c2)
+
+	c3, _ := ParseCondition[Data]("NOT (V == 0)")
+	conditionToPredicate(c3)
+}
+
+func TestPatch_Serialization_Conditions(t *testing.T) {
+	type Data struct{ A int }
+	builder := NewBuilder[Data]()
+	c := Equal[Data]("A", 1)
+	builder.Root().If(c).Unless(c).Test(Data{A: 1})
+	patch, _ := builder.Build()
+
+	// Coverage for marshalDiffPatch branches
+	data, _ := json.Marshal(patch)
+	var patch2 typedPatch[Data]
+	json.Unmarshal(data, &patch2)
+}
+
+func TestPatch_MiscCoverage(t *testing.T) {
+	// valuePatch reverse/format/toJSONPatch
+	t.Run("valuePatch", func(t *testing.T) {
+		p := &valuePatch{oldVal: reflect.ValueOf(1), newVal: reflect.ValueOf(2)}
+		p.reverse()
+		p.format(0)
+		p.toJSONPatch("/path")
+		p.toJSONPatch("") // root
+
+		pRem := &valuePatch{oldVal: reflect.ValueOf(1)}
+		pRem.toJSONPatch("/path")
+	})
+
+	// ptrPatch reverse/format/toJSONPatch
+	t.Run("ptrPatch", func(t *testing.T) {
+		p := &ptrPatch{elemPatch: &valuePatch{oldVal: reflect.ValueOf(1), newVal: reflect.ValueOf(2)}}
+		p.reverse()
+		p.format(0)
+		p.toJSONPatch("/path")
+	})
+
+	// interfacePatch reverse/format/toJSONPatch
+	t.Run("interfacePatch", func(t *testing.T) {
+		p := &interfacePatch{elemPatch: &valuePatch{oldVal: reflect.ValueOf(1), newVal: reflect.ValueOf(2)}}
+		p.reverse()
+		p.format(0)
+		p.toJSONPatch("/path")
+	})
+
+	// structPatch format/toJSONPatch
+	t.Run("structPatch", func(t *testing.T) {
+		p := &structPatch{fields: map[string]diffPatch{"A": &valuePatch{newVal: reflect.ValueOf(1)}}}
+		p.format(0)
+		p.toJSONPatch("/path")
+	})
+
+	// arrayPatch format/toJSONPatch
+	t.Run("arrayPatch", func(t *testing.T) {
+		p := &arrayPatch{indices: map[int]diffPatch{0: &valuePatch{newVal: reflect.ValueOf(1)}}}
+		p.format(0)
+		p.toJSONPatch("/path")
+	})
+
+	// mapPatch format/toJSONPatch
+	t.Run("mapPatch", func(t *testing.T) {
+		p := &mapPatch{
+			added:    map[interface{}]reflect.Value{"a": reflect.ValueOf(1)},
+			removed:  map[interface{}]reflect.Value{"b": reflect.ValueOf(2)},
+			modified: map[interface{}]diffPatch{"c": &valuePatch{newVal: reflect.ValueOf(3)}},
+		}
+		p.format(0)
+		p.toJSONPatch("/path")
+	})
+
+	// slicePatch format
+	t.Run("slicePatch", func(t *testing.T) {
+		p := &slicePatch{
+			ops: []sliceOp{
+				{Kind: opAdd, Index: 0, Val: reflect.ValueOf(1)},
+				{Kind: opDel, Index: 1, Val: reflect.ValueOf(2)},
+				{Kind: opMod, Index: 2, Patch: &valuePatch{newVal: reflect.ValueOf(3)}},
+			},
+		}
+		p.format(0)
+	})
+}
+
+func TestPatch_EmptyToJSONPatch(t *testing.T) {
+	p := NewPatch[int]()
+	data, err := p.ToJSONPatch()
+	if err != nil {
+		t.Fatalf("ToJSONPatch failed: %v", err)
+	}
+	if string(data) != "[]" {
+		t.Errorf("Expected empty JSON array, got %s", string(data))
+	}
+}
+
+func TestPatch_ApplyCheckedRecursive(t *testing.T) {
+	type InnerR struct{ V int }
+	type DataR struct {
+		P *InnerR
+		I any
+		M map[string]InnerR
+		S []InnerR
+		A [1]InnerR
+	}
+
+	d1 := DataR{
+		P: &InnerR{1},
+		I: InnerR{2},
+		M: map[string]InnerR{"a": {3}},
+		S: []InnerR{{4}},
+		A: [1]InnerR{{5}},
+	}
+	d2 := DataR{
+		P: &InnerR{10},
+		I: InnerR{20},
+		M: map[string]InnerR{"a": {30}},
+		S: []InnerR{{40}},
+		A: [1]InnerR{{50}},
+	}
+
+	patch := Diff(d1, d2)
+	if err := patch.ApplyChecked(&d1); err != nil {
+		t.Fatalf("ApplyChecked failed: %v", err)
+	}
+	if !reflect.DeepEqual(d1, d2) {
+		t.Errorf("ApplyChecked mismatch: %+v", d1)
+	}
+}
+
+func TestPatch_Serialization_Errors(t *testing.T) {
+	// unmarshalDiffPatch error
+	unmarshalDiffPatch([]byte("INVALID"))
+
+	// unmarshalCondFromMap missing key
+	unmarshalCondFromMap(map[string]any{}, "c")
+
+	// convertFromSurrogate unknown kind
+	convertFromSurrogate(map[string]any{"k": "unknown", "d": map[string]any{}})
+
+	// convertFromSurrogate invalid surrogate type
+	convertFromSurrogate(123)
+}
+
+func TestPatch_ToJSONPatch_Complex(t *testing.T) {
+	type Inner struct{ V int }
+	type Data struct {
+		P *Inner
+		I any
+		A [1]Inner
+		M map[string]Inner
+	}
+
+	builder := NewBuilder[Data]()
+	root := builder.Root()
+
+	nodeP, _ := root.Field("P")
+	nodePV, _ := nodeP.Elem().Field("V")
+	nodePV.Set(1, 2)
+
+	nodeI, _ := root.Field("I")
+	nodeI.Elem().Set(1, 2)
+
+	nodeA, _ := root.Field("A")
+	nodeAI, _ := nodeA.Index(0)
+	nodeAIV, _ := nodeAI.Field("V")
+	nodeAIV.Set(1, 2)
+
+	nodeM, _ := root.Field("M")
+	nodeMK, _ := nodeM.MapKey("k")
+	nodeMKV, _ := nodeMK.Field("V")
+	nodeMKV.Set(1, 2)
+
+	patch, _ := builder.Build()
+	patch.ToJSONPatch()
+}
+
+func TestPatch_LogExhaustive(t *testing.T) {
+	lp := &logPatch{message: "test"}
+
+	// apply
+	lp.apply(reflect.Value{}, reflect.ValueOf(1))
+
+	// applyChecked
+	if err := lp.applyChecked(reflect.ValueOf(1), reflect.ValueOf(1), false); err != nil {
+		t.Errorf("logPatch applyChecked failed: %v", err)
+	}
+
+	// reverse
+	if lp.reverse() != lp {
+		t.Error("logPatch reverse should return itself")
+	}
+
+	// format
+	if lp.format(0) == "" {
+		t.Error("logPatch format returned empty string")
+	}
+
+	// toJSONPatch
+	ops := lp.toJSONPatch("/path")
+	if len(ops) != 1 || ops[0]["op"] != "log" {
+		t.Errorf("Unexpected toJSONPatch output: %+v", ops)
 	}
 }

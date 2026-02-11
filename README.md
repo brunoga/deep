@@ -14,6 +14,12 @@
 *   **Flexible Consistency**: Choose between strict "old-value" matching or flexible application based on custom conditions.
 *   **Local Node Conditions**: Attach conditions to specific fields or elements during manual construction.
 *   **Manual Patch Builder**: Construct valid patches manually using a fluent API with on-the-fly type validation.
+*   **JSON Pointer Support**: Use RFC 6901 pointers (`/path/to/item`) in conditions and builder navigation.
+*   **JSON Patch Export**: Export patches to RFC 6902 compliant JSON for interoperability.
+*   **Move & Copy Operations**: Efficiently re-order data or reuse values across the structure.
+*   **Atomic Test Operation**: Include pre-condition checks that fail the patch if not met.
+*   **Soft Conditions**: Skip operations using `If` and `Unless` logic without failing the entire patch application.
+*   **Custom Log Operation**: Insert logging points in your patch for debugging during application.
 *   **Unexported Fields**: Handles unexported struct fields transparently.
 *   **Cycle Detection**: Correctly handles circular references in both Copy and Diff operations.
 
@@ -167,6 +173,79 @@ patch.Apply(&stateA) // stateA matches stateB
 // Reverse
 reversePatch := patch.Reverse()
 reversePatch.Apply(&stateA) // stateA is back to original
+```
+
+## JSON Patch & RFC Interoperability
+
+`deep` provides deep support for JSON standards to ensure interoperability with other systems and web frontends.
+
+### JSON Pointer (RFC 6901)
+
+You can use JSON Pointers anywhere a path is expected, including in the Condition DSL and the Manual Builder.
+
+```go
+// Use in conditions
+cond, _ := deep.ParseCondition[Config]("/network/port > 1024")
+
+// Use in manual builder navigation
+builder.Root().navigate("/meta/env").Set("prod", "staging")
+```
+
+### JSON Patch Export (RFC 6902)
+
+Any `deep.Patch` can be exported to a standard JSON Patch array. Exported patches automatically include `If` and `Unless` conditions as standard JSON Predicates.
+
+```go
+patch := deep.Diff(oldObj, newObj)
+jsonBytes, err := patch.ToJSONPatch()
+// Produces: [{"op": "replace", "path": "/version", "value": 2, "if": {...}}, ...]
+```
+
+### Move & Copy Operations
+
+The manual builder supports efficient `Move` and `Copy` operations.
+
+```go
+builder := deep.NewBuilder[Config]()
+
+// Move a value from one path to another (deletes from source)
+builder.Root().Field("BackupHost").Move("/Network/Host")
+
+// Copy a value from one path to another
+builder.Root().Field("Alias").Copy("/Name")
+```
+
+### Atomic Test Operation
+
+Modeled after JSON Patch's `test` operation, this allows ensuring a value matches a specific state before proceeding, without modifying it.
+
+```go
+// Application will fail if /version is not currently 1
+builder.Root().navigate("/version").Test(1)
+```
+
+### Soft Conditions (If/Unless)
+
+Unlike standard conditions that fail the whole `ApplyChecked` call, `If` and `Unless` conditions allow skipping specific operations while letting the rest of the patch proceed.
+
+```go
+builder := deep.NewBuilder[Config]()
+
+// Only update the version IF the environment is 'prod'
+// If not 'prod', this specific update is skipped, but other fields are still updated.
+builder.Root().Field("Version").
+    If(deep.Equal[Config]("/meta/env", "prod")).
+    Set(1, 2)
+```
+
+### Custom Log Operation
+
+Insert a log point anywhere in your structure to print the current value during patch application. This is highly useful for debugging complex patch trees.
+
+```go
+builder.Root().Field("Settings").
+    Log("Applying settings update").
+    Field("Timeout").Set(30, 60)
 ```
 
 ## Advanced
