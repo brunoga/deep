@@ -3,7 +3,7 @@ package deep
 import (
 	"reflect"
 
-	"github.com/brunoga/deep/internal/unsafe"
+	"github.com/brunoga/deep/v2/internal/unsafe"
 )
 
 func convertValue(v reflect.Value, targetType reflect.Type) reflect.Value {

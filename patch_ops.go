@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/brunoga/deep/internal/unsafe"
+	"github.com/brunoga/deep/v2/internal/unsafe"
 )
 
 var ErrConditionSkipped = fmt.Errorf("condition skipped")

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/brunoga/deep/internal/unsafe"
+	"github.com/brunoga/deep/v2/internal/unsafe"
 )
 
 // DiffOption allows configuring the behavior of the Diff function.
