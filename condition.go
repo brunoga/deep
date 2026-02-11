@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -240,7 +241,7 @@ func dereference(v reflect.Value) (reflect.Value, error) {
 	return v, nil
 }
 
-func compareValues(v1, v2 reflect.Value, op string) (bool, error) {
+func compareValues(v1, v2 reflect.Value, op string, ignoreCase bool) (bool, error) {
 	if !v1.IsValid() || !v2.IsValid() {
 		switch op {
 		case "==":
@@ -255,9 +256,15 @@ func compareValues(v1, v2 reflect.Value, op string) (bool, error) {
 	v2 = convertValue(v2, v1.Type())
 
 	if op == "==" {
+		if ignoreCase && v1.Kind() == reflect.String && v2.Kind() == reflect.String {
+			return strings.EqualFold(v1.String(), v2.String()), nil
+		}
 		return reflect.DeepEqual(v1.Interface(), v2.Interface()), nil
 	}
 	if op == "!=" {
+		if ignoreCase && v1.Kind() == reflect.String && v2.Kind() == reflect.String {
+			return !strings.EqualFold(v1.String(), v2.String()), nil
+		}
 		return !reflect.DeepEqual(v1.Interface(), v2.Interface()), nil
 	}
 
@@ -403,6 +410,188 @@ type rawCondition interface {
 	withRelativeParts(prefix []pathPart) rawCondition
 }
 
+type rawDefinedCondition struct {
+	Path Path
+}
+
+func (c *rawDefinedCondition) Evaluate(v any) (bool, error) {
+	rv := toReflectValue(v)
+	target, err := c.Path.resolve(rv)
+	if err != nil {
+		return false, nil
+	}
+	return target.IsValid(), nil
+}
+
+func (c *rawDefinedCondition) paths() []Path { return []Path{c.Path} }
+
+func (c *rawDefinedCondition) withRelativeParts(prefix []pathPart) rawCondition {
+	return &rawDefinedCondition{Path: c.Path.stripParts(prefix)}
+}
+
+type rawUndefinedCondition struct {
+	Path Path
+}
+
+func (c *rawUndefinedCondition) Evaluate(v any) (bool, error) {
+	rv := toReflectValue(v)
+	target, err := c.Path.resolve(rv)
+	if err != nil {
+		return true, nil
+	}
+	return !target.IsValid(), nil
+}
+
+func (c *rawUndefinedCondition) paths() []Path { return []Path{c.Path} }
+
+func (c *rawUndefinedCondition) withRelativeParts(prefix []pathPart) rawCondition {
+	return &rawUndefinedCondition{Path: c.Path.stripParts(prefix)}
+}
+
+type rawTypeCondition struct {
+	Path     Path
+	TypeName string
+}
+
+func (c *rawTypeCondition) Evaluate(v any) (bool, error) {
+	rv := toReflectValue(v)
+	target, err := c.Path.resolve(rv)
+	if err != nil {
+		return c.TypeName == "undefined", nil
+	}
+	if !target.IsValid() {
+		return c.TypeName == "null" || c.TypeName == "undefined", nil
+	}
+
+	switch c.TypeName {
+	case "string":
+		return target.Kind() == reflect.String, nil
+	case "number":
+		k := target.Kind()
+		return (k >= reflect.Int && k <= reflect.Int64) ||
+			(k >= reflect.Uint && k <= reflect.Uintptr) ||
+			(k == reflect.Float32 || k == reflect.Float64), nil
+	case "boolean":
+		return target.Kind() == reflect.Bool, nil
+	case "object":
+		return target.Kind() == reflect.Struct || target.Kind() == reflect.Map, nil
+	case "array":
+		return target.Kind() == reflect.Slice || target.Kind() == reflect.Array, nil
+	case "null":
+		k := target.Kind()
+		return (k == reflect.Ptr || k == reflect.Interface || k == reflect.Slice || k == reflect.Map) && target.IsNil(), nil
+	case "undefined":
+		return false, nil
+	default:
+		return false, fmt.Errorf("unknown type: %s", c.TypeName)
+	}
+}
+
+func (c *rawTypeCondition) paths() []Path { return []Path{c.Path} }
+
+func (c *rawTypeCondition) withRelativeParts(prefix []pathPart) rawCondition {
+	return &rawTypeCondition{Path: c.Path.stripParts(prefix), TypeName: c.TypeName}
+}
+
+type rawStringCondition struct {
+	Path       Path
+	Val        string
+	Op         string
+	IgnoreCase bool
+}
+
+func (c *rawStringCondition) Evaluate(v any) (bool, error) {
+	rv := toReflectValue(v)
+	target, err := c.Path.resolve(rv)
+	if err != nil {
+		return false, nil
+	}
+	if !target.IsValid() || target.Kind() != reflect.String {
+		return false, nil
+	}
+	s := target.String()
+	val := c.Val
+	if c.IgnoreCase && c.Op != "matches" {
+		s = strings.ToLower(s)
+		val = strings.ToLower(val)
+	}
+	switch c.Op {
+	case "contains":
+		return strings.Contains(s, val), nil
+	case "starts":
+		return strings.HasPrefix(s, val), nil
+	case "ends":
+		return strings.HasSuffix(s, val), nil
+	case "matches":
+		pattern := val
+		if c.IgnoreCase {
+			pattern = "(?i)" + pattern
+		}
+		return regexp.MatchString(pattern, s)
+	}
+	return false, fmt.Errorf("unknown string operator: %s", c.Op)
+}
+
+func (c *rawStringCondition) paths() []Path { return []Path{c.Path} }
+
+func (c *rawStringCondition) withRelativeParts(prefix []pathPart) rawCondition {
+	return &rawStringCondition{
+		Path:       c.Path.stripParts(prefix),
+		Val:        c.Val,
+		Op:         c.Op,
+		IgnoreCase: c.IgnoreCase,
+	}
+}
+
+type rawInCondition struct {
+	Path       Path
+	Values     []any
+	IgnoreCase bool
+}
+
+func (c *rawInCondition) Evaluate(v any) (bool, error) {
+	rv := toReflectValue(v)
+	target, err := c.Path.resolve(rv)
+	if err != nil {
+		return false, nil
+	}
+	for _, val := range c.Values {
+		match, err := compareValues(target, reflect.ValueOf(val), "==", c.IgnoreCase)
+		if err != nil {
+			return false, err
+		}
+		if match {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (c *rawInCondition) paths() []Path { return []Path{c.Path} }
+
+func (c *rawInCondition) withRelativeParts(prefix []pathPart) rawCondition {
+	return &rawInCondition{
+		Path:       c.Path.stripParts(prefix),
+		Values:     c.Values,
+		IgnoreCase: c.IgnoreCase,
+	}
+}
+
+type rawLogCondition struct {
+	Message string
+}
+
+func (c *rawLogCondition) Evaluate(v any) (bool, error) {
+	fmt.Printf("DEEP LOG CONDITION: %s (value: %v)\n", c.Message, v)
+	return true, nil
+}
+
+func (c *rawLogCondition) paths() []Path { return nil }
+
+func (c *rawLogCondition) withRelativeParts(prefix []pathPart) rawCondition {
+	return c
+}
+
 func toReflectValue(v any) reflect.Value {
 	if rv, ok := v.(reflect.Value); ok {
 		return rv
@@ -415,9 +604,10 @@ func toReflectValue(v any) reflect.Value {
 }
 
 type rawCompareCondition struct {
-	Path Path
-	Val  any
-	Op   string
+	Path       Path
+	Val        any
+	Op         string
+	IgnoreCase bool
 }
 
 func (c *rawCompareCondition) Evaluate(v any) (bool, error) {
@@ -426,7 +616,7 @@ func (c *rawCompareCondition) Evaluate(v any) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return compareValues(target, reflect.ValueOf(c.Val), c.Op)
+	return compareValues(target, reflect.ValueOf(c.Val), c.Op, c.IgnoreCase)
 }
 
 func (c *rawCompareCondition) paths() []Path {
@@ -435,16 +625,18 @@ func (c *rawCompareCondition) paths() []Path {
 
 func (c *rawCompareCondition) withRelativeParts(prefix []pathPart) rawCondition {
 	return &rawCompareCondition{
-		Path: c.Path.stripParts(prefix),
-		Val:  c.Val,
-		Op:   c.Op,
+		Path:       c.Path.stripParts(prefix),
+		Val:        c.Val,
+		Op:         c.Op,
+		IgnoreCase: c.IgnoreCase,
 	}
 }
 
 type rawCompareFieldCondition struct {
-	Path1 Path
-	Path2 Path
-	Op    string
+	Path1      Path
+	Path2      Path
+	Op         string
+	IgnoreCase bool
 }
 
 func (c *rawCompareFieldCondition) Evaluate(v any) (bool, error) {
@@ -457,7 +649,7 @@ func (c *rawCompareFieldCondition) Evaluate(v any) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return compareValues(target1, target2, c.Op)
+	return compareValues(target1, target2, c.Op, c.IgnoreCase)
 }
 
 func (c *rawCompareFieldCondition) paths() []Path {
@@ -466,9 +658,10 @@ func (c *rawCompareFieldCondition) paths() []Path {
 
 func (c *rawCompareFieldCondition) withRelativeParts(prefix []pathPart) rawCondition {
 	return &rawCompareFieldCondition{
-		Path1: c.Path1.stripParts(prefix),
-		Path2: c.Path2.stripParts(prefix),
-		Op:    c.Op,
+		Path1:      c.Path1.stripParts(prefix),
+		Path2:      c.Path2.stripParts(prefix),
+		Op:         c.Op,
+		IgnoreCase: c.IgnoreCase,
 	}
 }
 
@@ -559,13 +752,14 @@ func (c *rawNotCondition) withRelativeParts(prefix []pathPart) rawCondition {
 }
 
 type CompareCondition[T any] struct {
-	Path Path
-	Val  any
-	Op   string
+	Path       Path
+	Val        any
+	Op         string
+	IgnoreCase bool
 }
 
 func (c CompareCondition[T]) Evaluate(v *T) (bool, error) {
-	raw := &rawCompareCondition{Path: c.Path, Val: c.Val, Op: c.Op}
+	raw := &rawCompareCondition{Path: c.Path, Val: c.Val, Op: c.Op, IgnoreCase: c.IgnoreCase}
 	return raw.Evaluate(v)
 }
 
@@ -573,8 +767,16 @@ func Equal[T any](path string, val any) Condition[T] {
 	return CompareCondition[T]{Path: Path(path), Val: val, Op: "=="}
 }
 
+func EqualFold[T any](path string, val any) Condition[T] {
+	return CompareCondition[T]{Path: Path(path), Val: val, Op: "==", IgnoreCase: true}
+}
+
 func NotEqual[T any](path string, val any) Condition[T] {
 	return CompareCondition[T]{Path: Path(path), Val: val, Op: "!="}
+}
+
+func NotEqualFold[T any](path string, val any) Condition[T] {
+	return CompareCondition[T]{Path: Path(path), Val: val, Op: "!=", IgnoreCase: true}
 }
 
 func Greater[T any](path string, val any) Condition[T] {
@@ -594,13 +796,14 @@ func LessEqual[T any](path string, val any) Condition[T] {
 }
 
 type CompareFieldCondition[T any] struct {
-	Path1 Path
-	Path2 Path
-	Op    string
+	Path1      Path
+	Path2      Path
+	Op         string
+	IgnoreCase bool
 }
 
 func (c CompareFieldCondition[T]) Evaluate(v *T) (bool, error) {
-	raw := &rawCompareFieldCondition{Path1: c.Path1, Path2: c.Path2, Op: c.Op}
+	raw := &rawCompareFieldCondition{Path1: c.Path1, Path2: c.Path2, Op: c.Op, IgnoreCase: c.IgnoreCase}
 	return raw.Evaluate(v)
 }
 
@@ -608,8 +811,16 @@ func EqualField[T any](path1, path2 string) Condition[T] {
 	return CompareFieldCondition[T]{Path1: Path(path1), Path2: Path(path2), Op: "=="}
 }
 
+func EqualFieldFold[T any](path1, path2 string) Condition[T] {
+	return CompareFieldCondition[T]{Path1: Path(path1), Path2: Path(path2), Op: "==", IgnoreCase: true}
+}
+
 func NotEqualField[T any](path1, path2 string) Condition[T] {
 	return CompareFieldCondition[T]{Path1: Path(path1), Path2: Path(path2), Op: "!="}
+}
+
+func NotEqualFieldFold[T any](path1, path2 string) Condition[T] {
+	return CompareFieldCondition[T]{Path1: Path(path1), Path2: Path(path2), Op: "!=", IgnoreCase: true}
 }
 
 func GreaterField[T any](path1, path2 string) Condition[T] {
@@ -684,6 +895,122 @@ func (c NotCondition[T]) Evaluate(v *T) (bool, error) {
 
 func Not[T any](c Condition[T]) Condition[T] {
 	return NotCondition[T]{C: c}
+}
+
+type DefinedCondition[T any] struct {
+	Path Path
+}
+
+func (c DefinedCondition[T]) Evaluate(v *T) (bool, error) {
+	raw := &rawDefinedCondition{Path: c.Path}
+	return raw.Evaluate(v)
+}
+
+func Defined[T any](path string) Condition[T] {
+	return DefinedCondition[T]{Path: Path(path)}
+}
+
+type UndefinedCondition[T any] struct {
+	Path Path
+}
+
+func (c UndefinedCondition[T]) Evaluate(v *T) (bool, error) {
+	raw := &rawUndefinedCondition{Path: c.Path}
+	return raw.Evaluate(v)
+}
+
+func Undefined[T any](path string) Condition[T] {
+	return UndefinedCondition[T]{Path: Path(path)}
+}
+
+type TypeCondition[T any] struct {
+	Path     Path
+	TypeName string
+}
+
+func (c TypeCondition[T]) Evaluate(v *T) (bool, error) {
+	raw := &rawTypeCondition{Path: c.Path, TypeName: c.TypeName}
+	return raw.Evaluate(v)
+}
+
+func Type[T any](path, typeName string) Condition[T] {
+	return TypeCondition[T]{Path: Path(path), TypeName: typeName}
+}
+
+type StringCondition[T any] struct {
+	Path       Path
+	Val        string
+	Op         string
+	IgnoreCase bool
+}
+
+func (c StringCondition[T]) Evaluate(v *T) (bool, error) {
+	raw := &rawStringCondition{Path: c.Path, Val: c.Val, Op: c.Op, IgnoreCase: c.IgnoreCase}
+	return raw.Evaluate(v)
+}
+
+func Contains[T any](path, val string) Condition[T] {
+	return StringCondition[T]{Path: Path(path), Val: val, Op: "contains"}
+}
+
+func ContainsFold[T any](path, val string) Condition[T] {
+	return StringCondition[T]{Path: Path(path), Val: val, Op: "contains", IgnoreCase: true}
+}
+
+func StartsWith[T any](path, val string) Condition[T] {
+	return StringCondition[T]{Path: Path(path), Val: val, Op: "starts"}
+}
+
+func StartsWithFold[T any](path, val string) Condition[T] {
+	return StringCondition[T]{Path: Path(path), Val: val, Op: "starts", IgnoreCase: true}
+}
+
+func EndsWith[T any](path, val string) Condition[T] {
+	return StringCondition[T]{Path: Path(path), Val: val, Op: "ends"}
+}
+
+func EndsWithFold[T any](path, val string) Condition[T] {
+	return StringCondition[T]{Path: Path(path), Val: val, Op: "ends", IgnoreCase: true}
+}
+
+func Matches[T any](path, pattern string) Condition[T] {
+	return StringCondition[T]{Path: Path(path), Val: pattern, Op: "matches"}
+}
+
+func MatchesFold[T any](path, pattern string) Condition[T] {
+	return StringCondition[T]{Path: Path(path), Val: pattern, Op: "matches", IgnoreCase: true}
+}
+
+type InCondition[T any] struct {
+	Path       Path
+	Values     []any
+	IgnoreCase bool
+}
+
+func (c InCondition[T]) Evaluate(v *T) (bool, error) {
+	raw := &rawInCondition{Path: c.Path, Values: c.Values, IgnoreCase: c.IgnoreCase}
+	return raw.Evaluate(v)
+}
+
+func In[T any](path string, values ...any) Condition[T] {
+	return InCondition[T]{Path: Path(path), Values: values}
+}
+
+func InFold[T any](path string, values ...any) Condition[T] {
+	return InCondition[T]{Path: Path(path), Values: values, IgnoreCase: true}
+}
+
+type LogCondition[T any] struct {
+	Message string
+}
+
+func (c LogCondition[T]) Evaluate(v *T) (bool, error) {
+	raw := &rawLogCondition{Message: c.Message}
+	return raw.Evaluate(v)
+}
+
+func Log[T any](message string) Condition[T] {
+	return LogCondition[T]{Message: message}
 }
 
 // typedRawCondition wraps a rawCondition to satisfy Condition[T].
@@ -1008,9 +1335,10 @@ func marshalConditionAny(c any) (any, error) {
 		return &condSurrogate{
 			Kind: kind,
 			Data: map[string]any{
-				"p": v.FieldByName("Path").String(),
-				"v": v.FieldByName("Val").Interface(),
-				"o": op,
+				"p":  v.FieldByName("Path").String(),
+				"v":  v.FieldByName("Val").Interface(),
+				"o":  op,
+				"ic": v.FieldByName("IgnoreCase").Bool(),
 			},
 		}, nil
 	}
@@ -1028,6 +1356,61 @@ func marshalConditionAny(c any) (any, error) {
 				"p1": v.FieldByName("Path1").String(),
 				"p2": v.FieldByName("Path2").String(),
 				"o":  op,
+				"ic": v.FieldByName("IgnoreCase").Bool(),
+			},
+		}, nil
+	}
+	if strings.HasPrefix(typeName, "DefinedCondition") {
+		return &condSurrogate{
+			Kind: "defined",
+			Data: map[string]any{
+				"p": v.FieldByName("Path").String(),
+			},
+		}, nil
+	}
+	if strings.HasPrefix(typeName, "UndefinedCondition") {
+		return &condSurrogate{
+			Kind: "undefined",
+			Data: map[string]any{
+				"p": v.FieldByName("Path").String(),
+			},
+		}, nil
+	}
+	if strings.HasPrefix(typeName, "TypeCondition") {
+		return &condSurrogate{
+			Kind: "type",
+			Data: map[string]any{
+				"p": v.FieldByName("Path").String(),
+				"t": v.FieldByName("TypeName").String(),
+			},
+		}, nil
+	}
+	if strings.HasPrefix(typeName, "StringCondition") {
+		return &condSurrogate{
+			Kind: "string",
+			Data: map[string]any{
+				"p":  v.FieldByName("Path").String(),
+				"v":  v.FieldByName("Val").String(),
+				"o":  v.FieldByName("Op").String(),
+				"ic": v.FieldByName("IgnoreCase").Bool(),
+			},
+		}, nil
+	}
+	if strings.HasPrefix(typeName, "InCondition") {
+		return &condSurrogate{
+			Kind: "in",
+			Data: map[string]any{
+				"p":  v.FieldByName("Path").String(),
+				"v":  v.FieldByName("Values").Interface(),
+				"ic": v.FieldByName("IgnoreCase").Bool(),
+			},
+		}, nil
+	}
+	if strings.HasPrefix(typeName, "LogCondition") {
+		return &condSurrogate{
+			Kind: "log",
+			Data: map[string]any{
+				"m": v.FieldByName("Message").String(),
 			},
 		}, nil
 	}
@@ -1105,22 +1488,48 @@ func convertFromCondSurrogate[T any](s any) (Condition[T], error) {
 	switch kind {
 	case "equal":
 		d := data.(map[string]any)
-		return CompareCondition[T]{Path: Path(d["p"].(string)), Val: d["v"], Op: "=="}, nil
+		ic, _ := d["ic"].(bool)
+		return CompareCondition[T]{Path: Path(d["p"].(string)), Val: d["v"], Op: "==", IgnoreCase: ic}, nil
 	case "not_equal":
 		d := data.(map[string]any)
-		return CompareCondition[T]{Path: Path(d["p"].(string)), Val: d["v"], Op: "!="}, nil
+		ic, _ := d["ic"].(bool)
+		return CompareCondition[T]{Path: Path(d["p"].(string)), Val: d["v"], Op: "!=", IgnoreCase: ic}, nil
 	case "compare":
 		d := data.(map[string]any)
-		return CompareCondition[T]{Path: Path(d["p"].(string)), Val: d["v"], Op: d["o"].(string)}, nil
+		ic, _ := d["ic"].(bool)
+		return CompareCondition[T]{Path: Path(d["p"].(string)), Val: d["v"], Op: d["o"].(string), IgnoreCase: ic}, nil
 	case "equal_field":
 		d := data.(map[string]any)
-		return CompareFieldCondition[T]{Path1: Path(d["p1"].(string)), Path2: Path(d["p2"].(string)), Op: "=="}, nil
+		ic, _ := d["ic"].(bool)
+		return CompareFieldCondition[T]{Path1: Path(d["p1"].(string)), Path2: Path(d["p2"].(string)), Op: "==", IgnoreCase: ic}, nil
 	case "not_equal_field":
 		d := data.(map[string]any)
-		return CompareFieldCondition[T]{Path1: Path(d["p1"].(string)), Path2: Path(d["p2"].(string)), Op: "!="}, nil
+		ic, _ := d["ic"].(bool)
+		return CompareFieldCondition[T]{Path1: Path(d["p1"].(string)), Path2: Path(d["p2"].(string)), Op: "!=", IgnoreCase: ic}, nil
 	case "compare_field":
 		d := data.(map[string]any)
-		return CompareFieldCondition[T]{Path1: Path(d["p1"].(string)), Path2: Path(d["p2"].(string)), Op: d["o"].(string)}, nil
+		ic, _ := d["ic"].(bool)
+		return CompareFieldCondition[T]{Path1: Path(d["p1"].(string)), Path2: Path(d["p2"].(string)), Op: d["o"].(string), IgnoreCase: ic}, nil
+	case "defined":
+		d := data.(map[string]any)
+		return DefinedCondition[T]{Path: Path(d["p"].(string))}, nil
+	case "undefined":
+		d := data.(map[string]any)
+		return UndefinedCondition[T]{Path: Path(d["p"].(string))}, nil
+	case "type":
+		d := data.(map[string]any)
+		return TypeCondition[T]{Path: Path(d["p"].(string)), TypeName: d["t"].(string)}, nil
+	case "string":
+		d := data.(map[string]any)
+		ic, _ := d["ic"].(bool)
+		return StringCondition[T]{Path: Path(d["p"].(string)), Val: d["v"].(string), Op: d["o"].(string), IgnoreCase: ic}, nil
+	case "in":
+		d := data.(map[string]any)
+		ic, _ := d["ic"].(bool)
+		return InCondition[T]{Path: Path(d["p"].(string)), Values: d["v"].([]any), IgnoreCase: ic}, nil
+	case "log":
+		d := data.(map[string]any)
+		return LogCondition[T]{Message: d["m"].(string)}, nil
 	case "and":
 		d := data.([]any)
 		conds := make([]Condition[T], 0, len(d))

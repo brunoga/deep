@@ -558,13 +558,13 @@ func TestCondition_Errors(t *testing.T) {
 	t.Run("CompareValuesErrors", func(t *testing.T) {
 		v1 := reflect.ValueOf(10)
 		v2 := reflect.ValueOf("string")
-		_, err := compareValues(v1, v2, ">")
+		_, err := compareValues(v1, v2, ">", false)
 		if err == nil {
 			t.Error("Expected error for mismatched types in comparison")
 		}
 
 		v3 := reflect.ValueOf(true)
-		_, err = compareValues(v3, v3, ">")
+		_, err = compareValues(v3, v3, ">", false)
 		if err == nil {
 			t.Error("Expected error for unsupported comparison on bool")
 		}

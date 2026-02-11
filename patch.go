@@ -526,12 +526,21 @@ func conditionToPredicate(c any) any {
 		path := v.FieldByName("Path").String()
 		val := v.FieldByName("Val").Interface()
 		op := v.FieldByName("Op").String()
+		ignoreCase := v.FieldByName("IgnoreCase").Bool()
 
 		switch op {
 		case "==":
-			return map[string]any{"op": "test", "path": path, "value": val}
+			jsonOp := "test"
+			if ignoreCase {
+				jsonOp = "test-"
+			}
+			return map[string]any{"op": jsonOp, "path": path, "value": val}
 		case "!=":
-			return map[string]any{"op": "not", "apply": []any{map[string]any{"op": "test", "path": path, "value": val}}}
+			jsonOp := "test"
+			if ignoreCase {
+				jsonOp = "test-"
+			}
+			return map[string]any{"op": "not", "apply": []any{map[string]any{"op": jsonOp, "path": path, "value": val}}}
 		case "<":
 			return map[string]any{"op": "less", "path": path, "value": val}
 		case ">":
@@ -547,6 +556,55 @@ func conditionToPredicate(c any) any {
 				map[string]any{"op": "test", "path": path, "value": val},
 			}}
 		}
+	}
+
+	if strings.HasPrefix(typeName, "DefinedCondition") {
+		path := v.FieldByName("Path").String()
+		return map[string]any{"op": "defined", "path": path}
+	}
+
+	if strings.HasPrefix(typeName, "UndefinedCondition") {
+		path := v.FieldByName("Path").String()
+		return map[string]any{"op": "undefined", "path": path}
+	}
+
+	if strings.HasPrefix(typeName, "TypeCondition") {
+		path := v.FieldByName("Path").String()
+		typeName := v.FieldByName("TypeName").String()
+		return map[string]any{"op": "type", "path": path, "value": typeName}
+	}
+
+	if strings.HasPrefix(typeName, "StringCondition") {
+		path := v.FieldByName("Path").String()
+		val := v.FieldByName("Val").String()
+		op := v.FieldByName("Op").String()
+		ignoreCase := v.FieldByName("IgnoreCase").Bool()
+
+		if ignoreCase && op != "matches" {
+			op += "-"
+		}
+		if op == "matches" && ignoreCase {
+			// matches doesn't have matches-, it uses (?i) but jsonpatch supports ignoreCase field
+			return map[string]any{"op": op, "path": path, "value": val, "ignoreCase": true}
+		}
+		return map[string]any{"op": op, "path": path, "value": val}
+	}
+
+	if strings.HasPrefix(typeName, "InCondition") {
+		path := v.FieldByName("Path").String()
+		vals := v.FieldByName("Values").Interface()
+		ignoreCase := v.FieldByName("IgnoreCase").Bool()
+
+		op := "in"
+		if ignoreCase {
+			op = "in-"
+		}
+		return map[string]any{"op": op, "path": path, "value": vals}
+	}
+
+	if strings.HasPrefix(typeName, "LogCondition") {
+		msg := v.FieldByName("Message").String()
+		return map[string]any{"op": "log", "value": msg}
 	}
 
 	if strings.HasPrefix(typeName, "AndCondition") {
