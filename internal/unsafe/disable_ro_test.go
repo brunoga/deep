@@ -4,8 +4,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/brunoga/deep/internal/unsafe"
-	"github.com/brunoga/deep/internal/unsafe/testdata/foo"
+	"github.com/brunoga/deep/v2/internal/unsafe"
+	"github.com/brunoga/deep/v2/internal/unsafe/testdata/foo"
 )
 
 func TestDisableRO_CrossPackage(t *testing.T) {
