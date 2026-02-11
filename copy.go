@@ -197,6 +197,13 @@ func recursiveCopy(v reflect.Value, pointers pointersMap,
 	}
 
 	// Handle Copier interface.
+	// NOTE: We use reflection to detect and call the Copy method because Copier[T]
+	// is a generic interface. Since T is the concrete type implementing the
+	// interface, we cannot easily perform a type assertion here without knowing
+	// T at each step of the recursion. Furthermore, Go reflection doesn't allow
+	// dynamic instantiation of generic interfaces. Searching for the method by
+	// name and signature provides a flexible "duck-typing" approach that
+	// preserves type safety for the user.
 	if v.IsValid() && v.CanInterface() {
 		attemptCopier := true
 		if kind == reflect.Interface || kind == reflect.Ptr {

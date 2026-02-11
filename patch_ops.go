@@ -1,6 +1,7 @@
 package deep
 
 import (
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
@@ -1120,4 +1121,83 @@ func conditionToPredicate(c any) any {
 	}
 
 	return nil
+}
+
+// customDiffPatch wraps an exported Patch[T] into the internal diffPatch interface.
+type customDiffPatch struct {
+	patchMetadata
+	patch any // This is a Patch[T]
+}
+
+func (p *customDiffPatch) apply(root, v reflect.Value) {
+	if !v.CanAddr() {
+		return
+	}
+	method := reflect.ValueOf(p.patch).MethodByName("Apply")
+	method.Call([]reflect.Value{v.Addr()})
+}
+
+func (p *customDiffPatch) applyChecked(root, v reflect.Value, strict bool) error {
+	if err := checkConditions(p, root, v); err != nil {
+		if err == ErrConditionSkipped {
+			return nil
+		}
+		return err
+	}
+	if !v.CanAddr() {
+		return fmt.Errorf("cannot apply custom patch to non-addressable value")
+	}
+	method := reflect.ValueOf(p.patch).MethodByName("ApplyChecked")
+	results := method.Call([]reflect.Value{v.Addr()})
+	if !results[0].IsNil() {
+		return results[0].Interface().(error)
+	}
+	return nil
+}
+
+func (p *customDiffPatch) reverse() diffPatch {
+	method := reflect.ValueOf(p.patch).MethodByName("Reverse")
+	res := method.Call(nil)
+	return &customDiffPatch{
+		patchMetadata: p.patchMetadata,
+		patch:         res[0].Interface(),
+	}
+}
+
+func (p *customDiffPatch) format(indent int) string {
+	method := reflect.ValueOf(p.patch).MethodByName("String")
+	res := method.Call(nil)
+	return res[0].String()
+}
+
+func (p *customDiffPatch) toJSONPatch(path string) []map[string]any {
+	method := reflect.ValueOf(p.patch).MethodByName("ToJSONPatch")
+	res := method.Call(nil)
+	if !res[1].IsNil() {
+		return nil
+	}
+	data := res[0].Bytes()
+	var ops []map[string]any
+	if err := json.Unmarshal(data, &ops); err != nil {
+		return nil
+	}
+
+	if path == "" || path == "/" {
+		return ops
+	}
+
+	// Prepend path to each op's path.
+	for i := range ops {
+		pVal, ok := ops[i]["path"].(string)
+		if !ok {
+			continue
+		}
+		if pVal == "/" {
+			ops[i]["path"] = path
+		} else {
+			ops[i]["path"] = path + pVal
+		}
+	}
+
+	return ops
 }

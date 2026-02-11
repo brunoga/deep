@@ -66,6 +66,14 @@ func Diff[T any](a, b T, opts ...DiffOption) Patch[T] {
 	}
 }
 
+// Differ is an interface that types can implement to provide their own
+// custom diff logic. The type T in Diff(other T) (Patch[T], error) must be the
+// same concrete type as the receiver that implements this interface.
+type Differ[T any] interface {
+	// Diff returns a patch that transforms the receiver into other.
+	Diff(other T) (Patch[T], error)
+}
+
 type visitKey struct {
 	a, b uintptr
 	typ  reflect.Type
@@ -92,6 +100,52 @@ func diffRecursive(a, b reflect.Value, visited map[visitKey]bool, config *diffCo
 
 	if a.CanInterface() && b.CanInterface() && reflect.DeepEqual(a.Interface(), b.Interface()) {
 		return nil, nil
+	}
+
+	// Handle Differ interface.
+	// NOTE: We use reflection to detect and call the Diff method because Differ[T]
+	// is a generic interface. Since T is the concrete type implementing the
+	// interface, we cannot easily perform a type assertion here without knowing
+	// T at each step of the recursion. Furthermore, Go reflection doesn't allow
+	// dynamic instantiation of generic interfaces. Searching for the method by
+	// name and signature provides a flexible "duck-typing" approach that
+	// preserves type safety for the user.
+	if a.IsValid() && a.CanInterface() {
+		kind := a.Kind()
+		attemptDiffer := true
+		if kind == reflect.Interface || kind == reflect.Ptr {
+			if a.IsNil() || b.IsNil() {
+				attemptDiffer = false
+			}
+		}
+
+		if attemptDiffer {
+			if kind == reflect.Struct || kind == reflect.Ptr {
+				method := a.MethodByName("Diff")
+				if method.IsValid() && method.Type().NumIn() == 1 && method.Type().NumOut() == 2 {
+					if method.Type().In(0) == a.Type() &&
+						method.Type().Out(1).Implements(reflect.TypeOf((*error)(nil)).Elem()) {
+						res := method.Call([]reflect.Value{b})
+						if !res[1].IsNil() {
+							return nil, res[1].Interface().(error)
+						}
+						if res[0].IsNil() {
+							return nil, nil
+						}
+
+						// If it implements patchUnwrapper, we can get the inner diffPatch.
+						if unwrapper, ok := res[0].Interface().(patchUnwrapper); ok {
+							return unwrapper.unwrap(), nil
+						}
+
+						// Otherwise, wrap it.
+						return &customDiffPatch{
+							patch: res[0].Interface(),
+						}, nil
+					}
+				}
+			}
+		}
 	}
 
 	switch a.Kind() {

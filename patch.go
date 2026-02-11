@@ -51,6 +51,14 @@ type typedPatch[T any] struct {
 	strict bool
 }
 
+type patchUnwrapper interface {
+	unwrap() diffPatch
+}
+
+func (p *typedPatch[T]) unwrap() diffPatch {
+	return p.inner
+}
+
 func (p *typedPatch[T]) Apply(v *T) {
 	if p.inner == nil {
 		return
