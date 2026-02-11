@@ -51,7 +51,7 @@ func Diff[T any](a, b T, opts ...DiffOption) Patch[T] {
 	va := reflect.ValueOf(&a).Elem()
 	vb := reflect.ValueOf(&b).Elem()
 
-	patch, err := diffRecursive(va, vb, make(map[visitKey]bool), config, "")
+	patch, err := diffRecursive(va, vb, make(map[visitKey]bool), config, "", false)
 	if err != nil {
 		panic(err)
 	}
@@ -79,7 +79,7 @@ type visitKey struct {
 	typ  reflect.Type
 }
 
-func diffRecursive(a, b reflect.Value, visited map[visitKey]bool, config *diffConfig, path string) (diffPatch, error) {
+func diffRecursive(a, b reflect.Value, visited map[visitKey]bool, config *diffConfig, path string, atomic bool) (diffPatch, error) {
 	if config.ignoredPaths[path] {
 		return nil, nil
 	}
@@ -87,6 +87,14 @@ func diffRecursive(a, b reflect.Value, visited map[visitKey]bool, config *diffCo
 	if !a.IsValid() && !b.IsValid() {
 		return nil, nil
 	}
+
+	if atomic {
+		if a.CanInterface() && b.CanInterface() && reflect.DeepEqual(a.Interface(), b.Interface()) {
+			return nil, nil
+		}
+		return &valuePatch{oldVal: deepCopyValue(a), newVal: deepCopyValue(b)}, nil
+	}
+
 	if !a.IsValid() || !b.IsValid() {
 		if !b.IsValid() {
 			return &valuePatch{oldVal: deepCopyValue(a), newVal: reflect.Value{}}, nil
@@ -194,7 +202,7 @@ func diffPtr(a, b reflect.Value, visited map[visitKey]bool, config *diffConfig, 
 	}
 	visited[k] = true
 
-	elemPatch, err := diffRecursive(a.Elem(), b.Elem(), visited, config, path)
+	elemPatch, err := diffRecursive(a.Elem(), b.Elem(), visited, config, path, false)
 	if err != nil {
 		return nil, err
 	}
@@ -220,7 +228,7 @@ func diffInterface(a, b reflect.Value, visited map[visitKey]bool, config *diffCo
 		return &valuePatch{oldVal: deepCopyValue(a), newVal: deepCopyValue(b)}, nil
 	}
 
-	elemPatch, err := diffRecursive(a.Elem(), b.Elem(), visited, config, path)
+	elemPatch, err := diffRecursive(a.Elem(), b.Elem(), visited, config, path, false)
 	if err != nil {
 		return nil, err
 	}
@@ -235,6 +243,12 @@ func diffStruct(a, b reflect.Value, visited map[visitKey]bool, config *diffConfi
 	fields := make(map[string]diffPatch)
 
 	for i := 0; i < a.NumField(); i++ {
+		field := a.Type().Field(i)
+		tag := parseTag(field)
+		if tag.ignore {
+			continue
+		}
+
 		fA := a.Field(i)
 		fB := b.Field(i)
 
@@ -245,17 +259,20 @@ func diffStruct(a, b reflect.Value, visited map[visitKey]bool, config *diffConfi
 			unsafe.DisableRO(&fB)
 		}
 
-		fieldName := a.Type().Field(i).Name
+		fieldName := field.Name
 		fieldPath := fieldName
 		if path != "" {
 			fieldPath = path + "." + fieldName
 		}
 
-		patch, err := diffRecursive(fA, fB, visited, config, fieldPath)
+		patch, err := diffRecursive(fA, fB, visited, config, fieldPath, tag.atomic)
 		if err != nil {
 			return nil, err
 		}
 		if patch != nil {
+			if tag.readOnly {
+				patch = &readOnlyPatch{inner: patch}
+			}
 			fields[fieldName] = patch
 		}
 	}
@@ -272,7 +289,7 @@ func diffArray(a, b reflect.Value, visited map[visitKey]bool, config *diffConfig
 
 	for i := 0; i < a.Len(); i++ {
 		indexPath := fmt.Sprintf("%s[%d]", path, i)
-		patch, err := diffRecursive(a.Index(i), b.Index(i), visited, config, indexPath)
+		patch, err := diffRecursive(a.Index(i), b.Index(i), visited, config, indexPath, false)
 		if err != nil {
 			return nil, err
 		}
@@ -319,7 +336,7 @@ func diffMap(a, b reflect.Value, visited map[visitKey]bool, config *diffConfig, 
 				removed[k.Interface()] = deepCopyValue(vA)
 			}
 		} else {
-			patch, err := diffRecursive(vA, vB, visited, config, keyPath)
+			patch, err := diffRecursive(vA, vB, visited, config, keyPath, false)
 			if err != nil {
 				return nil, err
 			}
@@ -496,7 +513,7 @@ func computeSliceEdits(a, b reflect.Value, aStart, aEnd, bStart, bEnd int) []sli
 				if cost == 1 {
 					// NOTE: We pass empty config here for now as slice edits don't support
 					// nested path-based ignoring easily yet without knowing the final index.
-					p, _ := diffRecursive(vA, vB, make(map[visitKey]bool), &diffConfig{ignoredPaths: make(map[string]bool)}, "")
+					p, _ := diffRecursive(vA, vB, make(map[visitKey]bool), &diffConfig{ignoredPaths: make(map[string]bool)}, "", false)
 					ops = append(ops, sliceOp{
 						Kind:  opMod,
 						Index: aStart + i - 1,

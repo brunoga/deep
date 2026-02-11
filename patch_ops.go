@@ -1201,3 +1201,38 @@ func (p *customDiffPatch) toJSONPatch(path string) []map[string]any {
 
 	return ops
 }
+
+// readOnlyPatch wraps another patch and prevents it from being applied.
+type readOnlyPatch struct {
+	inner diffPatch
+}
+
+func (p *readOnlyPatch) apply(root, v reflect.Value) {
+	// No-op
+}
+
+func (p *readOnlyPatch) applyChecked(root, v reflect.Value, strict bool) error {
+	// No-op for actual modification, but we might want to check conditions?
+	// For now, let's just make it a no-op as it's readonly.
+	return nil
+}
+
+func (p *readOnlyPatch) reverse() diffPatch {
+	return &readOnlyPatch{inner: p.inner.reverse()}
+}
+
+func (p *readOnlyPatch) format(indent int) string {
+	return fmt.Sprintf("ReadOnly(%s)", p.inner.format(indent))
+}
+
+func (p *readOnlyPatch) setCondition(cond any)       { p.inner.setCondition(cond) }
+func (p *readOnlyPatch) setIfCondition(cond any)     { p.inner.setIfCondition(cond) }
+func (p *readOnlyPatch) setUnlessCondition(cond any) { p.inner.setUnlessCondition(cond) }
+func (p *readOnlyPatch) conditions() (any, any, any) { return p.inner.conditions() }
+
+func (p *readOnlyPatch) toJSONPatch(path string) []map[string]any {
+	// For JSON Patch, we don't really have a way to say "don't apply this but keep it".
+	// Maybe we should just return empty?
+	// Actually, if it's readonly, we probably shouldn't even include it in the JSON patch.
+	return nil
+}

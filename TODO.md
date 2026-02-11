@@ -3,7 +3,7 @@
 This document tracks planned features and improvements to make the `deep` library a robust engine for state management and data synchronization.
 
 ## 1. Control & Customization
-- [ ] **Struct Tags Support**: Implement `deep` tags to control library behavior per field.
+- [x] **Struct Tags Support**: Implement `deep` tags to control library behavior per field.
     - `deep:"-"`: Ignore the field for both Copy and Diff.
     - `deep:"readonly"`: Field is included in Diff but cannot be modified by a Patch.
     - `deep:"atomic"`: Treat a complex struct/map as a scalar value (replace entirely if changed, do not recurse).
