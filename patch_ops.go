@@ -26,16 +26,27 @@ type diffPatch interface {
 	toJSONPatch(path string) []map[string]any
 }
 
-type patchMetadata struct {
+type basePatch struct {
+
 	cond       any
+
 	ifCond     any
+
 	unlessCond any
+
 }
 
-func (m *patchMetadata) setCondition(cond any)       { m.cond = cond }
-func (m *patchMetadata) setIfCondition(cond any)     { m.ifCond = cond }
-func (m *patchMetadata) setUnlessCondition(cond any) { m.unlessCond = cond }
-func (m *patchMetadata) conditions() (any, any, any) { return m.cond, m.ifCond, m.unlessCond }
+
+
+func (p *basePatch) setCondition(cond any)       { p.cond = cond }
+
+func (p *basePatch) setIfCondition(cond any)     { p.ifCond = cond }
+
+func (p *basePatch) setUnlessCondition(cond any) { p.unlessCond = cond }
+
+func (p *basePatch) conditions() (any, any, any) { return p.cond, p.ifCond, p.unlessCond }
+
+
 
 func checkConditions(p diffPatch, root, v reflect.Value) error {
 	cond, ifC, unlessC := p.conditions()
@@ -118,7 +129,7 @@ func checkIfUnless(ifCond, unlessCond any, v reflect.Value) error {
 
 // valuePatch handles replacement of basic types and full replacement of complex types.
 type valuePatch struct {
-	patchMetadata
+	basePatch
 	oldVal reflect.Value
 	newVal reflect.Value
 }
@@ -163,7 +174,7 @@ func (p *valuePatch) applyResolved(root, v reflect.Value, path string, resolver 
 }
 
 func (p *valuePatch) reverse() diffPatch {
-	return &valuePatch{oldVal: p.newVal, newVal: p.oldVal, patchMetadata: p.patchMetadata}
+	return &valuePatch{oldVal: p.newVal, newVal: p.oldVal, basePatch: p.basePatch}
 }
 
 func (p *valuePatch) walk(path string, fn func(path string, op OpKind, old, new any) error) error {
@@ -214,7 +225,7 @@ func (p *valuePatch) toJSONPatch(path string) []map[string]any {
 
 // testPatch handles equality checks without modifying the value.
 type testPatch struct {
-	patchMetadata
+	basePatch
 	expected reflect.Value
 }
 
@@ -277,7 +288,7 @@ func (p *testPatch) toJSONPatch(path string) []map[string]any {
 
 // copyPatch copies a value from another path.
 type copyPatch struct {
-	patchMetadata
+	basePatch
 	from string
 	path string // target path for reversal
 }
@@ -350,7 +361,7 @@ func (p *copyPatch) toJSONPatch(path string) []map[string]any {
 
 // movePatch moves a value from another path.
 type movePatch struct {
-	patchMetadata
+	basePatch
 	from string
 	path string // target path for reversal
 }
@@ -430,7 +441,7 @@ func (p *movePatch) toJSONPatch(path string) []map[string]any {
 
 // logPatch logs a message without modifying the value.
 type logPatch struct {
-	patchMetadata
+	basePatch
 	message string
 }
 
@@ -482,7 +493,7 @@ func (p *logPatch) toJSONPatch(path string) []map[string]any {
 // ptrPatch handles changes to the content pointed to by a pointer.
 
 type ptrPatch struct {
-	patchMetadata
+	basePatch
 	elemPatch diffPatch
 }
 
@@ -518,7 +529,7 @@ func (p *ptrPatch) applyResolved(root, v reflect.Value, path string, resolver Co
 
 func (p *ptrPatch) reverse() diffPatch {
 	return &ptrPatch{
-		patchMetadata: p.patchMetadata,
+		basePatch: p.basePatch,
 		elemPatch:     p.elemPatch.reverse(),
 	}
 }
@@ -541,7 +552,7 @@ func (p *ptrPatch) toJSONPatch(path string) []map[string]any {
 
 // interfacePatch handles changes to the value stored in an interface.
 type interfacePatch struct {
-	patchMetadata
+	basePatch
 	elemPatch diffPatch
 }
 
@@ -592,7 +603,7 @@ func (p *interfacePatch) applyResolved(root, v reflect.Value, path string, resol
 
 func (p *interfacePatch) reverse() diffPatch {
 	return &interfacePatch{
-		patchMetadata: p.patchMetadata,
+		basePatch: p.basePatch,
 		elemPatch:     p.elemPatch.reverse(),
 	}
 }
@@ -615,7 +626,7 @@ func (p *interfacePatch) toJSONPatch(path string) []map[string]any {
 
 // structPatch handles field-level modifications in a struct.
 type structPatch struct {
-	patchMetadata
+	basePatch
 	fields map[string]diffPatch
 }
 
@@ -681,7 +692,7 @@ func (p *structPatch) reverse() diffPatch {
 		newFields[k] = v.reverse()
 	}
 	return &structPatch{
-		patchMetadata: p.patchMetadata,
+		basePatch: p.basePatch,
 		fields:        newFields,
 	}
 }
@@ -725,7 +736,7 @@ func (p *structPatch) toJSONPatch(path string) []map[string]any {
 
 // arrayPatch handles index-level modifications in a fixed-size array.
 type arrayPatch struct {
-	patchMetadata
+	basePatch
 	indices map[int]diffPatch
 }
 
@@ -788,7 +799,7 @@ func (p *arrayPatch) reverse() diffPatch {
 		newIndices[k] = v.reverse()
 	}
 	return &arrayPatch{
-		patchMetadata: p.patchMetadata,
+		basePatch: p.basePatch,
 		indices:       newIndices,
 	}
 }
@@ -829,7 +840,7 @@ func (p *arrayPatch) toJSONPatch(path string) []map[string]any {
 
 // mapPatch handles additions, removals, and modifications in a map.
 type mapPatch struct {
-	patchMetadata
+	basePatch
 	added    map[interface{}]reflect.Value
 	removed  map[interface{}]reflect.Value
 	modified map[interface{}]diffPatch
@@ -988,7 +999,7 @@ func (p *mapPatch) reverse() diffPatch {
 		newModified[k] = v.reverse()
 	}
 	return &mapPatch{
-		patchMetadata: p.patchMetadata,
+		basePatch: p.basePatch,
 		added:         p.removed,
 		removed:       p.added,
 		modified:      newModified,
@@ -1090,7 +1101,7 @@ type ConflictResolver interface {
 
 // slicePatch handles complex edits (insertions, deletions, modifications) in a slice.
 type slicePatch struct {
-	patchMetadata
+	basePatch
 	ops []sliceOp
 }
 
@@ -1434,7 +1445,7 @@ func (p *slicePatch) reverse() diffPatch {
 		}
 	}
 	return &slicePatch{
-		patchMetadata: p.patchMetadata,
+		basePatch: p.basePatch,
 		ops:           revOps,
 	}
 }
@@ -1654,7 +1665,7 @@ func conditionToPredicate(c any) any {
 
 // customDiffPatch wraps an exported Patch[T] into the internal diffPatch interface.
 type customDiffPatch struct {
-	patchMetadata
+	basePatch
 	patch any // This is a Patch[T]
 }
 
@@ -1702,7 +1713,7 @@ func (p *customDiffPatch) reverse() diffPatch {
 	method := reflect.ValueOf(p.patch).MethodByName("Reverse")
 	res := method.Call(nil)
 	return &customDiffPatch{
-		patchMetadata: p.patchMetadata,
+		basePatch: p.basePatch,
 		patch:         res[0].Interface(),
 	}
 }

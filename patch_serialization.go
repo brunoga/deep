@@ -191,7 +191,7 @@ func convertFromSurrogate(s any) (diffPatch, error) {
 		return &valuePatch{
 			oldVal: interfaceToValue(d["o"]),
 			newVal: interfaceToValue(d["n"]),
-			patchMetadata: patchMetadata{
+			basePatch: basePatch{
 				cond:       unmarshalCondFromMap(d, "c"),
 				ifCond:     unmarshalCondFromMap(d, "if"),
 				unlessCond: unmarshalCondFromMap(d, "un"),
@@ -205,7 +205,7 @@ func convertFromSurrogate(s any) (diffPatch, error) {
 		}
 		return &ptrPatch{
 			elemPatch: elem,
-			patchMetadata: patchMetadata{
+			basePatch: basePatch{
 				cond:       unmarshalCondFromMap(d, "c"),
 				ifCond:     unmarshalCondFromMap(d, "if"),
 				unlessCond: unmarshalCondFromMap(d, "un"),
@@ -219,7 +219,7 @@ func convertFromSurrogate(s any) (diffPatch, error) {
 		}
 		return &interfacePatch{
 			elemPatch: elem,
-			patchMetadata: patchMetadata{
+			basePatch: basePatch{
 				cond:       unmarshalCondFromMap(d, "c"),
 				ifCond:     unmarshalCondFromMap(d, "if"),
 				unlessCond: unmarshalCondFromMap(d, "un"),
@@ -238,7 +238,7 @@ func convertFromSurrogate(s any) (diffPatch, error) {
 		}
 		return &structPatch{
 			fields: fields,
-			patchMetadata: patchMetadata{
+			basePatch: basePatch{
 				cond:       unmarshalCondFromMap(d, "c"),
 				ifCond:     unmarshalCondFromMap(d, "if"),
 				unlessCond: unmarshalCondFromMap(d, "un"),
@@ -259,7 +259,7 @@ func convertFromSurrogate(s any) (diffPatch, error) {
 		}
 		return &arrayPatch{
 			indices: indices,
-			patchMetadata: patchMetadata{
+			basePatch: basePatch{
 				cond:       unmarshalCondFromMap(d, "c"),
 				ifCond:     unmarshalCondFromMap(d, "if"),
 				unlessCond: unmarshalCondFromMap(d, "un"),
@@ -318,7 +318,7 @@ func convertFromSurrogate(s any) (diffPatch, error) {
 			added:    added,
 			removed:  removed,
 			modified: modified,
-			patchMetadata: patchMetadata{
+			basePatch: basePatch{
 				cond:       unmarshalCondFromMap(d, "c"),
 				ifCond:     unmarshalCondFromMap(d, "if"),
 				unlessCond: unmarshalCondFromMap(d, "un"),
@@ -376,7 +376,7 @@ func convertFromSurrogate(s any) (diffPatch, error) {
 		}
 		return &slicePatch{
 			ops: ops,
-			patchMetadata: patchMetadata{
+			basePatch: basePatch{
 				cond:       unmarshalCondFromMap(d, "c"),
 				ifCond:     unmarshalCondFromMap(d, "if"),
 				unlessCond: unmarshalCondFromMap(d, "un"),
@@ -386,7 +386,7 @@ func convertFromSurrogate(s any) (diffPatch, error) {
 		d := data.(map[string]any)
 		return &testPatch{
 			expected: interfaceToValue(d["e"]),
-			patchMetadata: patchMetadata{
+			basePatch: basePatch{
 				cond:       unmarshalCondFromMap(d, "c"),
 				ifCond:     unmarshalCondFromMap(d, "if"),
 				unlessCond: unmarshalCondFromMap(d, "un"),
@@ -396,7 +396,7 @@ func convertFromSurrogate(s any) (diffPatch, error) {
 		d := data.(map[string]any)
 		return &copyPatch{
 			from: d["f"].(string),
-			patchMetadata: patchMetadata{
+			basePatch: basePatch{
 				cond:       unmarshalCondFromMap(d, "c"),
 				ifCond:     unmarshalCondFromMap(d, "if"),
 				unlessCond: unmarshalCondFromMap(d, "un"),
@@ -406,7 +406,7 @@ func convertFromSurrogate(s any) (diffPatch, error) {
 		d := data.(map[string]any)
 		return &movePatch{
 			from: d["f"].(string),
-			patchMetadata: patchMetadata{
+			basePatch: basePatch{
 				cond:       unmarshalCondFromMap(d, "c"),
 				ifCond:     unmarshalCondFromMap(d, "if"),
 				unlessCond: unmarshalCondFromMap(d, "un"),
@@ -416,7 +416,7 @@ func convertFromSurrogate(s any) (diffPatch, error) {
 		d := data.(map[string]any)
 		return &logPatch{
 			message: d["m"].(string),
-			patchMetadata: patchMetadata{
+			basePatch: basePatch{
 				cond:       unmarshalCondFromMap(d, "c"),
 				ifCond:     unmarshalCondFromMap(d, "if"),
 				unlessCond: unmarshalCondFromMap(d, "un"),
