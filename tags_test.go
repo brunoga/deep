@@ -96,7 +96,7 @@ func TestTags_Diff(t *testing.T) {
 	if a.Atomic.A != 3 || a.Atomic.B != 4 {
 		t.Errorf("Atomic field not updated: expected {3 4}, got %+v", a.Atomic)
 	}
-	
+
 	// Check if Atomic was indeed atomic (no inner field patches)
 	tp := patch.(*typedPatch[TaggedStruct])
 	sp := tp.inner.(*structPatch)
@@ -104,7 +104,7 @@ func TestTags_Diff(t *testing.T) {
 	if _, ok := atomicPatch.(*valuePatch); !ok {
 		t.Errorf("Atomic field patch is not a valuePatch: %T", atomicPatch)
 	}
-	
+
 	readonlyPatch := sp.fields["ReadOnly"]
 	if _, ok := readonlyPatch.(*readOnlyPatch); !ok {
 		t.Errorf("ReadOnly field patch is not a readOnlyPatch: %T", readonlyPatch)

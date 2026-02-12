@@ -241,7 +241,7 @@ func (p Path) delete(v reflect.Value) error {
 }
 
 func dereference(v reflect.Value) (reflect.Value, error) {
-	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+	for v.Kind() == reflect.Pointer || v.Kind() == reflect.Interface {
 		if v.IsNil() {
 			return reflect.Value{}, fmt.Errorf("path traversal failed: nil pointer/interface")
 		}
@@ -416,7 +416,7 @@ func toReflectValue(v any) reflect.Value {
 		return rv
 	}
 	rv := reflect.ValueOf(v)
-	for rv.Kind() == reflect.Ptr {
+	for rv.Kind() == reflect.Pointer {
 		rv = rv.Elem()
 	}
 	return rv

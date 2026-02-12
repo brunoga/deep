@@ -89,7 +89,7 @@ func Copy[T any](src T, opts ...CopyOption) (T, error) {
 	// For cyclic reference detection to work reliably for root value types,
 	// they must be addressable. We ensure this by taking the address.
 	var rv reflect.Value
-	if v.Kind() == reflect.Ptr {
+	if v.Kind() == reflect.Pointer {
 		rv = v
 	} else {
 		pv := reflect.New(v.Type())
@@ -186,12 +186,12 @@ func recursiveCopy(v reflect.Value, pointers pointersMap,
 		typ := v.Type()
 		key := pointersMapKey{ptr, typ}
 		if dst, ok := pointers[key]; ok {
-			if dst.Kind() == reflect.Ptr && v.Kind() != reflect.Ptr {
+			if dst.Kind() == reflect.Pointer && v.Kind() != reflect.Pointer {
 				return dst.Elem(), nil
 			}
 			return dst, nil
 		}
-	} else if kind == reflect.Ptr && !v.IsNil() {
+	} else if kind == reflect.Pointer && !v.IsNil() {
 		ptr := v.Pointer()
 		typ := v.Type()
 		key := pointersMapKey{ptr, typ}
@@ -210,14 +210,14 @@ func recursiveCopy(v reflect.Value, pointers pointersMap,
 	// preserves type safety for the user.
 	if v.IsValid() && v.CanInterface() {
 		attemptCopier := true
-		if kind == reflect.Interface || kind == reflect.Ptr {
+		if kind == reflect.Interface || kind == reflect.Pointer {
 			if v.IsNil() {
 				attemptCopier = false
 			}
 		}
 
 		if attemptCopier {
-			if kind == reflect.Struct || kind == reflect.Ptr {
+			if kind == reflect.Struct || kind == reflect.Pointer {
 				method := v.MethodByName("Copy")
 				if method.IsValid() && method.Type().NumIn() == 0 && method.Type().NumOut() == 2 {
 					if method.Type().Out(0) == v.Type() && method.Type().Out(1).Implements(reflect.TypeOf((*error)(nil)).Elem()) {
@@ -239,7 +239,7 @@ func recursiveCopy(v reflect.Value, pointers pointersMap,
 		return recursiveCopyInterface(v, pointers, config, path)
 	case reflect.Map:
 		return recursiveCopyMap(v, pointers, config, path)
-	case reflect.Ptr:
+	case reflect.Pointer:
 		return recursiveCopyPtr(v, pointers, config, path)
 	case reflect.Slice:
 		return recursiveCopySlice(v, pointers, config, path)
@@ -444,7 +444,7 @@ func deepCopyValue(v reflect.Value) reflect.Value {
 
 	// We ensure the root is addressable for cycle detection.
 	var rv reflect.Value
-	isPtr := v.Kind() == reflect.Ptr
+	isPtr := v.Kind() == reflect.Pointer
 	if isPtr {
 		rv = v
 	} else {
@@ -458,7 +458,7 @@ func deepCopyValue(v reflect.Value) reflect.Value {
 		return v
 	}
 
-	if !isPtr && copied.Kind() == reflect.Ptr {
+	if !isPtr && copied.Kind() == reflect.Pointer {
 		return copied.Elem()
 	}
 

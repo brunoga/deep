@@ -28,7 +28,7 @@ func marshalConditionAny(c any) (any, error) {
 
 	// Use reflection to extract the underlying fields regardless of T.
 	v := reflect.ValueOf(c)
-	if v.Kind() == reflect.Ptr {
+	if v.Kind() == reflect.Pointer {
 		v = v.Elem()
 	}
 

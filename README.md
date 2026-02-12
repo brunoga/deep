@@ -1,12 +1,13 @@
 # Deep Copy and Patch for Go
 
-`deep` is a high-performance, reflection-based library for manipulating complex Go data structures. It provides three primary capabilities: recursive deep copying, structural diffing to produce patches, and a fluent API for manual patch construction.
+`deep` is a high-performance, reflection-based library for manipulating complex Go data structures. It provides recursive deep copying, structural diffing to produce patches, a fluent API for manual patch construction, and first-class support for distributed state synchronization (CRDTs).
 
 ## Features
 
 *   **Deep Copy**: Full recursive cloning of structs, maps, slices, and pointers.
 *   **Deep Diff**: Calculate the semantic difference between two objects.
 *   **Rich Patching**: Apply patches with atomicity, move/copy operations, and logging.
+*   **Conflict Resolution**: Pluggable resolvers for convergent synchronization (CRDTs).
 *   **Conditional Logic**: A built-in DSL for cross-field validation and soft-skipping (`If`/`Unless`).
 *   **Standard Compliant**: Full support for JSON Pointer (RFC 6901) and JSON Patch (RFC 6902).
 *   **Production Ready**: Handles circular references and unexported fields transparently.
@@ -35,14 +36,54 @@ if patch != nil {
 
 ---
 
+## Distributed State (CRDT)
+
+`deep` includes a first-class CRDT engine for synchronizing complex Go structures across multiple nodes without a central coordinator.
+
+### Why Deep CRDTs?
+Most CRDT libraries only handle primitives. `deep` uses its structural awareness to provide **granular, field-level convergence** for your existing Go types.
+
+### Basic Usage
+```go
+import "github.com/brunoga/deep/v2/crdt"
+
+// 1. Initialize a CRDT wrapper
+nodeA := crdt.NewCRDT(Config{Title: "Initial"}, "node-a")
+
+// 2. Edit the state
+delta := nodeA.Edit(func(c *Config) {
+    c.Title = "Updated Title"
+})
+
+// 3. Apply changes from other nodes
+nodeB.ApplyDelta(delta)
+```
+
+### Semantic Slices
+By tagging slice elements with `deep:"key"`, `deep` enables **Yjs-style semantic patching**. This ensures that concurrent insertions into a list interleave correctly rather than overwriting each other or failing due to index shifts.
+
+```go
+type Document struct {
+    Text []Char `deep:"key"` // Enable semantic list merging
+}
+```
+
+---
+
 ## Core Concepts
 
-### The Patch Model
-A `Patch[T]` is a tree of operations. Unlike simple key-value maps, `deep` patches understand the structure of your data. A single patch can contain replacements, slice insertions/deletions, map manipulations, and even data movement between paths.
+### Pluggable Resolution
+You can provide custom logic to mediate how patches are applied using the `ConflictResolver` interface. This is how the CRDT package implements Last-Write-Wins (LWW) via Hybrid Logical Clocks (HLC).
+
+```go
+// Use a custom resolver to implement business-specific merge rules
+err := patch.ApplyResolved(&target, myResolver)
+```
 
 ### Consistency Modes
 *   **Strict (Default)**: `ApplyChecked` ensures the target value matches the `old` value recorded during the `Diff`. If the target has changed since the diff was taken, the patch fails.
-*   **Flexible**: Disable strict checking using `patch.WithStrict(false)` to apply changes regardless of the current value, relying instead on custom Conditions.
+*   **Flexible**: Disable strict checking using `patch.WithStrict(false)` to apply changes regardless of the current value.
+*   **Resolved**: Use `ApplyResolved` to handle concurrent edits via a custom resolution strategy.
 
 ---
 
@@ -68,13 +109,6 @@ builder.Root().Navigate("/network/settings/port").Put(8080)
 builder.Root().Navigate("Metadata.Tags[0]").Put("admin")
 ```
 
-### Advanced Operations
-The builder supports more than just "Set":
-*   **Move**: `Root().Field("Backup").Move("/Active")`
-*   **Copy**: `Root().Field("Template").Copy("/Target")`
-*   **Test**: `Root().Field("Status").Test("ready")` (Fails patch if value doesn't match)
-*   **Log**: `Root().Log("Applying update...")` (Prints to stdout during application)
-
 ---
 
 ## Conditional Patching
@@ -86,16 +120,6 @@ You can attach logic to any node in a patch using a string-based DSL via `ParseC
 *   `"Version > 5"` (Literal comparison)
 *   `"Stock < MinAlertThreshold"` (Cross-field comparison)
 *   `"Network.Port == 8080 AND Status == 'active'"` (Logical groups)
-*   `"NOT (Tags[0] == 'internal')"` (Slice access)
-
-### Soft Conditions (If/Unless)
-Standard conditions fail the entire patch. Soft conditions simply skip a specific operation while allowing the rest of the patch to proceed.
-
-```go
-builder.Root().Field("BetaFeatures").
-    If(deep.Equal[Config]("Tier", "premium")).
-    Put(true)
-```
 
 ---
 
@@ -104,7 +128,6 @@ builder.Root().Field("BetaFeatures").
 ### JSON Pointer (RFC 6901)
 Use standard pointers to navigate or query your structures:
 ```go
-// Both the DSL and the Builder support JSON pointers
 cond, _ := deep.ParseCondition[Config]("/network/settings/port > 1024")
 builder.Root().Navigate("/meta/tags/0").Put("new")
 ```
@@ -117,38 +140,16 @@ jsonBytes, err := patch.ToJSONPatch()
 
 ---
 
-## Advanced Options
-
-### Ignoring Paths
-Ignore specific fields during a diff or copy (e.g., timestamps or secrets):
-```go
-// Works for both Copy and Diff
-dst, _ := deep.Copy(src, deep.IgnorePath("SecretToken"))
-patch := deep.Diff(old, new, deep.IgnorePath("UpdatedAt"))
-```
-
-### Skipping Unsupported Types
-Tell `Copy` to zero-out types it cannot handle (like functions or channels) instead of returning an error:
-```go
-dst, _ := deep.Copy(src, deep.SkipUnsupported())
-```
-
----
-
 ## Technical Details
 
+### Hybrid Logical Clocks (HLC)
+The CRDT package uses HLCs to provide causal ordering of events without requiring perfect clock synchronization between nodes.
+
 ### Unexported Fields
-`deep` uses `unsafe` pointers to read and write unexported struct fields. This is required for true deep copying of third-party or internal types where fields are not public.
+`deep` uses `unsafe` pointers to read and write unexported struct fields. This is required for true deep copying of third-party or internal types.
 
 ### Cycle Detection
 The library tracks pointers during recursive operations. Circular references are handled correctly without entering infinite loops.
-
-### Custom Copiers
-Types can control their own cloning logic by implementing `Copier[T]`:
-```go
-type Token string
-func (t Token) Copy() (Token, error) { return "REDACTED", nil }
-```
 
 ## License
 Apache 2.0

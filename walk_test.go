@@ -74,7 +74,7 @@ func TestPatch_Walk_Slice(t *testing.T) {
 
 	// Myers' might see this as replace 2 with 4 and add 5.
 	// Path for slice elements should be like "[1]".
-	
+
 	found4 := false
 	found5 := false
 	for _, op := range ops {
@@ -125,7 +125,7 @@ func TestPatch_Walk_KeyedSlice(t *testing.T) {
 	}
 
 	patch := Diff(a, b)
-	
+
 	ops := make(map[string]string)
 	err := patch.Walk(func(path string, op OpKind, old, new any) error {
 		ops[path] = fmt.Sprintf("%s:%v:%v", op, old, new)
@@ -138,12 +138,12 @@ func TestPatch_Walk_KeyedSlice(t *testing.T) {
 
 	// We expect t2 at [0] to be modified.
 	// Since it's Myers' with substitution, it might be replace or complex.
-	// In our implementation of computeSliceEdits with keys, we currently 
+	// In our implementation of computeSliceEdits with keys, we currently
 	// generate opMod for same keys at same logical index in Myers' path.
-	
-	// Wait, if it's a swap, Myers' might see it as Del/Add or similar depending on the 
+
+	// Wait, if it's a swap, Myers' might see it as Del/Add or similar depending on the
 	// specific path it takes.
-	
+
 	if len(ops) == 0 {
 		t.Errorf("Expected some ops, got none")
 	}

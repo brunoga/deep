@@ -121,14 +121,14 @@ func diffRecursive(a, b reflect.Value, visited map[visitKey]bool, config *diffCo
 	if a.IsValid() && a.CanInterface() {
 		kind := a.Kind()
 		attemptDiffer := true
-		if kind == reflect.Interface || kind == reflect.Ptr {
+		if kind == reflect.Interface || kind == reflect.Pointer {
 			if a.IsNil() || b.IsNil() {
 				attemptDiffer = false
 			}
 		}
 
 		if attemptDiffer {
-			if kind == reflect.Struct || kind == reflect.Ptr {
+			if kind == reflect.Struct || kind == reflect.Pointer {
 				method := a.MethodByName("Diff")
 				if method.IsValid() && method.Type().NumIn() == 1 && method.Type().NumOut() == 2 {
 					if method.Type().In(0) == a.Type() &&
@@ -163,7 +163,7 @@ func diffRecursive(a, b reflect.Value, visited map[visitKey]bool, config *diffCo
 		reflect.Complex64, reflect.Complex128, reflect.String:
 		return &valuePatch{oldVal: deepCopyValue(a), newVal: deepCopyValue(b)}, nil
 
-	case reflect.Ptr:
+	case reflect.Pointer:
 		return diffPtr(a, b, visited, config, path)
 	case reflect.Interface:
 		return diffInterface(a, b, visited, config, path)
@@ -316,9 +316,9 @@ func diffMap(a, b reflect.Value, visited map[visitKey]bool, config *diffConfig, 
 		return &valuePatch{oldVal: deepCopyValue(a), newVal: deepCopyValue(b)}, nil
 	}
 
-	added := make(map[interface{}]reflect.Value)
-	removed := make(map[interface{}]reflect.Value)
-	modified := make(map[interface{}]diffPatch)
+	added := make(map[any]reflect.Value)
+	removed := make(map[any]reflect.Value)
+	modified := make(map[any]diffPatch)
 
 	iterA := a.MapRange()
 	for iterA.Next() {
@@ -418,15 +418,29 @@ func diffSlice(a, b reflect.Value, visited map[visitKey]bool, config *diffConfig
 	midBStart := prefix
 	midBEnd := lenB - suffix
 
+	keyField, hasKey := getKeyField(a.Type().Elem())
+
 	// Fast path: Simple append
 	if midAStart == midAEnd && midBStart < midBEnd {
 		var ops []sliceOp
 		for i := midBStart; i < midBEnd; i++ {
-			ops = append(ops, sliceOp{
-				Kind:  OpAdd,
-				Index: i,
-				Val:   deepCopyValue(b.Index(i)),
-			})
+			var prevKey any
+			if hasKey {
+				// Find predecessor key
+				if i > 0 {
+					prevKey = extractKey(b.Index(i-1), keyField)
+				}
+			}
+			op := sliceOp{
+				Kind:    OpAdd,
+				Index:   i,
+				Val:     deepCopyValue(b.Index(i)),
+				PrevKey: prevKey,
+			}
+			if hasKey {
+				op.Key = extractKey(b.Index(i), keyField)
+			}
+			ops = append(ops, op)
 		}
 		return &slicePatch{ops: ops}, nil
 	}
@@ -435,11 +449,15 @@ func diffSlice(a, b reflect.Value, visited map[visitKey]bool, config *diffConfig
 	if midBStart == midBEnd && midAStart < midAEnd {
 		var ops []sliceOp
 		for i := midAStart; i < midAEnd; i++ {
-			ops = append(ops, sliceOp{
+			op := sliceOp{
 				Kind:  OpRemove,
 				Index: i,
 				Val:   deepCopyValue(a.Index(i)),
-			})
+			}
+			if hasKey {
+				op.Key = extractKey(a.Index(i), keyField)
+			}
+			ops = append(ops, op)
 		}
 		return &slicePatch{ops: ops}, nil
 	}
@@ -447,8 +465,6 @@ func diffSlice(a, b reflect.Value, visited map[visitKey]bool, config *diffConfig
 	if midAStart >= midAEnd && midBStart >= midBEnd {
 		return nil, nil
 	}
-
-	keyField, hasKey := getKeyField(a.Type().Elem())
 
 	// 3. Diff the middle part
 	ops := computeSliceEdits(a, b, midAStart, midAEnd, midBStart, midBEnd, keyField, hasKey)
@@ -466,7 +482,7 @@ func computeSliceEdits(a, b reflect.Value, aStart, aEnd, bStart, bEnd, keyField 
 		if hasKey {
 			k1 := v1
 			k2 := v2
-			if k1.Kind() == reflect.Ptr {
+			if k1.Kind() == reflect.Pointer {
 				if k1.IsNil() || k2.IsNil() {
 					return k1.IsNil() && k2.IsNil()
 				}
@@ -527,11 +543,15 @@ func computeSliceEdits(a, b reflect.Value, aStart, aEnd, bStart, bEnd, keyField 
 					if !reflect.DeepEqual(vA.Interface(), vB.Interface()) {
 						// Items are same by key but differ in content.
 						p, _ := diffRecursive(vA, vB, make(map[visitKey]bool), &diffConfig{ignoredPaths: make(map[string]bool)}, "", false)
-						ops = append(ops, sliceOp{
+						op := sliceOp{
 							Kind:  OpReplace,
 							Index: aStart + i - 1,
 							Patch: p,
-						})
+						}
+						if hasKey {
+							op.Key = extractKey(vA, keyField)
+						}
+						ops = append(ops, op)
 					}
 					i--
 					j--
@@ -539,14 +559,18 @@ func computeSliceEdits(a, b reflect.Value, aStart, aEnd, bStart, bEnd, keyField 
 				}
 			} else {
 				if dp[i][j] == dp[i-1][j-1]+1 {
-					// Substitution (treated as Mod here for simplicity in Myers' but we 
+					// Substitution (treated as Mod here for simplicity in Myers' but we
 					// could also treat as Delete+Add).
 					p, _ := diffRecursive(vA, vB, make(map[visitKey]bool), &diffConfig{ignoredPaths: make(map[string]bool)}, "", false)
-					ops = append(ops, sliceOp{
+					op := sliceOp{
 						Kind:  OpReplace,
 						Index: aStart + i - 1,
 						Patch: p,
-					})
+					}
+					if hasKey {
+						op.Key = extractKey(vA, keyField)
+					}
+					ops = append(ops, op)
 					i--
 					j--
 					continue
@@ -555,21 +579,38 @@ func computeSliceEdits(a, b reflect.Value, aStart, aEnd, bStart, bEnd, keyField 
 		}
 
 		if i > 0 && dp[i][j] == dp[i-1][j]+1 {
-			ops = append(ops, sliceOp{
+			op := sliceOp{
 				Kind:  OpRemove,
 				Index: aStart + i - 1,
 				Val:   deepCopyValue(a.Index(aStart + i - 1)),
-			})
+			}
+			if hasKey {
+				op.Key = extractKey(a.Index(aStart+i-1), keyField)
+			}
+			ops = append(ops, op)
 			i--
 			continue
 		}
 
 		if j > 0 && dp[i][j] == dp[i][j-1]+1 {
-			ops = append(ops, sliceOp{
-				Kind:  OpAdd,
-				Index: aStart + i,
-				Val:   deepCopyValue(b.Index(bStart + j - 1)),
-			})
+			// For Add, we need PrevKey.
+			// The inserted element comes from b at bStart + j - 1.
+			// Predecessor is at bStart + j - 2.
+			var prevKey any
+			if hasKey && (bStart+j-2 >= 0) {
+				prevKey = extractKey(b.Index(bStart+j-2), keyField)
+			}
+
+			op := sliceOp{
+				Kind:    OpAdd,
+				Index:   aStart + i,
+				Val:     deepCopyValue(b.Index(bStart + j - 1)),
+				PrevKey: prevKey,
+			}
+			if hasKey {
+				op.Key = extractKey(b.Index(bStart+j-1), keyField)
+			}
+			ops = append(ops, op)
 			j--
 			continue
 		}

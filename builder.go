@@ -267,12 +267,12 @@ func (n *Node) ensurePatch() {
 			p = &slicePatch{}
 		case reflect.Map:
 			p = &mapPatch{
-				added:    make(map[interface{}]reflect.Value),
-				removed:  make(map[interface{}]reflect.Value),
-				modified: make(map[interface{}]diffPatch),
+				added:    make(map[any]reflect.Value),
+				removed:  make(map[any]reflect.Value),
+				modified: make(map[any]diffPatch),
 				keyType:  n.typ.Key(),
 			}
-		case reflect.Ptr:
+		case reflect.Pointer:
 			p = &ptrPatch{}
 		case reflect.Interface:
 			p = &interfacePatch{}
@@ -413,9 +413,9 @@ func (n *Node) MapKey(key any) (*Node, error) {
 	mp, ok := n.current.(*mapPatch)
 	if !ok {
 		mp = &mapPatch{
-			added:    make(map[interface{}]reflect.Value),
-			removed:  make(map[interface{}]reflect.Value),
-			modified: make(map[interface{}]diffPatch),
+			added:    make(map[any]reflect.Value),
+			removed:  make(map[any]reflect.Value),
+			modified: make(map[any]diffPatch),
 			keyType:  n.typ.Key(),
 		}
 		n.update(mp)
@@ -433,12 +433,12 @@ func (n *Node) MapKey(key any) (*Node, error) {
 
 // Elem returns a Node for the element type of a pointer or interface.
 func (n *Node) Elem() *Node {
-	if n.typ == nil || (n.typ.Kind() != reflect.Ptr && n.typ.Kind() != reflect.Interface) {
+	if n.typ == nil || (n.typ.Kind() != reflect.Pointer && n.typ.Kind() != reflect.Interface) {
 		return n
 	}
 	updateFunc := n.update
 	var currentPatch diffPatch
-	if n.typ.Kind() == reflect.Ptr {
+	if n.typ.Kind() == reflect.Pointer {
 		pp, ok := n.current.(*ptrPatch)
 		if !ok {
 			pp = &ptrPatch{}
@@ -458,7 +458,7 @@ func (n *Node) Elem() *Node {
 		currentPatch = ip.elemPatch
 	}
 	var nextTyp reflect.Type
-	if n.typ.Kind() == reflect.Ptr {
+	if n.typ.Kind() == reflect.Pointer {
 		nextTyp = n.typ.Elem()
 	}
 	return &Node{
@@ -528,9 +528,9 @@ func (n *Node) Delete(keyOrIndex any, oldVal any) error {
 		mp, ok := n.current.(*mapPatch)
 		if !ok {
 			mp = &mapPatch{
-				added:    make(map[interface{}]reflect.Value),
-				removed:  make(map[interface{}]reflect.Value),
-				modified: make(map[interface{}]diffPatch),
+				added:    make(map[any]reflect.Value),
+				removed:  make(map[any]reflect.Value),
+				modified: make(map[any]diffPatch),
 				keyType:  n.typ.Key(),
 			}
 			n.update(mp)
@@ -558,9 +558,9 @@ func (n *Node) AddMapEntry(key, val any) error {
 	mp, ok := n.current.(*mapPatch)
 	if !ok {
 		mp = &mapPatch{
-			added:    make(map[interface{}]reflect.Value),
-			removed:  make(map[interface{}]reflect.Value),
-			modified: make(map[interface{}]diffPatch),
+			added:    make(map[any]reflect.Value),
+			removed:  make(map[any]reflect.Value),
+			modified: make(map[any]diffPatch),
 			keyType:  n.typ.Key(),
 		}
 		n.update(mp)

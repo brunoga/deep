@@ -48,9 +48,9 @@ func TestPatch_ReverseFormat_Exhaustive(t *testing.T) {
 	// mapPatch
 	t.Run("mapPatch", func(t *testing.T) {
 		p := &mapPatch{
-			added:    map[interface{}]reflect.Value{"a": reflect.ValueOf(1)},
-			removed:  map[interface{}]reflect.Value{"b": reflect.ValueOf(2)},
-			modified: map[interface{}]diffPatch{"c": &valuePatch{}},
+			added:    map[any]reflect.Value{"a": reflect.ValueOf(1)},
+			removed:  map[any]reflect.Value{"b": reflect.ValueOf(2)},
+			modified: map[any]diffPatch{"c": &valuePatch{}},
 		}
 		p.reverse()
 		p.format(0)
@@ -145,9 +145,9 @@ func TestPatch_MiscCoverage(t *testing.T) {
 	// mapPatch format/toJSONPatch
 	t.Run("mapPatch", func(t *testing.T) {
 		p := &mapPatch{
-			added:    map[interface{}]reflect.Value{"a": reflect.ValueOf(1)},
-			removed:  map[interface{}]reflect.Value{"b": reflect.ValueOf(2)},
-			modified: map[interface{}]diffPatch{"c": &valuePatch{newVal: reflect.ValueOf(3)}},
+			added:    map[any]reflect.Value{"a": reflect.ValueOf(1)},
+			removed:  map[any]reflect.Value{"b": reflect.ValueOf(2)},
+			modified: map[any]diffPatch{"c": &valuePatch{newVal: reflect.ValueOf(3)}},
 		}
 		p.format(0)
 		p.toJSONPatch("/path")

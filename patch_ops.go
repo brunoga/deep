@@ -15,6 +15,7 @@ var ErrConditionSkipped = fmt.Errorf("condition skipped")
 type diffPatch interface {
 	apply(root, v reflect.Value)
 	applyChecked(root, v reflect.Value, strict bool) error
+	applyResolved(root, v reflect.Value, path string, resolver ConflictResolver) error
 	reverse() diffPatch
 	format(indent int) string
 	walk(path string, fn func(path string, op OpKind, old, new any) error) error
@@ -25,16 +26,21 @@ type diffPatch interface {
 	toJSONPatch(path string) []map[string]any
 }
 
-type patchMetadata struct {
-	cond       any
-	ifCond     any
+type basePatch struct {
+	cond any
+
+	ifCond any
+
 	unlessCond any
 }
 
-func (m *patchMetadata) setCondition(cond any)       { m.cond = cond }
-func (m *patchMetadata) setIfCondition(cond any)     { m.ifCond = cond }
-func (m *patchMetadata) setUnlessCondition(cond any) { m.unlessCond = cond }
-func (m *patchMetadata) conditions() (any, any, any) { return m.cond, m.ifCond, m.unlessCond }
+func (p *basePatch) setCondition(cond any) { p.cond = cond }
+
+func (p *basePatch) setIfCondition(cond any) { p.ifCond = cond }
+
+func (p *basePatch) setUnlessCondition(cond any) { p.unlessCond = cond }
+
+func (p *basePatch) conditions() (any, any, any) { return p.cond, p.ifCond, p.unlessCond }
 
 func checkConditions(p diffPatch, root, v reflect.Value) error {
 	cond, ifC, unlessC := p.conditions()
@@ -76,7 +82,7 @@ func evaluateCondition(cond any, v reflect.Value) (bool, error) {
 	} else if reflect.PtrTo(v.Type()).AssignableTo(argType) {
 		arg = reflect.New(v.Type())
 		arg.Elem().Set(v)
-	} else if v.Kind() == reflect.Ptr && v.Elem().Type().AssignableTo(argType) {
+	} else if v.Kind() == reflect.Pointer && v.Elem().Type().AssignableTo(argType) {
 		arg = v.Elem()
 	} else {
 		// Try to convert
@@ -117,7 +123,7 @@ func checkIfUnless(ifCond, unlessCond any, v reflect.Value) error {
 
 // valuePatch handles replacement of basic types and full replacement of complex types.
 type valuePatch struct {
-	patchMetadata
+	basePatch
 	oldVal reflect.Value
 	newVal reflect.Value
 }
@@ -151,8 +157,18 @@ func (p *valuePatch) applyChecked(root, v reflect.Value, strict bool) error {
 	return nil
 }
 
+func (p *valuePatch) applyResolved(root, v reflect.Value, path string, resolver ConflictResolver) error {
+	if resolver != nil {
+		if !resolver.Resolve(path, OpReplace, nil, nil, v) {
+			return nil // Skipped by resolver
+		}
+	}
+	p.apply(root, v)
+	return nil
+}
+
 func (p *valuePatch) reverse() diffPatch {
-	return &valuePatch{oldVal: p.newVal, newVal: p.oldVal, patchMetadata: p.patchMetadata}
+	return &valuePatch{oldVal: p.newVal, newVal: p.oldVal, basePatch: p.basePatch}
 }
 
 func (p *valuePatch) walk(path string, fn func(path string, op OpKind, old, new any) error) error {
@@ -203,7 +219,7 @@ func (p *valuePatch) toJSONPatch(path string) []map[string]any {
 
 // testPatch handles equality checks without modifying the value.
 type testPatch struct {
-	patchMetadata
+	basePatch
 	expected reflect.Value
 }
 
@@ -229,6 +245,10 @@ func (p *testPatch) applyChecked(root, v reflect.Value, strict bool) error {
 	}
 
 	return nil
+}
+
+func (p *testPatch) applyResolved(root, v reflect.Value, path string, resolver ConflictResolver) error {
+	return p.applyChecked(root, v, true)
 }
 
 func (p *testPatch) reverse() diffPatch {
@@ -262,7 +282,7 @@ func (p *testPatch) toJSONPatch(path string) []map[string]any {
 
 // copyPatch copies a value from another path.
 type copyPatch struct {
-	patchMetadata
+	basePatch
 	from string
 	path string // target path for reversal
 }
@@ -279,7 +299,7 @@ func (p *copyPatch) applyChecked(root, v reflect.Value, strict bool) error {
 		return err
 	}
 	rvRoot := root
-	if rvRoot.Kind() == reflect.Ptr {
+	if rvRoot.Kind() == reflect.Pointer {
 		rvRoot = rvRoot.Elem()
 	}
 	fromVal, err := Path(p.from).resolve(rvRoot)
@@ -291,6 +311,18 @@ func (p *copyPatch) applyChecked(root, v reflect.Value, strict bool) error {
 	}
 	setValue(v, fromVal)
 	return nil
+}
+
+func (p *copyPatch) applyResolved(root, v reflect.Value, path string, resolver ConflictResolver) error {
+	// For now, treat copy as a simple value change or delegate?
+	// Resolving copy operations is tricky because they depend on source.
+	// We'll treat it as a replace-like op.
+	if resolver != nil {
+		if !resolver.Resolve(path, OpCopy, nil, nil, v) {
+			return nil
+		}
+	}
+	return p.applyChecked(root, v, false)
 }
 
 func (p *copyPatch) reverse() diffPatch {
@@ -323,7 +355,7 @@ func (p *copyPatch) toJSONPatch(path string) []map[string]any {
 
 // movePatch moves a value from another path.
 type movePatch struct {
-	patchMetadata
+	basePatch
 	from string
 	path string // target path for reversal
 }
@@ -340,7 +372,7 @@ func (p *movePatch) applyChecked(root, v reflect.Value, strict bool) error {
 		return err
 	}
 	rvRoot := root
-	if rvRoot.Kind() != reflect.Ptr {
+	if rvRoot.Kind() != reflect.Pointer {
 		// We need a pointer to be able to delete/set values.
 		return fmt.Errorf("root must be a pointer for move operation")
 	}
@@ -363,6 +395,15 @@ func (p *movePatch) applyChecked(root, v reflect.Value, strict bool) error {
 		return fmt.Errorf("move set to %s failed: %w", p.path, err)
 	}
 	return nil
+}
+
+func (p *movePatch) applyResolved(root, v reflect.Value, path string, resolver ConflictResolver) error {
+	if resolver != nil {
+		if !resolver.Resolve(path, OpMove, nil, nil, v) {
+			return nil
+		}
+	}
+	return p.applyChecked(root, v, false)
 }
 
 func (p *movePatch) reverse() diffPatch {
@@ -394,7 +435,7 @@ func (p *movePatch) toJSONPatch(path string) []map[string]any {
 
 // logPatch logs a message without modifying the value.
 type logPatch struct {
-	patchMetadata
+	basePatch
 	message string
 }
 
@@ -411,6 +452,10 @@ func (p *logPatch) applyChecked(root, v reflect.Value, strict bool) error {
 	}
 	p.apply(root, v)
 	return nil
+}
+
+func (p *logPatch) applyResolved(root, v reflect.Value, path string, resolver ConflictResolver) error {
+	return p.applyChecked(root, v, false)
 }
 
 func (p *logPatch) reverse() diffPatch {
@@ -442,7 +487,7 @@ func (p *logPatch) toJSONPatch(path string) []map[string]any {
 // ptrPatch handles changes to the content pointed to by a pointer.
 
 type ptrPatch struct {
-	patchMetadata
+	basePatch
 	elemPatch diffPatch
 }
 
@@ -469,10 +514,17 @@ func (p *ptrPatch) applyChecked(root, v reflect.Value, strict bool) error {
 	return p.elemPatch.applyChecked(root, v.Elem(), strict)
 }
 
+func (p *ptrPatch) applyResolved(root, v reflect.Value, path string, resolver ConflictResolver) error {
+	if v.IsNil() {
+		return fmt.Errorf("cannot apply pointer patch to nil value")
+	}
+	return p.elemPatch.applyResolved(root, v.Elem(), path, resolver)
+}
+
 func (p *ptrPatch) reverse() diffPatch {
 	return &ptrPatch{
-		patchMetadata: p.patchMetadata,
-		elemPatch:     p.elemPatch.reverse(),
+		basePatch: p.basePatch,
+		elemPatch: p.elemPatch.reverse(),
 	}
 }
 
@@ -494,7 +546,7 @@ func (p *ptrPatch) toJSONPatch(path string) []map[string]any {
 
 // interfacePatch handles changes to the value stored in an interface.
 type interfacePatch struct {
-	patchMetadata
+	basePatch
 	elemPatch diffPatch
 }
 
@@ -529,10 +581,24 @@ func (p *interfacePatch) applyChecked(root, v reflect.Value, strict bool) error 
 	return nil
 }
 
+func (p *interfacePatch) applyResolved(root, v reflect.Value, path string, resolver ConflictResolver) error {
+	if v.IsNil() {
+		return fmt.Errorf("cannot apply interface patch to nil value")
+	}
+	elem := v.Elem()
+	newElem := reflect.New(elem.Type()).Elem()
+	newElem.Set(elem)
+	if err := p.elemPatch.applyResolved(root, newElem, path, resolver); err != nil {
+		return err
+	}
+	v.Set(newElem)
+	return nil
+}
+
 func (p *interfacePatch) reverse() diffPatch {
 	return &interfacePatch{
-		patchMetadata: p.patchMetadata,
-		elemPatch:     p.elemPatch.reverse(),
+		basePatch: p.basePatch,
+		elemPatch: p.elemPatch.reverse(),
 	}
 }
 
@@ -554,7 +620,7 @@ func (p *interfacePatch) toJSONPatch(path string) []map[string]any {
 
 // structPatch handles field-level modifications in a struct.
 type structPatch struct {
-	patchMetadata
+	basePatch
 	fields map[string]diffPatch
 }
 
@@ -592,14 +658,36 @@ func (p *structPatch) applyChecked(root, v reflect.Value, strict bool) error {
 	return nil
 }
 
+func (p *structPatch) applyResolved(root, v reflect.Value, path string, resolver ConflictResolver) error {
+	for name, patch := range p.fields {
+		f := v.FieldByName(name)
+		if !f.IsValid() {
+			return fmt.Errorf("field %s not found", name)
+		}
+		if !f.CanSet() {
+			unsafe.DisableRO(&f)
+		}
+
+		subPath := name
+		if path != "" {
+			subPath = path + "." + name
+		}
+
+		if err := patch.applyResolved(root, f, subPath, resolver); err != nil {
+			return fmt.Errorf("field %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
 func (p *structPatch) reverse() diffPatch {
 	newFields := make(map[string]diffPatch)
 	for k, v := range p.fields {
 		newFields[k] = v.reverse()
 	}
 	return &structPatch{
-		patchMetadata: p.patchMetadata,
-		fields:        newFields,
+		basePatch: p.basePatch,
+		fields:    newFields,
 	}
 }
 
@@ -642,7 +730,7 @@ func (p *structPatch) toJSONPatch(path string) []map[string]any {
 
 // arrayPatch handles index-level modifications in a fixed-size array.
 type arrayPatch struct {
-	patchMetadata
+	basePatch
 	indices map[int]diffPatch
 }
 
@@ -680,14 +768,33 @@ func (p *arrayPatch) applyChecked(root, v reflect.Value, strict bool) error {
 	return nil
 }
 
+func (p *arrayPatch) applyResolved(root, v reflect.Value, path string, resolver ConflictResolver) error {
+	for i, patch := range p.indices {
+		if i >= v.Len() {
+			return fmt.Errorf("index %d out of bounds", i)
+		}
+		e := v.Index(i)
+		if !e.CanSet() {
+			unsafe.DisableRO(&e)
+		}
+
+		subPath := fmt.Sprintf("%s[%d]", path, i)
+
+		if err := patch.applyResolved(root, e, subPath, resolver); err != nil {
+			return fmt.Errorf("index %d: %w", i, err)
+		}
+	}
+	return nil
+}
+
 func (p *arrayPatch) reverse() diffPatch {
 	newIndices := make(map[int]diffPatch)
 	for k, v := range p.indices {
 		newIndices[k] = v.reverse()
 	}
 	return &arrayPatch{
-		patchMetadata: p.patchMetadata,
-		indices:       newIndices,
+		basePatch: p.basePatch,
+		indices:   newIndices,
 	}
 }
 
@@ -727,10 +834,10 @@ func (p *arrayPatch) toJSONPatch(path string) []map[string]any {
 
 // mapPatch handles additions, removals, and modifications in a map.
 type mapPatch struct {
-	patchMetadata
-	added    map[interface{}]reflect.Value
-	removed  map[interface{}]reflect.Value
-	modified map[interface{}]diffPatch
+	basePatch
+	added    map[any]reflect.Value
+	removed  map[any]reflect.Value
+	modified map[any]diffPatch
 	keyType  reflect.Type
 }
 
@@ -814,17 +921,83 @@ func (p *mapPatch) applyChecked(root, v reflect.Value, strict bool) error {
 	return nil
 }
 
+func (p *mapPatch) applyResolved(root, v reflect.Value, path string, resolver ConflictResolver) error {
+	if v.IsNil() {
+		if len(p.added) > 0 {
+			newMap := reflect.MakeMap(v.Type())
+			v.Set(newMap)
+		} else if len(p.removed) > 0 || len(p.modified) > 0 {
+			return fmt.Errorf("cannot modify/remove from nil map")
+		}
+	}
+
+	// Removals
+	for k, _ := range p.removed {
+		keyStr := fmt.Sprintf("%v", k)
+		subPath := fmt.Sprintf("%v", k)
+		if path != "" {
+			subPath = path + "." + keyStr
+		}
+
+		if resolver != nil {
+			if !resolver.Resolve(subPath, OpRemove, k, nil, reflect.Value{}) {
+				continue
+			}
+		}
+		v.SetMapIndex(convertValue(reflect.ValueOf(k), v.Type().Key()), reflect.Value{})
+	}
+
+	// Modifications
+	for k, patch := range p.modified {
+		keyVal := convertValue(reflect.ValueOf(k), v.Type().Key())
+		val := v.MapIndex(keyVal)
+		if !val.IsValid() {
+			continue // Or error? Let's skip if missing, concurrent delete handling.
+		}
+
+		keyStr := fmt.Sprintf("%v", k)
+		subPath := fmt.Sprintf("%v", k)
+		if path != "" {
+			subPath = path + "." + keyStr
+		}
+
+		newElem := reflect.New(val.Type()).Elem()
+		newElem.Set(val)
+		if err := patch.applyResolved(root, newElem, subPath, resolver); err != nil {
+			return fmt.Errorf("key %v: %w", k, err)
+		}
+		v.SetMapIndex(keyVal, newElem)
+	}
+
+	// Additions
+	for k, val := range p.added {
+		keyStr := fmt.Sprintf("%v", k)
+		subPath := fmt.Sprintf("%v", k)
+		if path != "" {
+			subPath = path + "." + keyStr
+		}
+
+		if resolver != nil {
+			if !resolver.Resolve(subPath, OpAdd, k, nil, val) {
+				continue
+			}
+		}
+		v.SetMapIndex(convertValue(reflect.ValueOf(k), v.Type().Key()), convertValue(val, v.Type().Elem()))
+	}
+	return nil
+}
+
 func (p *mapPatch) reverse() diffPatch {
-	newModified := make(map[interface{}]diffPatch)
+	newModified := make(map[any]diffPatch)
 	for k, v := range p.modified {
 		newModified[k] = v.reverse()
 	}
 	return &mapPatch{
-		patchMetadata: p.patchMetadata,
-		added:         p.removed,
-		removed:       p.added,
-		modified:      newModified,
-		keyType:       p.keyType,
+		basePatch: p.basePatch,
+		added:     p.removed,
+		removed:   p.added,
+		modified:  newModified,
+		keyType:   p.keyType,
 	}
 }
 
@@ -902,16 +1075,27 @@ func (p *mapPatch) toJSONPatch(path string) []map[string]any {
 }
 
 type sliceOp struct {
-	Kind  OpKind
-	Index int
-	From  int // For OpMove
-	Val   reflect.Value
-	Patch diffPatch
+	Kind    OpKind
+	Index   int
+	From    int // For OpMove
+	Val     reflect.Value
+	Patch   diffPatch
+	Key     any // Key of the element being operated on (if keyed)
+	PrevKey any // Key of the previous element in the target slice (for insertion/move)
+}
+
+// ConflictResolver allows custom logic to be injected during patch application.
+// It is used to implement CRDTs, 3-way merges, and other conflict resolution strategies.
+type ConflictResolver interface {
+	// Resolve allows the resolver to intervene before an operation is applied.
+	// It returns true if the operation should be applied, false to skip it.
+	// The resolver can also modify the operation or target value directly.
+	Resolve(path string, op OpKind, key, prevKey any, val reflect.Value) bool
 }
 
 // slicePatch handles complex edits (insertions, deletions, modifications) in a slice.
 type slicePatch struct {
-	patchMetadata
+	basePatch
 	ops []sliceOp
 }
 
@@ -1003,6 +1187,224 @@ func (p *slicePatch) applyChecked(root, v reflect.Value, strict bool) error {
 	return nil
 }
 
+func (p *slicePatch) applyResolved(root, v reflect.Value, path string, resolver ConflictResolver) error {
+	// If no resolver, fallback to standard checked apply (flexible)
+	if resolver == nil {
+		return p.applyChecked(root, v, false)
+	}
+
+	// Semantic application for keyed slices
+	keyField, hasKey := getKeyField(v.Type().Elem())
+
+	// We'll build a new slice by copying the current state and applying ops
+	// But simply appending ops won't work because indices shift.
+	// We need to apply ops "in place" into v, handling shifts dynamically.
+	// Or better: construct a new slice from scratch? No, that's hard if we only have ops.
+
+	// Better strategy:
+	// Convert v to a list of elements.
+	// Apply deletions first (marking as deleted).
+	// Apply insertions/replacements based on keys.
+
+	// BUT, `sliceOp` comes from a specific diff.
+	// If the slice is NOT keyed, we just use indices but check the resolver.
+
+	if !hasKey {
+		// Non-keyed slice: treat as atomic updates by index, but respect resolver
+		// This is tricky because insertions shift indices.
+		// A robust way is to re-calculate indices or just fail for concurrent edits on non-keyed slices.
+		// For now, let's implement standard indexed application but call Resolve.
+
+		newSlice := reflect.MakeSlice(v.Type(), 0, v.Len())
+		curIdx := 0
+		for _, op := range p.ops {
+			if op.Index > curIdx {
+				for k := curIdx; k < op.Index; k++ {
+					if k < v.Len() {
+						newSlice = reflect.Append(newSlice, v.Index(k))
+					}
+				}
+				curIdx = op.Index
+			}
+
+			subPath := fmt.Sprintf("%s[%d]", path, curIdx)
+
+			switch op.Kind {
+			case OpAdd:
+				if resolver.Resolve(subPath, OpAdd, nil, nil, op.Val) {
+					newSlice = reflect.Append(newSlice, convertValue(op.Val, v.Type().Elem()))
+				}
+			case OpRemove:
+				if curIdx < v.Len() {
+					if resolver.Resolve(subPath, OpRemove, nil, nil, reflect.Value{}) {
+						curIdx++ // Skip (remove)
+					} else {
+						// Keep
+						newSlice = reflect.Append(newSlice, v.Index(curIdx))
+						curIdx++
+					}
+				}
+			case OpReplace:
+				if curIdx < v.Len() {
+					elem := reflect.New(v.Type().Elem()).Elem()
+					elem.Set(deepCopyValue(v.Index(curIdx)))
+					if err := op.Patch.applyResolved(root, elem, subPath, resolver); err != nil {
+						return err
+					}
+					newSlice = reflect.Append(newSlice, elem)
+					curIdx++
+				}
+			}
+		}
+		for k := curIdx; k < v.Len(); k++ {
+			newSlice = reflect.Append(newSlice, v.Index(k))
+		}
+		v.Set(newSlice)
+		return nil
+	}
+
+	// Keyed Slice Logic
+	// 1. Map existing elements by Key
+	type elemInfo struct {
+		val   reflect.Value
+		index int
+	}
+	existingMap := make(map[any]*elemInfo)
+	var orderedKeys []any
+
+	for i := 0; i < v.Len(); i++ {
+		val := v.Index(i)
+		k := extractKey(val, keyField)
+		existingMap[k] = &elemInfo{val: val, index: i}
+		orderedKeys = append(orderedKeys, k)
+	}
+
+	// 2. Process Ops
+	// We need to handle concurrent edits.
+	// Deletions: easy, remove from map.
+	// Modifications: easy, update value in map.
+	// Insertions: tricky. We need to insert relative to PrevKey.
+
+	// We will build the new ordered list of keys.
+
+	// First, applying Replacements and Removals (tombstoning)
+	for _, op := range p.ops {
+		subPath := fmt.Sprintf("%s[%v]", path, op.Key)
+
+		switch op.Kind {
+		case OpRemove:
+			if resolver.Resolve(subPath, OpRemove, op.Key, nil, reflect.Value{}) {
+				delete(existingMap, op.Key)
+				// Remove from orderedKeys? We'll reconstruct later.
+			}
+		case OpReplace:
+			if info, ok := existingMap[op.Key]; ok {
+				newVal := reflect.New(v.Type().Elem()).Elem()
+				newVal.Set(deepCopyValue(info.val))
+				if err := op.Patch.applyResolved(root, newVal, subPath, resolver); err == nil {
+					info.val = newVal
+				}
+			}
+		}
+	}
+
+	// Now Additions. This is where Yjs logic comes in.
+	// We need to insert op.Val after op.PrevKey.
+
+	// To support efficient insertion, let's use a linked list or just insert into slice.
+	// Since slices are small, inserting into a slice of keys is fine.
+
+	for _, op := range p.ops {
+		if op.Kind == OpAdd {
+			subPath := fmt.Sprintf("%s[%v]", path, op.Key)
+			if resolver.Resolve(subPath, OpAdd, op.Key, op.PrevKey, op.Val) {
+				// Insert into orderedKeys
+				// Find PrevKey index
+				insertIdx := 0
+				foundPrev := false
+				if op.PrevKey != nil {
+					for i, k := range orderedKeys {
+						if k == op.PrevKey {
+							insertIdx = i + 1
+							foundPrev = true
+							break
+						}
+					}
+					// If PrevKey not found (deleted?), what do we do?
+					// Yjs logic: find the nearest predecessor that still exists.
+					// For simplicity: if prev not found, insert at beginning (or end?).
+					// Let's default to beginning if PrevKey was specified but missing,
+					// or maybe we should keep tombstone keys?
+					// CRDTs usually keep tombstones. We don't have them here explicitly.
+					// Let's assume strict predecessor for now: if prev missing, try index 0.
+					if !foundPrev {
+						insertIdx = 0
+					}
+				}
+
+				// Conflict Resolution: Scan forward to handle concurrent insertions
+				// We compare op.Key with existing keys at insertIdx to ensure deterministic order.
+				for insertIdx < len(orderedKeys) {
+					// We assume elements starting at insertIdx are either:
+					// 1. Concurrent siblings (inserted after same PrevKey)
+					// 2. Successors of PrevKey (conceptually)
+					// By sorting them, we ensure convergence.
+
+					// Compare keys as strings for stability
+					k1 := fmt.Sprintf("%v", op.Key)
+					k2 := fmt.Sprintf("%v", orderedKeys[insertIdx])
+
+					if k1 > k2 {
+						insertIdx++
+					} else {
+						break
+					}
+				}
+
+				// Insert at insertIdx
+				if insertIdx >= len(orderedKeys) {
+					orderedKeys = append(orderedKeys, op.Key)
+				} else {
+					orderedKeys = append(orderedKeys, nil)
+					copy(orderedKeys[insertIdx+1:], orderedKeys[insertIdx:])
+					orderedKeys[insertIdx] = op.Key
+				}
+				// Add to map
+				existingMap[op.Key] = &elemInfo{val: convertValue(op.Val, v.Type().Elem())}
+
+			}
+		}
+	}
+
+	// Reconstruct Slice
+	// Filter orderedKeys to only those in existingMap
+	newSlice := reflect.MakeSlice(v.Type(), 0, 0)
+	seen := make(map[any]bool)
+
+	for _, k := range orderedKeys {
+		if _, exists := existingMap[k]; exists && !seen[k] {
+			newSlice = reflect.Append(newSlice, existingMap[k].val)
+			seen[k] = true
+		}
+	}
+
+	v.Set(newSlice)
+	return nil
+}
+
+func extractKey(v reflect.Value, fieldIdx int) any {
+	if v.Kind() == reflect.Pointer {
+		if v.IsNil() {
+			return nil
+		}
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		return nil
+	}
+	return v.Field(fieldIdx).Interface()
+}
+
 func (p *slicePatch) reverse() diffPatch {
 	var revOps []sliceOp
 	curA := 0
@@ -1037,14 +1439,17 @@ func (p *slicePatch) reverse() diffPatch {
 		}
 	}
 	return &slicePatch{
-		patchMetadata: p.patchMetadata,
-		ops:           revOps,
+		basePatch: p.basePatch,
+		ops:       revOps,
 	}
 }
 
 func (p *slicePatch) walk(path string, fn func(path string, op OpKind, old, new any) error) error {
 	for _, op := range p.ops {
 		fullPath := fmt.Sprintf("%s[%d]", path, op.Index)
+		if op.Key != nil {
+			fullPath = fmt.Sprintf("%s[%v]", path, op.Key)
+		}
 		switch op.Kind {
 		case OpAdd:
 			if err := fn(fullPath, OpAdd, nil, valueToInterface(op.Val)); err != nil {
@@ -1131,7 +1536,7 @@ func conditionToPredicate(c any) any {
 	}
 
 	v := reflect.ValueOf(c)
-	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+	for v.Kind() == reflect.Pointer || v.Kind() == reflect.Interface {
 		v = v.Elem()
 	}
 
@@ -1254,7 +1659,7 @@ func conditionToPredicate(c any) any {
 
 // customDiffPatch wraps an exported Patch[T] into the internal diffPatch interface.
 type customDiffPatch struct {
-	patchMetadata
+	basePatch
 	patch any // This is a Patch[T]
 }
 
@@ -1284,12 +1689,26 @@ func (p *customDiffPatch) applyChecked(root, v reflect.Value, strict bool) error
 	return nil
 }
 
+func (p *customDiffPatch) applyResolved(root, v reflect.Value, path string, resolver ConflictResolver) error {
+	// Custom patches don't support resolution hooks yet.
+	// They are opaque. We just check if the op itself is allowed?
+	// But custom patch implies multiple changes.
+	// Fallback to standard applyChecked or fail?
+	// Let's call ApplyChecked.
+	if resolver != nil {
+		if !resolver.Resolve(path, OpReplace, nil, nil, v) {
+			return nil
+		}
+	}
+	return p.applyChecked(root, v, false)
+}
+
 func (p *customDiffPatch) reverse() diffPatch {
 	method := reflect.ValueOf(p.patch).MethodByName("Reverse")
 	res := method.Call(nil)
 	return &customDiffPatch{
-		patchMetadata: p.patchMetadata,
-		patch:         res[0].Interface(),
+		basePatch: p.basePatch,
+		patch:     res[0].Interface(),
 	}
 }
 
@@ -1363,6 +1782,10 @@ func (p *readOnlyPatch) apply(root, v reflect.Value) {
 func (p *readOnlyPatch) applyChecked(root, v reflect.Value, strict bool) error {
 	// No-op for actual modification, but we might want to check conditions?
 	// For now, let's just make it a no-op as it's readonly.
+	return nil
+}
+
+func (p *readOnlyPatch) applyResolved(root, v reflect.Value, path string, resolver ConflictResolver) error {
 	return nil
 }
 
