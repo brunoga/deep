@@ -83,7 +83,7 @@ func (c *rawTypeCondition) evaluateAny(v any) (bool, error) {
 		return target.Kind() == reflect.Slice || target.Kind() == reflect.Array, nil
 	case "null":
 		k := target.Kind()
-		return (k == reflect.Ptr || k == reflect.Interface || k == reflect.Slice || k == reflect.Map) && target.IsNil(), nil
+		return (k == reflect.Pointer || k == reflect.Interface || k == reflect.Slice || k == reflect.Map) && target.IsNil(), nil
 	case "undefined":
 		return false, nil
 	default:

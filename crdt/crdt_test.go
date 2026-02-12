@@ -8,7 +8,7 @@ import (
 )
 
 type TestUser struct {
-	ID      int    `deep:"key"`
+	ID      int `deep:"key"`
 	Name    string
 	Friends []TestFriend `deep:"key"`
 }
@@ -41,7 +41,7 @@ func TestCRDT_CreateDelta(t *testing.T) {
 
 	// Manually create a patch using deep.Diff
 	patch := deep.Diff(node.Value, TestUser{ID: 1, Name: "New"})
-	
+
 	// Use the new helper to wrap it into a Delta and update local state
 	delta := node.CreateDelta(patch)
 
@@ -60,7 +60,7 @@ func TestCRDT_CreateDelta(t *testing.T) {
 
 func TestCRDT_Merge(t *testing.T) {
 	initial := TestUser{
-		ID: 1,
+		ID:      1,
 		Friends: []TestFriend{{ID: 100, Name: "Bob"}},
 	}
 	nodeA := NewCRDT(initial, "node-a")

@@ -155,7 +155,7 @@ func (c *CRDT[T]) Merge(other *CRDT[T]) bool {
 		RemoteClocks:     other.Clocks,
 		RemoteTombstones: other.Tombstones,
 	}
-	
+
 	if err := patch.ApplyResolved(&c.Value, resolver); err != nil {
 		return false
 	}

@@ -768,7 +768,7 @@ func TestBuilder_Put(t *testing.T) {
 func TestPatch_ToJSONPatch_ReadOnly(t *testing.T) {
 	patch := Diff(1, 2)
 	ro := &readOnlyPatch{inner: patch.(patchUnwrapper).unwrap()}
-	
+
 	// readOnlyPatch toJSONPatch currently returns nil
 	json := ro.toJSONPatch("/")
 	if json != nil {

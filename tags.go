@@ -38,7 +38,7 @@ func parseTag(field reflect.StructField) structTag {
 }
 
 func getKeyField(typ reflect.Type) (int, bool) {
-	if typ.Kind() == reflect.Ptr {
+	if typ.Kind() == reflect.Pointer {
 		typ = typ.Elem()
 	}
 	if typ.Kind() != reflect.Struct {

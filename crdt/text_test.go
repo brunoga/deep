@@ -28,7 +28,7 @@ func TestText_Insert(t *testing.T) {
 	if len(text) != 3 {
 		t.Errorf("expected 3 runs, got %d", len(text))
 	}
-	
+
 	// Check IDs
 	if text[0].Value != "He" {
 		t.Errorf("text[0] should be 'He', got %s", text[0].Value)
@@ -39,7 +39,7 @@ func TestText_Insert(t *testing.T) {
 	if text[2].Value != "llo" {
 		t.Errorf("text[2] should be 'llo', got %s", text[2].Value)
 	}
-	
+
 	expectedID2 := text[0].ID
 	expectedID2.Logical += 2
 	if text[2].ID != expectedID2 {

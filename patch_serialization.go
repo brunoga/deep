@@ -267,7 +267,7 @@ func convertFromSurrogate(s any) (diffPatch, error) {
 		}, nil
 	case "map":
 		d := data.(map[string]any)
-		added := make(map[interface{}]reflect.Value)
+		added := make(map[any]reflect.Value)
 		if a := d["a"]; a != nil {
 			if slice, ok := a.([]any); ok {
 				for _, entry := range slice {
@@ -280,7 +280,7 @@ func convertFromSurrogate(s any) (diffPatch, error) {
 				}
 			}
 		}
-		removed := make(map[interface{}]reflect.Value)
+		removed := make(map[any]reflect.Value)
 		if r := d["r"]; r != nil {
 			if slice, ok := r.([]any); ok {
 				for _, entry := range slice {
@@ -293,7 +293,7 @@ func convertFromSurrogate(s any) (diffPatch, error) {
 				}
 			}
 		}
-		modified := make(map[interface{}]diffPatch)
+		modified := make(map[any]diffPatch)
 		if m := d["m"]; m != nil {
 			if slice, ok := m.([]any); ok {
 				for _, entry := range slice {

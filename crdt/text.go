@@ -58,9 +58,9 @@ func (t Text) Insert(pos int, value string, clock *hlc.Clock) Text {
 				}
 				result = append(result, left)
 			}
-			
+
 			result = append(result, newRun)
-			
+
 			if offset < runLen {
 				rightID := run.ID
 				rightID.Logical += int32(offset)
@@ -95,7 +95,7 @@ func (t Text) Delete(pos, length int) Text {
 
 	for _, run := range t {
 		runLen := len(run.Value)
-		
+
 		// Run is before the delete range
 		if currentPos+runLen <= pos {
 			result = append(result, run)
@@ -115,7 +115,7 @@ func (t Text) Delete(pos, length int) Text {
 		if startInRun < 0 {
 			startInRun = 0
 		}
-		
+
 		endInRun := (pos + length) - currentPos
 		if endInRun > runLen {
 			endInRun = runLen

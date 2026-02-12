@@ -121,14 +121,14 @@ func diffRecursive(a, b reflect.Value, visited map[visitKey]bool, config *diffCo
 	if a.IsValid() && a.CanInterface() {
 		kind := a.Kind()
 		attemptDiffer := true
-		if kind == reflect.Interface || kind == reflect.Ptr {
+		if kind == reflect.Interface || kind == reflect.Pointer {
 			if a.IsNil() || b.IsNil() {
 				attemptDiffer = false
 			}
 		}
 
 		if attemptDiffer {
-			if kind == reflect.Struct || kind == reflect.Ptr {
+			if kind == reflect.Struct || kind == reflect.Pointer {
 				method := a.MethodByName("Diff")
 				if method.IsValid() && method.Type().NumIn() == 1 && method.Type().NumOut() == 2 {
 					if method.Type().In(0) == a.Type() &&
@@ -163,7 +163,7 @@ func diffRecursive(a, b reflect.Value, visited map[visitKey]bool, config *diffCo
 		reflect.Complex64, reflect.Complex128, reflect.String:
 		return &valuePatch{oldVal: deepCopyValue(a), newVal: deepCopyValue(b)}, nil
 
-	case reflect.Ptr:
+	case reflect.Pointer:
 		return diffPtr(a, b, visited, config, path)
 	case reflect.Interface:
 		return diffInterface(a, b, visited, config, path)
@@ -316,9 +316,9 @@ func diffMap(a, b reflect.Value, visited map[visitKey]bool, config *diffConfig, 
 		return &valuePatch{oldVal: deepCopyValue(a), newVal: deepCopyValue(b)}, nil
 	}
 
-	added := make(map[interface{}]reflect.Value)
-	removed := make(map[interface{}]reflect.Value)
-	modified := make(map[interface{}]diffPatch)
+	added := make(map[any]reflect.Value)
+	removed := make(map[any]reflect.Value)
+	modified := make(map[any]diffPatch)
 
 	iterA := a.MapRange()
 	for iterA.Next() {
@@ -482,7 +482,7 @@ func computeSliceEdits(a, b reflect.Value, aStart, aEnd, bStart, bEnd, keyField 
 		if hasKey {
 			k1 := v1
 			k2 := v2
-			if k1.Kind() == reflect.Ptr {
+			if k1.Kind() == reflect.Pointer {
 				if k1.IsNil() || k2.IsNil() {
 					return k1.IsNil() && k2.IsNil()
 				}
@@ -559,7 +559,7 @@ func computeSliceEdits(a, b reflect.Value, aStart, aEnd, bStart, bEnd, keyField 
 				}
 			} else {
 				if dp[i][j] == dp[i-1][j-1]+1 {
-					// Substitution (treated as Mod here for simplicity in Myers' but we 
+					// Substitution (treated as Mod here for simplicity in Myers' but we
 					// could also treat as Delete+Add).
 					p, _ := diffRecursive(vA, vB, make(map[visitKey]bool), &diffConfig{ignoredPaths: make(map[string]bool)}, "", false)
 					op := sliceOp{
@@ -600,7 +600,7 @@ func computeSliceEdits(a, b reflect.Value, aStart, aEnd, bStart, bEnd, keyField 
 			if hasKey && (bStart+j-2 >= 0) {
 				prevKey = extractKey(b.Index(bStart+j-2), keyField)
 			}
-			
+
 			op := sliceOp{
 				Kind:    OpAdd,
 				Index:   aStart + i,

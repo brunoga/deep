@@ -35,7 +35,7 @@ func TestClock_Now(t *testing.T) {
 func TestClock_Update(t *testing.T) {
 	c := NewClock("node1")
 	remote := HLC{WallTime: time.Now().UnixNano() + 1000000, Logical: 5, NodeID: "node2"}
-	
+
 	c.Update(remote)
 	local := c.Now()
 
@@ -54,7 +54,7 @@ func TestHLC_String(t *testing.T) {
 
 func TestHLC_CompareMore(t *testing.T) {
 	h1 := HLC{WallTime: 100, Logical: 1, NodeID: "A"}
-	
+
 	cases := []struct {
 		h2       HLC
 		expected int
@@ -76,7 +76,7 @@ func TestHLC_CompareMore(t *testing.T) {
 
 func TestClock_UpdateMore(t *testing.T) {
 	c := NewClock("L")
-	
+
 	// Remote time in future
 	remote := HLC{WallTime: time.Now().Add(time.Hour).UnixNano(), Logical: 5, NodeID: "R"}
 	c.Update(remote)

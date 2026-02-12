@@ -14,7 +14,8 @@ type GameWorld struct {
 }
 
 type Player struct {
-	X, Y int    `json:"x"`
+	X    int    `json:"x"`
+	Y    int    `json:"y"`
 	Name string `json:"name"`
 }
 

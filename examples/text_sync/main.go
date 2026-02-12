@@ -80,15 +80,15 @@ func main() {
 
 	// Sync
 	fmt.Println("\n--- Syncing ---")
-	
+
 	// A receives B's insertion
 	docA.ApplyDelta(deltaB1)
 	fmt.Printf("Doc A (after B): %s\n", docA.View())
-	
+
 	// B receives A's appending
 	docB.ApplyDelta(deltaA2)
 	fmt.Printf("Doc B (after A): %s\n", docB.View())
-	
+
 	if docA.View().String() == docB.View().String() {
 		fmt.Println("SUCCESS: Documents converged!")
 	} else {
@@ -97,7 +97,7 @@ func main() {
 
 	// More complex: Interleaved insertion
 	fmt.Println("\n--- Interleaved Insertion (Yjs style) ---")
-	
+
 	// A inserts "X" after B1
 	deltaA3 := docA.Edit(func(d *Document) {
 		idx := -1
@@ -111,7 +111,7 @@ func main() {
 			d.Text = append(d.Text[:idx+1], append([]Char{{ID: "A12", Value: "X"}}, d.Text[idx+1:]...)...)
 		}
 	})
-	
+
 	// B inserts Y after B1
 	deltaB2 := docB.Edit(func(d *Document) {
 		idx := -1
@@ -125,13 +125,13 @@ func main() {
 			d.Text = append(d.Text[:idx+1], append([]Char{{ID: "B2", Value: "Y"}}, d.Text[idx+1:]...)...)
 		}
 	})
-	
+
 	docA.ApplyDelta(deltaB2)
 	docB.ApplyDelta(deltaA3)
-	
+
 	fmt.Printf("Doc A: %s\n", docA.View())
 	fmt.Printf("Doc B: %s\n", docB.View())
-	
+
 	if docA.View().String() == docB.View().String() {
 		fmt.Println("SUCCESS: Converged (interleaved)!")
 	} else {

@@ -30,10 +30,10 @@ func TestKeyedSlice_Basic(t *testing.T) {
 	// 0: t1 -> t2 (replace)
 	// 1: t2 -> t1 (replace)
 	// Or Del/Add.
-	
+
 	// With keyed alignment, it should see that t2 is the same entity even if it moved
 	// (within the limits of Myers').
-	
+
 	patch.Apply(&a)
 
 	if len(a) != 2 {
