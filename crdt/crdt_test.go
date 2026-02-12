@@ -3,6 +3,8 @@ package crdt
 import (
 	"reflect"
 	"testing"
+
+	"github.com/brunoga/deep/v2"
 )
 
 type TestUser struct {
@@ -31,6 +33,28 @@ func TestCRDT_EditDelta(t *testing.T) {
 	nodeB.ApplyDelta(delta)
 	if nodeB.View().Name != "Alice Mod" {
 		t.Error("ApplyDelta failed to update remote value")
+	}
+}
+
+func TestCRDT_CreateDelta(t *testing.T) {
+	node := NewCRDT(TestUser{ID: 1, Name: "Old"}, "node1")
+
+	// Manually create a patch using deep.Diff
+	patch := deep.Diff(node.Value, TestUser{ID: 1, Name: "New"})
+	
+	// Use the new helper to wrap it into a Delta and update local state
+	delta := node.CreateDelta(patch)
+
+	if node.Value.Name != "New" {
+		t.Errorf("expected New, got %s", node.Value.Name)
+	}
+
+	if delta.Timestamp.Logical != 0 {
+		t.Errorf("expected logical clock 0, got %d", delta.Timestamp.Logical)
+	}
+
+	if clock, ok := node.Clocks["Name"]; !ok || clock != delta.Timestamp {
+		t.Errorf("metadata clock not updated correctly")
 	}
 }
 

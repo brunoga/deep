@@ -58,20 +58,7 @@ func (c *CRDT[T]) Edit(fn func(*T)) Delta[T] {
 	}
 
 	now := c.Clock.Now()
-
-	// Update local clocks using Patch.Walk
-	patch.Walk(func(path string, op deep.OpKind, old, new any) error {
-		p := path
-		if p == "" {
-			p = "<root>"
-		}
-		if op == deep.OpRemove {
-			c.Tombstones[p] = now
-		} else {
-			c.Clocks[p] = now
-		}
-		return nil
-	})
+	c.updateMetadataLocked(patch, now)
 
 	c.Value = workingCopy
 
@@ -79,6 +66,43 @@ func (c *CRDT[T]) Edit(fn func(*T)) Delta[T] {
 		Patch:     patch,
 		Timestamp: now,
 	}
+}
+
+// CreateDelta takes an existing patch, applies it to the local value,
+// updates local metadata, and returns a Delta. Use this if you have
+// already generated a patch manually.
+func (c *CRDT[T]) CreateDelta(patch deep.Patch[T]) Delta[T] {
+	if patch == nil {
+		return Delta[T]{}
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	now := c.Clock.Now()
+	c.updateMetadataLocked(patch, now)
+
+	patch.Apply(&c.Value)
+
+	return Delta[T]{
+		Patch:     patch,
+		Timestamp: now,
+	}
+}
+
+func (c *CRDT[T]) updateMetadataLocked(patch deep.Patch[T], ts hlc.HLC) {
+	patch.Walk(func(path string, op deep.OpKind, old, new any) error {
+		p := path
+		if p == "" {
+			p = "<root>"
+		}
+		if op == deep.OpRemove {
+			c.Tombstones[p] = ts
+		} else {
+			c.Clocks[p] = ts
+		}
+		return nil
+	})
 }
 
 // ApplyDelta applies a delta using LWW resolution.
