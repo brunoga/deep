@@ -430,8 +430,11 @@ type dummyPatch struct{ patchMetadata }
 
 func (p *dummyPatch) apply(root, v reflect.Value)                           {}
 func (p *dummyPatch) applyChecked(root, v reflect.Value, strict bool) error { return nil }
-func (p *dummyPatch) reverse() diffPatch                                    { return p }
-func (p *dummyPatch) format(indent int) string                              { return "" }
+func (p *dummyPatch) applyResolved(root, v reflect.Value, path string, resolver ConflictResolver) error {
+	return nil
+}
+func (p *dummyPatch) reverse() diffPatch       { return p }
+func (p *dummyPatch) format(indent int) string { return "" }
 func (p *dummyPatch) walk(path string, fn func(path string, op OpKind, old, new any) error) error {
 	return nil
 }

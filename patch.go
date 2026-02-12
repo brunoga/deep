@@ -55,6 +55,10 @@ type Patch[T any] interface {
 	// 3. Any local per-field conditions must evaluate to true.
 	ApplyChecked(v *T) error
 
+	// ApplyResolved applies the patch using a custom ConflictResolver.
+	// This is used for convergent synchronization (CRDTs).
+	ApplyResolved(v *T, r ConflictResolver) error
+
 	// Walk calls fn for every operation in the patch.
 	// The path is a Go-style dot-notation path (e.g. "Field.SubField[0]").
 	// If fn returns an error, walking stops and that error is returned.
@@ -123,6 +127,15 @@ func (p *typedPatch[T]) ApplyChecked(v *T) error {
 
 	rv := reflect.ValueOf(v).Elem()
 	return p.inner.applyChecked(reflect.ValueOf(v), rv, p.strict)
+}
+
+func (p *typedPatch[T]) ApplyResolved(v *T, r ConflictResolver) error {
+	if p.inner == nil {
+		return nil
+	}
+
+	rv := reflect.ValueOf(v).Elem()
+	return p.inner.applyResolved(reflect.ValueOf(v), rv, "", r)
 }
 
 func (p *typedPatch[T]) Walk(fn func(path string, op OpKind, old, new any) error) error {

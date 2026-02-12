@@ -122,6 +122,8 @@ func marshalDiffPatch(p diffPatch) (any, error) {
 				"i": op.Index,
 				"v": valueToInterface(op.Val),
 				"p": p,
+				"y": op.Key,
+				"r": op.PrevKey,
 			})
 		}
 		return makeSurrogate("slice", map[string]any{
@@ -364,10 +366,12 @@ func convertFromSurrogate(s any) (diffPatch, error) {
 			}
 
 			ops = append(ops, sliceOp{
-				Kind:  OpKind(int(kind)),
-				Index: int(index),
-				Val:   interfaceToValue(o["v"]),
-				Patch: p,
+				Kind:    OpKind(int(kind)),
+				Index:   int(index),
+				Val:     interfaceToValue(o["v"]),
+				Patch:   p,
+				Key:     o["y"],
+				PrevKey: o["r"],
 			})
 		}
 		return &slicePatch{
