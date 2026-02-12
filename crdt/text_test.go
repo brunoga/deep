@@ -68,6 +68,33 @@ func TestText_Delete(t *testing.T) {
 	if len(text) != 2 {
 		t.Errorf("expected 2 runs, got %d", len(text))
 	}
+
+	// 3. Edge cases
+	// Delete from empty
+	empty := Text{}.Delete(0, 5)
+	if len(empty) != 0 {
+		t.Error("expected empty result")
+	}
+
+	// Delete length 0
+	text2 := text.Delete(0, 0)
+	if len(text2) != len(text) {
+		t.Error("expected no change for length 0")
+	}
+
+	// Out of bounds (starts after end)
+	text3 := text.Delete(10, 5)
+	if text3.String() != text.String() {
+		t.Error("expected no change for out of bounds delete")
+	}
+
+	// Delete across multiple runs
+	multi := Text{}.Insert(0, "ABC", clock).Insert(3, "DEF", clock).Insert(6, "GHI", clock)
+	// "ABCDEFGHI" -> delete "CDEFG" (index 2, length 5) -> "ABHI"
+	multi = multi.Delete(2, 5)
+	if multi.String() != "ABHI" {
+		t.Errorf("expected ABHI, got %s", multi.String())
+	}
 }
 
 func TestText_CRDT_Convergence(t *testing.T) {

@@ -748,3 +748,30 @@ func TestBuilder_Log(t *testing.T) {
 		t.Errorf("Unexpected JSON for log: %s", string(jsonBytes))
 	}
 }
+
+func TestBuilder_Put(t *testing.T) {
+	type State struct {
+		Data map[string]int
+	}
+	b := NewBuilder[State]()
+	node, _ := b.Root().Navigate("Data")
+	node.Put(map[string]int{"a": 1})
+	p, _ := b.Build()
+
+	s := State{Data: make(map[string]int)}
+	p.Apply(&s)
+	if s.Data["a"] != 1 {
+		t.Errorf("expected 1, got %d", s.Data["a"])
+	}
+}
+
+func TestPatch_ToJSONPatch_ReadOnly(t *testing.T) {
+	patch := Diff(1, 2)
+	ro := &readOnlyPatch{inner: patch.(patchUnwrapper).unwrap()}
+	
+	// readOnlyPatch toJSONPatch currently returns nil
+	json := ro.toJSONPatch("/")
+	if json != nil {
+		t.Errorf("expected nil for readOnly toJSONPatch")
+	}
+}

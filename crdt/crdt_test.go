@@ -103,3 +103,32 @@ func TestCRDT_Conflict(t *testing.T) {
 		t.Errorf("LWW failed: expected 'Bob', got '%s'", nodeA.View().Name)
 	}
 }
+
+func TestCRDT_JSON(t *testing.T) {
+	node := NewCRDT(TestUser{ID: 1, Name: "Initial"}, "node1")
+	node.Edit(func(u *TestUser) {
+		u.Name = "Modified"
+	})
+
+	data, err := node.MarshalJSON()
+	if err != nil {
+		t.Fatalf("MarshalJSON failed: %v", err)
+	}
+
+	newNode := &CRDT[TestUser]{}
+	if err := newNode.UnmarshalJSON(data); err != nil {
+		t.Fatalf("UnmarshalJSON failed: %v", err)
+	}
+
+	if newNode.NodeID != node.NodeID {
+		t.Errorf("expected NodeID %s, got %s", node.NodeID, newNode.NodeID)
+	}
+
+	if newNode.Value.Name != "Modified" {
+		t.Errorf("expected Name Modified, got %s", newNode.Value.Name)
+	}
+
+	if clock, ok := newNode.Clocks["Name"]; !ok || clock != node.Clocks["Name"] {
+		t.Errorf("clocks not correctly restored")
+	}
+}
