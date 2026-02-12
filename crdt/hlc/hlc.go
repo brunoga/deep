@@ -66,6 +66,11 @@ func NewClock(nodeID string) *Clock {
 
 // Now returns the current HLC timestamp.
 func (c *Clock) Now() HLC {
+	return c.Reserve(1)
+}
+
+// Reserve returns the current HLC timestamp and reserves n logical ticks.
+func (c *Clock) Reserve(n int) HLC {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -74,11 +79,11 @@ func (c *Clock) Now() HLC {
 	if physNow > c.Latest.WallTime {
 		c.Latest.WallTime = physNow
 		c.Latest.Logical = 0
-	} else {
-		c.Latest.Logical++
 	}
 
-	return c.Latest
+	start := c.Latest
+	c.Latest.Logical += int32(n)
+	return start
 }
 
 // Update updates the local clock based on a remote timestamp.
