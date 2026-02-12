@@ -151,7 +151,7 @@ func copyInternal(v reflect.Value, config *copyConfig) (reflect.Value, error) {
 		pointersMapPool.Put(pointers)
 	}()
 
-	dst, err := recursiveCopy(v, pointers, config, "")
+	dst, err := recursiveCopy(v, pointers, config, "", false)
 	if err != nil {
 		return reflect.Value{}, err
 	}
@@ -160,12 +160,16 @@ func copyInternal(v reflect.Value, config *copyConfig) (reflect.Value, error) {
 }
 
 func recursiveCopy(v reflect.Value, pointers pointersMap,
-	config *copyConfig, path string) (reflect.Value, error) {
+	config *copyConfig, path string, atomic bool) (reflect.Value, error) {
 	if config.ignoredPaths != nil && config.ignoredPaths[path] {
 		return reflect.Zero(v.Type()), nil
 	}
 
 	kind := v.Kind()
+
+	if atomic {
+		return v, nil
+	}
 
 	// Fast path for basic types.
 	switch kind {
@@ -197,6 +201,13 @@ func recursiveCopy(v reflect.Value, pointers pointersMap,
 	}
 
 	// Handle Copier interface.
+	// NOTE: We use reflection to detect and call the Copy method because Copier[T]
+	// is a generic interface. Since T is the concrete type implementing the
+	// interface, we cannot easily perform a type assertion here without knowing
+	// T at each step of the recursion. Furthermore, Go reflection doesn't allow
+	// dynamic instantiation of generic interfaces. Searching for the method by
+	// name and signature provides a flexible "duck-typing" approach that
+	// preserves type safety for the user.
 	if v.IsValid() && v.CanInterface() {
 		attemptCopier := true
 		if kind == reflect.Interface || kind == reflect.Ptr {
@@ -264,7 +275,7 @@ func recursiveCopyArray(v reflect.Value, pointers pointersMap,
 			indexPath = path + "[" + strconv.Itoa(i) + "]"
 		}
 		elem := v.Index(i)
-		elemDst, err := recursiveCopy(elem, pointers, config, indexPath)
+		elemDst, err := recursiveCopy(elem, pointers, config, indexPath, false)
 		if err != nil {
 			return reflect.Value{}, err
 		}
@@ -281,7 +292,7 @@ func recursiveCopyInterface(v reflect.Value, pointers pointersMap,
 		return v, nil
 	}
 
-	return recursiveCopy(v.Elem(), pointers, config, path)
+	return recursiveCopy(v.Elem(), pointers, config, path, false)
 }
 
 func recursiveCopyMap(v reflect.Value, pointers pointersMap,
@@ -304,7 +315,7 @@ func recursiveCopyMap(v reflect.Value, pointers pointersMap,
 		}
 
 		elem := v.MapIndex(key)
-		elemDst, err := recursiveCopy(elem, pointers, config, keyPath)
+		elemDst, err := recursiveCopy(elem, pointers, config, keyPath, false)
 		if err != nil {
 			return reflect.Value{}, err
 		}
@@ -333,7 +344,7 @@ func recursiveCopyPtr(v reflect.Value, pointers pointersMap,
 	pointers[key] = dst
 
 	elem := v.Elem()
-	elemDst, err := recursiveCopy(elem, pointers, config, path)
+	elemDst, err := recursiveCopy(elem, pointers, config, path, false)
 	if err != nil {
 		return reflect.Value{}, err
 	}
@@ -358,7 +369,7 @@ func recursiveCopySlice(v reflect.Value, pointers pointersMap,
 			indexPath = path + "[" + strconv.Itoa(i) + "]"
 		}
 		elem := v.Index(i)
-		elemDst, err := recursiveCopy(elem, pointers, config, indexPath)
+		elemDst, err := recursiveCopy(elem, pointers, config, indexPath, false)
 		if err != nil {
 			return reflect.Value{}, err
 		}
@@ -379,8 +390,14 @@ func recursiveCopyStruct(v reflect.Value, pointers pointersMap,
 
 	hasIgnoredPaths := config.ignoredPaths != nil
 	for i := 0; i < v.NumField(); i++ {
+		field := v.Type().Field(i)
+		tag := parseTag(field)
+		if tag.ignore {
+			continue
+		}
+
 		var fieldPath string
-		fieldName := v.Type().Field(i).Name
+		fieldName := field.Name
 		if hasIgnoredPaths {
 			if path != "" {
 				fieldPath = path + "." + fieldName
@@ -395,7 +412,7 @@ func recursiveCopyStruct(v reflect.Value, pointers pointersMap,
 			unsafe.DisableRO(&elem)
 		}
 
-		elemDst, err := recursiveCopy(elem, pointers, config, fieldPath)
+		elemDst, err := recursiveCopy(elem, pointers, config, fieldPath, tag.atomic)
 		if err != nil {
 			return reflect.Value{}, err
 		}
@@ -436,7 +453,7 @@ func deepCopyValue(v reflect.Value) reflect.Value {
 		rv = pv.Elem()
 	}
 
-	copied, err := recursiveCopy(rv, pointers, config, "")
+	copied, err := recursiveCopy(rv, pointers, config, "", false)
 	if err != nil {
 		return v
 	}

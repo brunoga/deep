@@ -378,14 +378,14 @@ func (n *Node) Index(i int) (*Node, error) {
 	}
 	var modOp *sliceOp
 	for j := range sp.ops {
-		if sp.ops[j].Index == i && sp.ops[j].Kind == opMod {
+		if sp.ops[j].Index == i && sp.ops[j].Kind == OpReplace {
 			modOp = &sp.ops[j]
 			break
 		}
 	}
 	if modOp == nil {
 		sp.ops = append(sp.ops, sliceOp{
-			Kind:  opMod,
+			Kind:  OpReplace,
 			Index: i,
 		})
 		modOp = &sp.ops[len(sp.ops)-1]
@@ -485,7 +485,7 @@ func (n *Node) Add(i int, val any) error {
 		n.current = sp
 	}
 	sp.ops = append(sp.ops, sliceOp{
-		Kind:  opAdd,
+		Kind:  OpAdd,
 		Index: i,
 		Val:   deepCopyValue(v),
 	})
@@ -510,7 +510,7 @@ func (n *Node) Delete(keyOrIndex any, oldVal any) error {
 			n.current = sp
 		}
 		sp.ops = append(sp.ops, sliceOp{
-			Kind:  opDel,
+			Kind:  OpRemove,
 			Index: i,
 			Val:   deepCopyValue(vOld),
 		})

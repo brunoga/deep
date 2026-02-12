@@ -1,6 +1,7 @@
 package deep
 
 import (
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
@@ -16,6 +17,7 @@ type diffPatch interface {
 	applyChecked(root, v reflect.Value, strict bool) error
 	reverse() diffPatch
 	format(indent int) string
+	walk(path string, fn func(path string, op OpKind, old, new any) error) error
 	setCondition(cond any)
 	setIfCondition(cond any)
 	setUnlessCondition(cond any)
@@ -153,6 +155,20 @@ func (p *valuePatch) reverse() diffPatch {
 	return &valuePatch{oldVal: p.newVal, newVal: p.oldVal, patchMetadata: p.patchMetadata}
 }
 
+func (p *valuePatch) walk(path string, fn func(path string, op OpKind, old, new any) error) error {
+	fullPath := path
+	if fullPath == "" {
+		fullPath = "/"
+	}
+	op := OpReplace
+	if !p.newVal.IsValid() {
+		op = OpRemove
+	} else if !p.oldVal.IsValid() {
+		op = OpAdd
+	}
+	return fn(fullPath, op, valueToInterface(p.oldVal), valueToInterface(p.newVal))
+}
+
 func (p *valuePatch) format(indent int) string {
 	if !p.oldVal.IsValid() && !p.newVal.IsValid() {
 		return "nil"
@@ -219,6 +235,14 @@ func (p *testPatch) reverse() diffPatch {
 	return p // Reversing a test is still a test
 }
 
+func (p *testPatch) walk(path string, fn func(path string, op OpKind, old, new any) error) error {
+	fullPath := path
+	if fullPath == "" {
+		fullPath = "/"
+	}
+	return fn(fullPath, OpTest, nil, valueToInterface(p.expected))
+}
+
 func (p *testPatch) format(indent int) string {
 	if p.expected.IsValid() {
 		return fmt.Sprintf("Test(%v)", p.expected)
@@ -272,6 +296,14 @@ func (p *copyPatch) applyChecked(root, v reflect.Value, strict bool) error {
 func (p *copyPatch) reverse() diffPatch {
 	// Reversing a copy is a removal of the target.
 	return &valuePatch{newVal: reflect.Value{}}
+}
+
+func (p *copyPatch) walk(path string, fn func(path string, op OpKind, old, new any) error) error {
+	fullPath := path
+	if fullPath == "" {
+		fullPath = "/"
+	}
+	return fn(fullPath, OpCopy, p.from, nil)
 }
 
 func (p *copyPatch) format(indent int) string {
@@ -337,6 +369,14 @@ func (p *movePatch) reverse() diffPatch {
 	return &movePatch{from: p.path, path: p.from}
 }
 
+func (p *movePatch) walk(path string, fn func(path string, op OpKind, old, new any) error) error {
+	fullPath := path
+	if fullPath == "" {
+		fullPath = "/"
+	}
+	return fn(fullPath, OpMove, p.from, nil)
+}
+
 func (p *movePatch) format(indent int) string {
 	return fmt.Sprintf("Move(from: %s)", p.from)
 }
@@ -375,6 +415,14 @@ func (p *logPatch) applyChecked(root, v reflect.Value, strict bool) error {
 
 func (p *logPatch) reverse() diffPatch {
 	return p // Reversing a log is still a log
+}
+
+func (p *logPatch) walk(path string, fn func(path string, op OpKind, old, new any) error) error {
+	fullPath := path
+	if fullPath == "" {
+		fullPath = "/"
+	}
+	return fn(fullPath, OpLog, nil, p.message)
 }
 
 func (p *logPatch) format(indent int) string {
@@ -426,6 +474,10 @@ func (p *ptrPatch) reverse() diffPatch {
 		patchMetadata: p.patchMetadata,
 		elemPatch:     p.elemPatch.reverse(),
 	}
+}
+
+func (p *ptrPatch) walk(path string, fn func(path string, op OpKind, old, new any) error) error {
+	return p.elemPatch.walk(path, fn)
 }
 
 func (p *ptrPatch) format(indent int) string {
@@ -482,6 +534,10 @@ func (p *interfacePatch) reverse() diffPatch {
 		patchMetadata: p.patchMetadata,
 		elemPatch:     p.elemPatch.reverse(),
 	}
+}
+
+func (p *interfacePatch) walk(path string, fn func(path string, op OpKind, old, new any) error) error {
+	return p.elemPatch.walk(path, fn)
 }
 
 func (p *interfacePatch) format(indent int) string {
@@ -545,6 +601,19 @@ func (p *structPatch) reverse() diffPatch {
 		patchMetadata: p.patchMetadata,
 		fields:        newFields,
 	}
+}
+
+func (p *structPatch) walk(path string, fn func(path string, op OpKind, old, new any) error) error {
+	for name, patch := range p.fields {
+		fullPath := path + "." + name
+		if path == "" {
+			fullPath = name
+		}
+		if err := patch.walk(fullPath, fn); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (p *structPatch) format(indent int) string {
@@ -620,6 +689,16 @@ func (p *arrayPatch) reverse() diffPatch {
 		patchMetadata: p.patchMetadata,
 		indices:       newIndices,
 	}
+}
+
+func (p *arrayPatch) walk(path string, fn func(path string, op OpKind, old, new any) error) error {
+	for i, patch := range p.indices {
+		fullPath := fmt.Sprintf("%s[%d]", path, i)
+		if err := patch.walk(fullPath, fn); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (p *arrayPatch) format(indent int) string {
@@ -749,6 +828,37 @@ func (p *mapPatch) reverse() diffPatch {
 	}
 }
 
+func (p *mapPatch) walk(path string, fn func(path string, op OpKind, old, new any) error) error {
+	for k, val := range p.added {
+		fullPath := fmt.Sprintf("%s.%v", path, k)
+		if path == "" {
+			fullPath = fmt.Sprintf("%v", k)
+		}
+		if err := fn(fullPath, OpAdd, nil, valueToInterface(val)); err != nil {
+			return err
+		}
+	}
+	for k, oldVal := range p.removed {
+		fullPath := fmt.Sprintf("%s.%v", path, k)
+		if path == "" {
+			fullPath = fmt.Sprintf("%v", k)
+		}
+		if err := fn(fullPath, OpRemove, valueToInterface(oldVal), nil); err != nil {
+			return err
+		}
+	}
+	for k, patch := range p.modified {
+		fullPath := fmt.Sprintf("%s.%v", path, k)
+		if path == "" {
+			fullPath = fmt.Sprintf("%v", k)
+		}
+		if err := patch.walk(fullPath, fn); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (p *mapPatch) format(indent int) string {
 	var b strings.Builder
 	b.WriteString("Map{\n")
@@ -791,17 +901,10 @@ func (p *mapPatch) toJSONPatch(path string) []map[string]any {
 	return ops
 }
 
-type opKind int
-
-const (
-	opAdd opKind = iota
-	opDel
-	opMod
-)
-
 type sliceOp struct {
-	Kind  opKind
+	Kind  OpKind
 	Index int
+	From  int // For OpMove
 	Val   reflect.Value
 	Patch diffPatch
 }
@@ -825,11 +928,11 @@ func (p *slicePatch) apply(root, v reflect.Value) {
 			curIdx = op.Index
 		}
 		switch op.Kind {
-		case opAdd:
+		case OpAdd:
 			newSlice = reflect.Append(newSlice, convertValue(op.Val, v.Type().Elem()))
-		case opDel:
+		case OpRemove:
 			curIdx++
-		case opMod:
+		case OpReplace:
 			if curIdx < v.Len() {
 				elem := reflect.New(v.Type().Elem()).Elem()
 				elem.Set(deepCopyValue(v.Index(curIdx)))
@@ -866,9 +969,9 @@ func (p *slicePatch) applyChecked(root, v reflect.Value, strict bool) error {
 			curIdx = op.Index
 		}
 		switch op.Kind {
-		case opAdd:
+		case OpAdd:
 			newSlice = reflect.Append(newSlice, convertValue(op.Val, v.Type().Elem()))
-		case opDel:
+		case OpRemove:
 			if curIdx >= v.Len() {
 				return fmt.Errorf("slice deletion index %d out of bounds", curIdx)
 			}
@@ -880,7 +983,7 @@ func (p *slicePatch) applyChecked(root, v reflect.Value, strict bool) error {
 				}
 			}
 			curIdx++
-		case opMod:
+		case OpReplace:
 			if curIdx >= v.Len() {
 				return fmt.Errorf("slice modification index %d out of bounds", curIdx)
 			}
@@ -909,23 +1012,23 @@ func (p *slicePatch) reverse() diffPatch {
 		curB += delta
 		curA = op.Index
 		switch op.Kind {
-		case opAdd:
+		case OpAdd:
 			revOps = append(revOps, sliceOp{
-				Kind:  opDel,
+				Kind:  OpRemove,
 				Index: curB,
 				Val:   op.Val,
 			})
 			curB++
-		case opDel:
+		case OpRemove:
 			revOps = append(revOps, sliceOp{
-				Kind:  opAdd,
+				Kind:  OpAdd,
 				Index: curB,
 				Val:   op.Val,
 			})
 			curA++
-		case opMod:
+		case OpReplace:
 			revOps = append(revOps, sliceOp{
-				Kind:  opMod,
+				Kind:  OpReplace,
 				Index: curB,
 				Patch: op.Patch.reverse(),
 			})
@@ -939,17 +1042,44 @@ func (p *slicePatch) reverse() diffPatch {
 	}
 }
 
+func (p *slicePatch) walk(path string, fn func(path string, op OpKind, old, new any) error) error {
+	for _, op := range p.ops {
+		fullPath := fmt.Sprintf("%s[%d]", path, op.Index)
+		switch op.Kind {
+		case OpAdd:
+			if err := fn(fullPath, OpAdd, nil, valueToInterface(op.Val)); err != nil {
+				return err
+			}
+		case OpRemove:
+			if err := fn(fullPath, OpRemove, valueToInterface(op.Val), nil); err != nil {
+				return err
+			}
+		case OpReplace:
+			if op.Patch != nil {
+				if err := op.Patch.walk(fullPath, fn); err != nil {
+					return err
+				}
+			}
+		case OpMove:
+			if err := fn(fullPath, OpMove, op.From, nil); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func (p *slicePatch) format(indent int) string {
 	var b strings.Builder
 	b.WriteString("Slice{\n")
 	prefix := strings.Repeat("  ", indent+1)
 	for _, op := range p.ops {
 		switch op.Kind {
-		case opAdd:
+		case OpAdd:
 			b.WriteString(fmt.Sprintf("%s+ [%d]: %v\n", prefix, op.Index, op.Val))
-		case opDel:
+		case OpRemove:
 			b.WriteString(fmt.Sprintf("%s- [%d]\n", prefix, op.Index))
-		case opMod:
+		case OpReplace:
 			b.WriteString(fmt.Sprintf("%s  [%d]: %s\n", prefix, op.Index, op.Patch.format(indent+1)))
 		}
 	}
@@ -964,17 +1094,17 @@ func (p *slicePatch) toJSONPatch(path string) []map[string]any {
 	for _, op := range p.ops {
 		fullPath := fmt.Sprintf("%s/%d", path, op.Index+shift)
 		switch op.Kind {
-		case opAdd:
+		case OpAdd:
 			jsonOp := map[string]any{"op": "add", "path": fullPath, "value": valueToInterface(op.Val)}
 			addConditionsToOp(jsonOp, p)
 			ops = append(ops, jsonOp)
 			shift++
-		case opDel:
+		case OpRemove:
 			jsonOp := map[string]any{"op": "remove", "path": fullPath}
 			addConditionsToOp(jsonOp, p)
 			ops = append(ops, jsonOp)
 			shift--
-		case opMod:
+		case OpReplace:
 			subOps := op.Patch.toJSONPatch(fullPath)
 			for _, sop := range subOps {
 				addConditionsToOp(sop, p)
@@ -1119,5 +1249,143 @@ func conditionToPredicate(c any) any {
 		return map[string]any{"op": "not", "apply": []any{sub}}
 	}
 
+	return nil
+}
+
+// customDiffPatch wraps an exported Patch[T] into the internal diffPatch interface.
+type customDiffPatch struct {
+	patchMetadata
+	patch any // This is a Patch[T]
+}
+
+func (p *customDiffPatch) apply(root, v reflect.Value) {
+	if !v.CanAddr() {
+		return
+	}
+	method := reflect.ValueOf(p.patch).MethodByName("Apply")
+	method.Call([]reflect.Value{v.Addr()})
+}
+
+func (p *customDiffPatch) applyChecked(root, v reflect.Value, strict bool) error {
+	if err := checkConditions(p, root, v); err != nil {
+		if err == ErrConditionSkipped {
+			return nil
+		}
+		return err
+	}
+	if !v.CanAddr() {
+		return fmt.Errorf("cannot apply custom patch to non-addressable value")
+	}
+	method := reflect.ValueOf(p.patch).MethodByName("ApplyChecked")
+	results := method.Call([]reflect.Value{v.Addr()})
+	if !results[0].IsNil() {
+		return results[0].Interface().(error)
+	}
+	return nil
+}
+
+func (p *customDiffPatch) reverse() diffPatch {
+	method := reflect.ValueOf(p.patch).MethodByName("Reverse")
+	res := method.Call(nil)
+	return &customDiffPatch{
+		patchMetadata: p.patchMetadata,
+		patch:         res[0].Interface(),
+	}
+}
+
+func (p *customDiffPatch) walk(path string, fn func(path string, op OpKind, old, new any) error) error {
+	method := reflect.ValueOf(p.patch).MethodByName("Walk")
+	if !method.IsValid() {
+		return fmt.Errorf("custom patch does not support Walk")
+	}
+	// We need to wrap the user callback to handle the path correctly.
+	wrappedFn := func(subPath string, op OpKind, old, new any) error {
+		fullPath := path + subPath
+		if subPath != "" && subPath[0] != '[' && subPath[0] != '/' && path != "" {
+			fullPath = path + "." + subPath
+		}
+		return fn(fullPath, op, old, new)
+	}
+	results := method.Call([]reflect.Value{reflect.ValueOf(wrappedFn)})
+	if !results[0].IsNil() {
+		return results[0].Interface().(error)
+	}
+	return nil
+}
+
+func (p *customDiffPatch) format(indent int) string {
+	method := reflect.ValueOf(p.patch).MethodByName("String")
+	res := method.Call(nil)
+	return res[0].String()
+}
+
+func (p *customDiffPatch) toJSONPatch(path string) []map[string]any {
+	method := reflect.ValueOf(p.patch).MethodByName("ToJSONPatch")
+	res := method.Call(nil)
+	if !res[1].IsNil() {
+		return nil
+	}
+	data := res[0].Bytes()
+	var ops []map[string]any
+	if err := json.Unmarshal(data, &ops); err != nil {
+		return nil
+	}
+
+	if path == "" || path == "/" {
+		return ops
+	}
+
+	// Prepend path to each op's path.
+	for i := range ops {
+		pVal, ok := ops[i]["path"].(string)
+		if !ok {
+			continue
+		}
+		if pVal == "/" {
+			ops[i]["path"] = path
+		} else {
+			ops[i]["path"] = path + pVal
+		}
+	}
+
+	return ops
+}
+
+// readOnlyPatch wraps another patch and prevents it from being applied.
+type readOnlyPatch struct {
+	inner diffPatch
+}
+
+func (p *readOnlyPatch) apply(root, v reflect.Value) {
+	// No-op
+}
+
+func (p *readOnlyPatch) applyChecked(root, v reflect.Value, strict bool) error {
+	// No-op for actual modification, but we might want to check conditions?
+	// For now, let's just make it a no-op as it's readonly.
+	return nil
+}
+
+func (p *readOnlyPatch) reverse() diffPatch {
+	return &readOnlyPatch{inner: p.inner.reverse()}
+}
+
+func (p *readOnlyPatch) walk(path string, fn func(path string, op OpKind, old, new any) error) error {
+	return p.inner.walk(path, fn)
+}
+
+func (p *readOnlyPatch) format(indent int) string {
+	return fmt.Sprintf("ReadOnly(%s)", p.inner.format(indent))
+}
+
+func (p *readOnlyPatch) setCondition(cond any)       { p.inner.setCondition(cond) }
+func (p *readOnlyPatch) setIfCondition(cond any)     { p.inner.setIfCondition(cond) }
+func (p *readOnlyPatch) setUnlessCondition(cond any) { p.inner.setUnlessCondition(cond) }
+func (p *readOnlyPatch) conditions() (any, any, any) { return p.inner.conditions() }
+
+func (p *readOnlyPatch) toJSONPatch(path string) []map[string]any {
+	// For JSON Patch, we don't really have a way to say "don't apply this but keep it".
+	// Maybe we should just return empty?
+	// Actually, if it's readonly, we probably shouldn't even include it in the JSON patch.
 	return nil
 }

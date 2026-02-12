@@ -364,7 +364,7 @@ func convertFromSurrogate(s any) (diffPatch, error) {
 			}
 
 			ops = append(ops, sliceOp{
-				Kind:  opKind(int(kind)),
+				Kind:  OpKind(int(kind)),
 				Index: int(index),
 				Val:   interfaceToValue(o["v"]),
 				Patch: p,
