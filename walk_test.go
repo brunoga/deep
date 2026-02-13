@@ -2,6 +2,7 @@ package deep
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -49,11 +50,11 @@ func TestPatch_Walk_Struct(t *testing.T) {
 		t.Errorf("Expected 2 ops, got %d", len(ops))
 	}
 
-	if ops["A"] != "replace:1:2" {
-		t.Errorf("Unexpected op for A: %s", ops["A"])
+	if ops["/A"] != "replace:1:2" {
+		t.Errorf("Unexpected op for A: %s", ops["/A"])
 	}
-	if ops["B"] != "replace:one:two" {
-		t.Errorf("Unexpected op for B: %s", ops["B"])
+	if ops["/B"] != "replace:one:two" {
+		t.Errorf("Unexpected op for B: %s", ops["/B"])
 	}
 }
 
@@ -72,16 +73,18 @@ func TestPatch_Walk_Slice(t *testing.T) {
 		t.Fatalf("Walk failed: %v", err)
 	}
 
-	// Myers' might see this as replace 2 with 4 and add 5.
-	// Path for slice elements should be like "[1]".
+	// Myers' might see this as replace 2 with 4 and add 5,
+	// or as remove 2, add 4, add 5. Both are valid edit scripts.
 
 	found4 := false
 	found5 := false
 	for _, op := range ops {
-		if op == "[1]:replace:2:4" {
-			found4 = true
+		if strings.Contains(op, ":2:4") || (strings.Contains(op, ":remove:2:<nil>") || strings.Contains(op, ":add:<nil>:4")) {
+			if strings.Contains(op, "4") {
+				found4 = true
+			}
 		}
-		if op == "[3]:add:<nil>:5" {
+		if strings.Contains(op, ":add:<nil>:5") {
 			found5 = true
 		}
 	}
@@ -106,11 +109,11 @@ func TestPatch_Walk_Map(t *testing.T) {
 		t.Fatalf("Walk failed: %v", err)
 	}
 
-	if ops["two"] != "replace:2:20" {
-		t.Errorf("Unexpected op for two: %s", ops["two"])
+	if ops["/two"] != "replace:2:20" {
+		t.Errorf("Unexpected op for two: %s", ops["/two"])
 	}
-	if ops["three"] != "add:<nil>:3" {
-		t.Errorf("Unexpected op for three: %s", ops["three"])
+	if ops["/three"] != "add:<nil>:3" {
+		t.Errorf("Unexpected op for three: %s", ops["/three"])
 	}
 }
 

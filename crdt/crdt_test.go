@@ -3,6 +3,7 @@ package crdt
 import (
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/brunoga/deep/v2"
 )
@@ -53,7 +54,7 @@ func TestCRDT_CreateDelta(t *testing.T) {
 		t.Errorf("expected logical clock 0, got %d", delta.Timestamp.Logical)
 	}
 
-	if clock, ok := node.Clocks["Name"]; !ok || clock != delta.Timestamp {
+	if clock, ok := node.Clocks["/Name"]; !ok || clock != delta.Timestamp {
 		t.Errorf("metadata clock not updated correctly")
 	}
 }
@@ -96,6 +97,7 @@ func TestCRDT_Conflict(t *testing.T) {
 	// nodeA edits first
 	nodeA.Edit(func(u *TestUser) { u.Name = "Alice" })
 	// nodeB edits later (physically)
+	time.Sleep(2 * time.Millisecond)
 	nodeB.Edit(func(u *TestUser) { u.Name = "Bob" })
 
 	nodeA.Merge(nodeB)
@@ -128,7 +130,7 @@ func TestCRDT_JSON(t *testing.T) {
 		t.Errorf("expected Name Modified, got %s", newNode.Value.Name)
 	}
 
-	if clock, ok := newNode.Clocks["Name"]; !ok || clock != node.Clocks["Name"] {
+	if clock, ok := newNode.Clocks["/Name"]; !ok || clock != node.Clocks["/Name"] {
 		t.Errorf("clocks not correctly restored")
 	}
 }
