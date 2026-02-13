@@ -26,7 +26,7 @@ This document tracks planned features and improvements to make the `deep` librar
 
 ## 5. Performance & Optimization
 - [x] **Reflection Cache**: Cache structural metadata (field offsets, types) to reduce reflection overhead.
-- [ ] **Zero-Allocation Diffs**: Explore pooling and pre-allocation strategies for large structural diffs.
+- [x] **Zero-Allocation Diffs**: Use pooling and lazy allocation to minimize GC pressure.
 - [ ] **SIMD Comparisons**: Investigate using SIMD for basic type comparisons in large slices/arrays.
 
 ## 6. JSON Patch & RFC Interoperability
