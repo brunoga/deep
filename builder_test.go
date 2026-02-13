@@ -268,19 +268,19 @@ func TestBuilder_Exhaustive(t *testing.T) {
 	t.Run("NavigationErrors", func(t *testing.T) {
 		type S struct{ A int }
 		b := NewBuilder[S]()
-		_, err := b.Root().navigate("NonExistent")
+		_, err := b.Root().Navigate("NonExistent")
 		if err == nil {
 			t.Error("Expected error for non-existent field navigation")
 		}
 
 		type M struct{ Data map[int]int }
 		b2 := NewBuilder[M]()
-		_, err = b2.Root().navigate("Data.not_an_int")
+		_, err = b2.Root().Navigate("Data.not_an_int")
 		if err == nil {
 			t.Error("Expected error for invalid map key type navigation")
 		}
 
-		_, err = b2.Root().navigate("Data[0]") // Index on map
+		_, err = b2.Root().Navigate("Data[0]") // Index on map
 		if err == nil {
 			t.Error("Expected error for index navigation on map")
 		}

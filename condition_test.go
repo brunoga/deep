@@ -132,20 +132,20 @@ func TestPath_Errors_Exhaustive(t *testing.T) {
 	}
 
 	// Navigate invalid index
-	_, _, err = Path("").navigate(reflect.ValueOf([]int{1}), []pathPart{{index: 5, isIndex: true}})
+	_, _, err = Path("").Navigate(reflect.ValueOf([]int{1}), []pathPart{{index: 5, isIndex: true}})
 	if err == nil {
 		t.Error("Expected error index out of bounds")
 	}
 
 	// Navigate invalid map key type
 	m := map[float64]int{1.0: 1}
-	_, _, err = Path("").navigate(reflect.ValueOf(m), []pathPart{{key: "1"}})
+	_, _, err = Path("").Navigate(reflect.ValueOf(m), []pathPart{{key: "1"}})
 	if err == nil {
 		t.Error("Expected error unsupported map key")
 	}
 
 	// Navigate non-struct field
-	_, _, err = Path("").navigate(reflect.ValueOf(1), []pathPart{{key: "A"}})
+	_, _, err = Path("").Navigate(reflect.ValueOf(1), []pathPart{{key: "A"}})
 	if err == nil {
 		t.Error("Expected error non-struct field")
 	}

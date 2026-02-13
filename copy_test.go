@@ -616,7 +616,7 @@ func TestCopy_Struct_With_Any_Field(t *testing.T) {
 
 func TestCopySkipUnsupported(t *testing.T) {
 	src := func() {}
-	dst, err := CopySkipUnsupported(src)
+	dst, err := Copy(src, SkipUnsupported())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
