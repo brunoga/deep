@@ -618,12 +618,15 @@ func (d *Differ) diffSlice(a, b reflect.Value, path string, ctx *diffContext) (d
 		return nil, nil
 	}
 
-	ops := d.computeSliceEdits(a, b, midAStart, midAEnd, midBStart, midBEnd, keyField, hasKey, path, ctx)
+	ops, err := d.computeSliceEdits(a, b, midAStart, midAEnd, midBStart, midBEnd, keyField, hasKey, path, ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	return &slicePatch{ops: ops}, nil
 }
 
-func (d *Differ) computeSliceEdits(a, b reflect.Value, aStart, aEnd, bStart, bEnd, keyField int, hasKey bool, path string, ctx *diffContext) []sliceOp {
+func (d *Differ) computeSliceEdits(a, b reflect.Value, aStart, aEnd, bStart, bEnd, keyField int, hasKey bool, path string, ctx *diffContext) ([]sliceOp, error) {
 	n := aEnd - aStart
 	m := bEnd - bStart
 
@@ -672,10 +675,10 @@ func (d *Differ) computeSliceEdits(a, b reflect.Value, aStart, aEnd, bStart, bEn
 		}
 	}
 
-	return nil
+	return nil, nil
 }
 
-func (d *Differ) backtrackMyers(a, b reflect.Value, aStart, aEnd, bStart, bEnd, keyField int, hasKey bool, trace [][]int, path string, ctx *diffContext) []sliceOp {
+func (d *Differ) backtrackMyers(a, b reflect.Value, aStart, aEnd, bStart, bEnd, keyField int, hasKey bool, trace [][]int, path string, ctx *diffContext) ([]sliceOp, error) {
 	var ops []sliceOp
 	x, y := aEnd-aStart, bEnd-bStart
 	offset := (aEnd - aStart) + (bEnd - bStart)
@@ -698,7 +701,10 @@ func (d *Differ) backtrackMyers(a, b reflect.Value, aStart, aEnd, bStart, bEnd, 
 			vA := a.Index(aStart + x - 1)
 			vB := b.Index(bStart + y - 1)
 			if !reflect.DeepEqual(vA.Interface(), vB.Interface()) {
-				p, _ := d.diffRecursive(vA, vB, JoinPath(path, fmt.Sprintf("%v", extractKey(vA, keyField))), false, ctx)
+				p, err := d.diffRecursive(vA, vB, JoinPath(path, fmt.Sprintf("%v", extractKey(vA, keyField))), false, ctx)
+				if err != nil {
+					return nil, err
+				}
 				op := sliceOp{
 					Kind:  OpReplace,
 					Index: aStart + x - 1,
@@ -775,7 +781,10 @@ func (d *Differ) backtrackMyers(a, b reflect.Value, aStart, aEnd, bStart, bEnd, 
 		vA := a.Index(aStart + x - 1)
 		vB := b.Index(bStart + y - 1)
 		if !reflect.DeepEqual(vA.Interface(), vB.Interface()) {
-			p, _ := d.diffRecursive(vA, vB, JoinPath(path, fmt.Sprintf("%v", extractKey(vA, keyField))), false, ctx)
+			p, err := d.diffRecursive(vA, vB, JoinPath(path, fmt.Sprintf("%v", extractKey(vA, keyField))), false, ctx)
+			if err != nil {
+				return nil, err
+			}
 			op := sliceOp{
 				Kind:  OpReplace,
 				Index: aStart + x - 1,
@@ -794,5 +803,5 @@ func (d *Differ) backtrackMyers(a, b reflect.Value, aStart, aEnd, bStart, bEnd, 
 		ops[i], ops[len(ops)-1-i] = ops[len(ops)-1-i], ops[i]
 	}
 
-	return ops
+	return ops, nil
 }
