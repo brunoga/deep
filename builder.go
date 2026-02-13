@@ -45,6 +45,7 @@ func (b *Builder[T]) Root() *Node {
 		},
 		current:  b.patch,
 		fullPath: "",
+		parent:   nil,
 	}
 }
 
@@ -65,7 +66,7 @@ func (b *Builder[T]) AddCondition(expr string) *Builder[T] {
 	paths := raw.paths()
 	prefix := lcpParts(paths)
 
-	node, err := b.Root().navigateParts(prefix)
+	node, err := b.Root().NavigateParts(prefix)
 	if err != nil {
 		b.err = err
 		return b
@@ -103,7 +104,7 @@ func lcpParts(paths []Path) []pathPart {
 	return common
 }
 
-func (n *Node) navigateParts(parts []pathPart) (*Node, error) {
+func (n *Node) NavigateParts(parts []pathPart) (*Node, error) {
 	curr := n
 	var err error
 	for _, part := range parts {
@@ -125,6 +126,11 @@ type Node struct {
 	update   func(diffPatch)
 	current  diffPatch
 	fullPath string
+
+	parent *Node
+	key    string
+	index  int
+	isIdx  bool
 }
 
 // navigate returns a Node for the specified path relative to the current node.
@@ -134,7 +140,7 @@ func (n *Node) Navigate(path string) (*Node, error) {
 	if path == "" {
 		return n, nil
 	}
-	return n.navigateParts(parsePath(path))
+	return n.NavigateParts(parsePath(path))
 }
 
 // Put replaces the value at the current node without requiring the 'old' value.
@@ -150,10 +156,6 @@ func (n *Node) Put(value any) *Node {
 	n.update(p)
 	n.current = p
 	return n
-}
-
-func (n *Node) navigate(path string) (*Node, error) {
-	return n.Navigate(path)
 }
 
 // FieldOrMapKey returns a Node for the specified field or map key.
@@ -341,6 +343,8 @@ func (n *Node) Field(name string) (*Node, error) {
 		},
 		current:  sp.fields[name],
 		fullPath: n.fullPath + "/" + name,
+		parent:   n,
+		key:      name,
 	}, nil
 }
 
@@ -368,6 +372,9 @@ func (n *Node) Index(i int) (*Node, error) {
 			},
 			current:  ap.indices[i],
 			fullPath: n.fullPath + "/" + strconv.Itoa(i),
+			parent:   n,
+			index:    i,
+			isIdx:    true,
 		}, nil
 	}
 	sp, ok := n.current.(*slicePatch)
@@ -397,6 +404,9 @@ func (n *Node) Index(i int) (*Node, error) {
 		},
 		current:  modOp.Patch,
 		fullPath: n.fullPath + "/" + strconv.Itoa(i),
+		parent:   n,
+		index:    i,
+		isIdx:    true,
 	}, nil
 }
 
@@ -428,6 +438,8 @@ func (n *Node) MapKey(key any) (*Node, error) {
 		},
 		current:  mp.modified[key],
 		fullPath: n.fullPath + "/" + fmt.Sprintf("%v", key),
+		parent:   n,
+		key:      fmt.Sprintf("%v", key),
 	}, nil
 }
 
@@ -466,6 +478,10 @@ func (n *Node) Elem() *Node {
 		update:   updateFunc,
 		current:  currentPatch,
 		fullPath: n.fullPath, // Elem doesn't add to path in JSON Pointer
+		parent:   n.parent,
+		key:      n.key,
+		index:    n.index,
+		isIdx:    n.isIdx,
 	}
 }
 
@@ -568,4 +584,18 @@ func (n *Node) AddMapEntry(key, val any) error {
 	}
 	mp.added[key] = deepCopyValue(vVal)
 	return nil
+}
+
+// Remove removes the current node from its parent.
+func (n *Node) Remove(oldVal any) error {
+	if n.parent == nil {
+		return fmt.Errorf("cannot remove root node")
+	}
+	if n.isIdx {
+		return n.parent.Delete(n.index, oldVal)
+	}
+	// For maps, we need the actual key. Node.key is currently a string.
+	// If the map key is a string, it works. If not, this is a limitation.
+	// In the context of Merge, Walk gives us the actual key if it's not a slice index.
+	return n.parent.Delete(n.key, oldVal)
 }

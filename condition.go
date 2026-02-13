@@ -33,7 +33,7 @@ type Path string
 // resolve traverses v using the path and returns the reflect.Value found.
 func (p Path) resolve(v reflect.Value) (reflect.Value, error) {
 	parts := parsePath(string(p))
-	val, _, err := p.navigate(v, parts)
+	val, _, err := p.Navigate(v, parts)
 	return val, err
 }
 
@@ -42,14 +42,14 @@ func (p Path) resolveParent(v reflect.Value) (reflect.Value, pathPart, error) {
 	if len(parts) == 0 {
 		return reflect.Value{}, pathPart{}, fmt.Errorf("path is empty")
 	}
-	parent, _, err := p.navigate(v, parts[:len(parts)-1])
+	parent, _, err := p.Navigate(v, parts[:len(parts)-1])
 	if err != nil {
 		return reflect.Value{}, pathPart{}, err
 	}
 	return parent, parts[len(parts)-1], nil
 }
 
-func (p Path) navigate(v reflect.Value, parts []pathPart) (reflect.Value, pathPart, error) {
+func (p Path) Navigate(v reflect.Value, parts []pathPart) (reflect.Value, pathPart, error) {
 	current, err := dereference(v)
 	if err != nil {
 		return reflect.Value{}, pathPart{}, err
@@ -383,6 +383,8 @@ func parsePath(path string) []pathPart {
 				idx, err := strconv.Atoi(content)
 				if err == nil {
 					parts = append(parts, pathPart{index: idx, isIndex: true})
+				} else {
+					parts = append(parts, pathPart{key: content})
 				}
 			}
 		default:
@@ -409,6 +411,27 @@ func parseJSONPointer(path string) []pathPart {
 		}
 	}
 	return parts
+}
+
+// NormalizePath converts a dot-notation or JSON Pointer path to a standard JSON Pointer.
+func NormalizePath(path string) string {
+	if path == "" || path == "/" {
+		return "/"
+	}
+	parts := parsePath(path)
+	var b strings.Builder
+	for _, p := range parts {
+		b.WriteByte('/')
+		if p.isIndex {
+			b.WriteString(strconv.Itoa(p.index))
+		} else {
+			// Escape JSON Pointer tokens
+			key := strings.ReplaceAll(p.key, "~", "~0")
+			key = strings.ReplaceAll(key, "/", "~1")
+			b.WriteString(key)
+		}
+	}
+	return b.String()
 }
 
 func toReflectValue(v any) reflect.Value {
