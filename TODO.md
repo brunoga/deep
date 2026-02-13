@@ -20,15 +20,15 @@ This document tracks planned features and improvements to make the `deep` librar
     ```go
     patch.Walk(func(path Path, op OpKind, old, new any) error)
     ```
-- [ ] **Human-Readable Reporting**: Provide a utility to generate audit-log style descriptions of patches (e.g., "Updated User.Email from X to Y").
+- [x] **Human-Readable Reporting**: Provide a utility to generate audit-log style descriptions of patches (e.g., "Updated User.Email from X to Y").
+- [x] **Interactive Application**: Allow `ApplyChecked` to return a list of specific field-level conflicts instead of a single error.
 
 ## 4. Conflict Resolution
-- [ ] **Three-Way Merge**: Implement logic to merge two patches derived from the same base state.
+- [x] **Three-Way Merge**: Implement logic to merge two patches derived from the same base state.
     - `Merge(base, patchA, patchB) (mergedPatch, conflicts)`
-- [ ] **Interactive Application**: Allow `ApplyChecked` to return a list of specific field-level conflicts instead of a single error.
 
 ## 5. Performance & Optimization
-- [ ] **Reflection Cache**: Cache structural metadata (field offsets, types) to reduce reflection overhead in hot loops.
+- [x] **Reflection Cache**: Cache structural metadata (field offsets, types) to reduce reflection overhead in hot loops.
 - [ ] **Zero-Allocation Diffs**: Explore pooling and pre-allocation strategies for large structural diffs.
 - [ ] **SIMD Comparisons**: Investigate using SIMD for basic type comparisons in large slices/arrays.
 
