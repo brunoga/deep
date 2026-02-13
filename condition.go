@@ -276,13 +276,13 @@ func compareValues(v1, v2 reflect.Value, op string, ignoreCase bool) (bool, erro
 		if ignoreCase && v1.Kind() == reflect.String && v2.Kind() == reflect.String {
 			return strings.EqualFold(v1.String(), v2.String()), nil
 		}
-		return reflect.DeepEqual(v1.Interface(), v2.Interface()), nil
+		return Equal(v1.Interface(), v2.Interface()), nil
 	}
 	if op == "!=" {
 		if ignoreCase && v1.Kind() == reflect.String && v2.Kind() == reflect.String {
 			return !strings.EqualFold(v1.String(), v2.String()), nil
 		}
-		return !reflect.DeepEqual(v1.Interface(), v2.Interface()), nil
+		return !Equal(v1.Interface(), v2.Interface()), nil
 	}
 
 	if v1.Kind() != v2.Kind() {
