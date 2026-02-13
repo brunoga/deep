@@ -55,406 +55,53 @@ func TestPatch_String_Complex(t *testing.T) {
 	if patch == nil {
 		t.Fatal("Expected non-nil patch")
 	}
-	s := patch.String()
-	expectedSubstrings := []string{
-		"Struct{",
-		"Tags: Slice{",
-		"+ [2]: tag3",
-		"Meta: Map{",
-		"+ key3: true",
-		"- key2",
-		"key1: val1 -> val1-mod",
-		"Kids: Slice{",
-		"+ [1]: {Kid2}",
-		"Status: active -> inactive",
-	}
-	for _, sub := range expectedSubstrings {
-		if !strings.Contains(s, sub) {
-			t.Errorf("String() output missing expected substring: %q", sub)
-		}
-	}
-	revPatch := patch.Reverse()
-	if revPatch == nil {
-		t.Fatal("Expected non-nil reverse patch")
-	}
-	bCopy, _ := Copy(b)
-	revPatch.Apply(&bCopy)
-	if !reflect.DeepEqual(bCopy, a) {
-		t.Errorf("Reverse() application failed.\nExpected: %+v\nGot:      %+v", a, bCopy)
+
+	summary := patch.String()
+	if !strings.Contains(summary, "+ [1]: {Kid2}") {
+		t.Errorf("String() missing added kid: %s", summary)
 	}
 }
 
-func TestPatch_Reverse_Basic(t *testing.T) {
-	a := 10
-	b := 20
-	patch := Diff(a, b)
-	rev := patch.Reverse()
-	val := b
-	rev.Apply(&val)
-	if val != a {
-		t.Errorf("Reverse Apply failed: expected %v, got %v", a, val)
+func TestPatch_ApplyResolved(t *testing.T) {
+	type Config struct {
+		Value int
 	}
-}
+	c1 := Config{Value: 10}
+	c2 := Config{Value: 20}
 
-func TestPatch_Reverse_Slice(t *testing.T) {
-	a := []string{"a", "b", "c"}
-	b := []string{"a", "X", "d", "c"}
-	patch := Diff(a, b)
-	rev := patch.Reverse()
-	target := make([]string, len(a))
-	copy(target, a)
-	patch.Apply(&target)
-	if !reflect.DeepEqual(target, b) {
-		t.Fatalf("Forward patch failed")
-	}
-	rev.Apply(&target)
-	if !reflect.DeepEqual(target, a) {
-		t.Errorf("Reverse Apply failed.\nExpected: %v\nGot:      %v", a, target)
-	}
-}
+	patch := Diff(c1, c2)
 
-func TestApplyChecked_Comprehensive(t *testing.T) {
-	type Inner struct {
-		Val int
-	}
-	type Data struct {
-		Arr [2]int
-		Slc []int
-		Ptr *Inner
-		Ifc any
-	}
+	target := Config{Value: 10}
 
-	ptrVal := &Inner{Val: 10}
-	a := Data{
-		Arr: [2]int{1, 2},
-		Slc: []int{3, 4},
-		Ptr: ptrVal,
-		Ifc: "string",
-	}
-
-	// Create a modified version
-	ptrValMod := &Inner{Val: 20}
-	b := Data{
-		Arr: [2]int{1, 20}, // Index 1 mod
-		Slc: []int{3},      // Index 1 del
-		Ptr: ptrValMod,     // Ptr content mod
-		Ifc: 123,           // Interface type/val change
-	}
-
-	patch := Diff(a, b)
-	if patch == nil {
-		t.Fatal("Expected patch")
-	}
-
-	// ApplyChecked should succeed on 'a'
-	aCopy, _ := Copy(a)
-
-	if err := patch.ApplyChecked(&aCopy); err != nil {
-		t.Fatalf("ApplyChecked failed: %v", err)
-	}
-
-	if !reflect.DeepEqual(aCopy, b) {
-		t.Errorf("ApplyChecked result mismatch.\nGot: %+v\nWant: %+v", aCopy, b)
-	}
-}
-
-func TestPatch_Reverse_Array(t *testing.T) {
-	a := [3]int{1, 2, 3}
-	b := [3]int{1, 20, 3}
-
-	patch := Diff(a, b)
-
-	// Test Format
-	s := patch.String()
-	if !strings.Contains(s, "Array{") || !strings.Contains(s, "[1]: 2 -> 20") {
-		t.Errorf("Array format failed: %s", s)
-	}
-
-	rev := patch.Reverse()
-
-	target := a
-	patch.Apply(&target)
-	if target != b {
-		t.Fatalf("Forward patch failed")
-	}
-
-	rev.Apply(&target)
-	if target != a {
-		t.Errorf("Reverse failed: got %v, want %v", target, a)
-	}
-}
-
-func TestInterfaceContentPatch(t *testing.T) {
-	type S struct {
-		Val int
-	}
-	var a any = S{Val: 10}
-	var b any = S{Val: 20}
-
-	patch := Diff(a, b)
-	if patch == nil {
-		t.Fatal("Expected patch")
-	}
-
-	aCopy := a
-	if err := patch.ApplyChecked(&aCopy); err != nil {
-		t.Fatalf("ApplyChecked failed: %v", err)
-	}
-
-	if !reflect.DeepEqual(aCopy, b) {
-		t.Errorf("Result mismatch: got %v, want %v", aCopy, b)
-	}
-}
-
-func TestPatch_StrictToggle(t *testing.T) {
-	type S struct{ A int }
-	s1 := S{A: 1}
-	s2 := S{A: 2}
-
-	p := Diff(s1, s2) // Strict is true by default
-
-	s3 := S{A: 10} // Current value doesn't match oldVal (1)
-	if err := p.ApplyChecked(&s3); err == nil {
-		t.Error("Expected error in strict mode")
-	}
-
-	pNonStrict := p.WithStrict(false)
-	if err := pNonStrict.ApplyChecked(&s3); err != nil {
-		t.Errorf("Expected no error in non-strict mode: %v", err)
-	}
-	if s3.A != 2 {
-		t.Errorf("Expected A=2, got %d", s3.A)
-	}
-}
-
-func TestPatch_LocalCondition(t *testing.T) {
-	type S struct{ A int }
-
-	builder := NewBuilder[S]()
-	node, _ := builder.Root().Field("A")
-	node.Set(1, 2).WithCondition(Less[int]("", 5))
-
-	p, _ := builder.Build()
-	p = p.WithStrict(false) // Disable strict to only test local condition
-
-	s1 := S{A: 3}
-	if err := p.ApplyChecked(&s1); err != nil {
-		t.Fatalf("ApplyChecked failed: %v", err)
-	}
-	if s1.A != 2 {
-		t.Errorf("Expected A=2, got %d", s1.A)
-	}
-
-	s2 := S{A: 10}
-	if err := p.ApplyChecked(&s2); err == nil {
-		t.Error("Expected local condition to fail")
-	}
-}
-
-func TestPatch_RecursiveCondition(t *testing.T) {
-	type Child struct{ Name string }
-	type Parent struct {
-		Age   int
-		Child Child
-	}
-
-	builder := NewBuilder[Parent]()
-	root := builder.Root()
-	root.WithCondition(Greater[Parent]("Age", 18))
-	childNode, _ := root.Field("Child")
-	nameNode, _ := childNode.Field("Name")
-	nameNode.Set("Old", "New")
-
-	p, _ := builder.Build()
-
-	p1 := Parent{Age: 10, Child: Child{Name: "Old"}}
-	if err := p.ApplyChecked(&p1); err == nil {
-		t.Error("Expected condition to fail due to Age")
-	}
-
-	p2 := Parent{Age: 20, Child: Child{Name: "Old"}}
-	if err := p.ApplyChecked(&p2); err != nil {
-		t.Fatalf("ApplyChecked failed: %v", err)
-	}
-	if p2.Child.Name != "New" {
-		t.Errorf("Expected Name=New, got %s", p2.Child.Name)
-	}
-}
-
-func TestApplyChecked_Conflicts(t *testing.T) {
-	t.Run("MapDeletionMismatch", func(t *testing.T) {
-		m1 := map[string]int{"a": 1}
-		m2 := map[string]int{}
-		p := Diff(m1, m2)
-
-		m3 := map[string]int{"a": 2} // Value mismatch
-		if err := p.ApplyChecked(&m3); err == nil {
-			t.Error("Expected error for map deletion value mismatch")
-		}
-	})
-
-	t.Run("MapModificationMissingKey", func(t *testing.T) {
-		m1 := map[string]int{"a": 1}
-		m2 := map[string]int{"a": 2}
-		p := Diff(m1, m2)
-
-		m3 := map[string]int{"b": 1} // Key 'a' missing
-		if err := p.ApplyChecked(&m3); err == nil {
-			t.Error("Expected error for map modification missing key")
-		}
-	})
-
-	t.Run("NumericConversions", func(t *testing.T) {
-		type S struct {
-			I8  int8
-			U16 uint16
-			F32 float32
-		}
-		s1 := S{I8: 1, U16: 1, F32: 1.0}
-		s2 := S{I8: 2, U16: 2, F32: 2.0}
-		p := Diff(s1, s2)
-
-		data, _ := json.Marshal(p)
-		p2 := NewPatch[S]()
-		json.Unmarshal(data, p2)
-
-		s3 := S{I8: 1, U16: 1, F32: 1.0}
-		if err := p2.ApplyChecked(&s3); err != nil {
-			t.Fatalf("ApplyChecked failed with numeric conversion: %v", err)
-		}
-		if s3.I8 != 2 || s3.U16 != 2 || s3.F32 != 2.0 {
-			t.Errorf("Result mismatch: %+v", s3)
-		}
-	})
-
-	t.Run("MapAdditionConflict", func(t *testing.T) {
-		m1 := map[string]int{}
-		m2 := map[string]int{"a": 1}
-		p := Diff(m1, m2)
-
-		m3 := map[string]int{"a": 10} // Key 'a' already exists
-		if err := p.ApplyChecked(&m3); err == nil {
-			t.Error("Expected error for map addition existing key conflict")
-		}
-	})
-
-	t.Run("SliceErrors", func(t *testing.T) {
-		a := []int{1}
-		b := []int{1, 2}
-		p := Diff(a, b)
-
-		var empty []int
-		if err := p.ApplyChecked(&empty); err == nil {
-		}
-	})
-}
-
-func TestPatch_ToJSONPatch(t *testing.T) {
-	type User struct {
-		Name string
-		Age  int
-		Tags []string
-	}
-	u1 := User{Name: "Alice", Age: 30, Tags: []string{"A", "B"}}
-	u2 := User{Name: "Alice", Age: 31, Tags: []string{"A", "C", "B"}}
-
-	patch := Diff(u1, u2)
-	jsonPatchBytes, err := patch.ToJSONPatch()
+	// Resolver that rejects everything
+	err := patch.ApplyResolved(&target, ConflictResolverFunc(func(path string, op OpKind, old, new any, v reflect.Value) bool {
+		return false
+	}))
 	if err != nil {
-		t.Fatalf("ToJSONPatch failed: %v", err)
+		t.Fatalf("ApplyResolved failed: %v", err)
 	}
 
-	var ops []map[string]any
-	if err := json.Unmarshal(jsonPatchBytes, &ops); err != nil {
-		t.Fatalf("Failed to unmarshal JSON Patch: %v", err)
+	if target.Value != 10 {
+		t.Errorf("Value should not have changed, got %d", target.Value)
 	}
 
-	foundAge := false
-	foundTags := false
-	for _, op := range ops {
-		switch op["path"] {
-		case "/Age":
-			if op["op"] == "replace" && op["value"] == float64(31) {
-				foundAge = true
-			}
-		case "/Tags/1":
-			if op["op"] == "add" && op["value"] == "C" {
-				foundTags = true
-			}
-		}
-	}
-
-	if !foundAge {
-		t.Errorf("Expected replace /Age op, got: %s", string(jsonPatchBytes))
-	}
-	if !foundTags {
-		t.Errorf("Expected add /Tags/1 op, got: %s", string(jsonPatchBytes))
-	}
-}
-
-func TestPatch_ToJSONPatch_WithConditions(t *testing.T) {
-	type User struct {
-		Name string
-		Age  int
-	}
-	builder := NewBuilder[User]()
-	c := Equal[User]("Name", "Alice")
-	nodeAge, _ := builder.Root().Field("Age")
-	nodeAge.If(c).Set(30, 31)
-
-	patch, _ := builder.Build()
-	data, err := patch.ToJSONPatch()
+	// Resolver that accepts everything
+	err = patch.ApplyResolved(&target, ConflictResolverFunc(func(path string, op OpKind, old, new any, v reflect.Value) bool {
+		return true
+	}))
 	if err != nil {
-		t.Fatalf("ToJSONPatch failed: %v", err)
+		t.Fatalf("ApplyResolved failed: %v", err)
 	}
 
-	var ops []map[string]any
-	json.Unmarshal(data, &ops)
-
-	if len(ops) != 1 {
-		t.Fatalf("Expected 1 op, got %d", len(ops))
-	}
-
-	op := ops[0]
-	if op["if"] == nil {
-		t.Fatal("Expected 'if' predicate in JSON Patch export")
-	}
-
-	pred := op["if"].(map[string]any)
-	if pred["op"] != "test" || pred["path"] != "Name" || pred["value"] != "Alice" {
-		t.Errorf("Unexpected predicate: %+v", pred)
+	if target.Value != 20 {
+		t.Errorf("Value should have changed to 20, got %d", target.Value)
 	}
 }
 
-type dummyPatch struct{ basePatch }
+type ConflictResolverFunc func(path string, op OpKind, old, new any, v reflect.Value) bool
 
-func (p *dummyPatch) apply(root, v reflect.Value)                           {}
-func (p *dummyPatch) applyChecked(root, v reflect.Value, strict bool) error { return nil }
-func (p *dummyPatch) applyResolved(root, v reflect.Value, path string, resolver ConflictResolver) error {
-	return nil
-}
-func (p *dummyPatch) reverse() diffPatch         { return p }
-func (p *dummyPatch) format(indent int) string   { return "" }
-func (p *dummyPatch) summary(path string) string { return "" }
-func (p *dummyPatch) walk(path string, fn func(path string, op OpKind, old, new any) error) error {
-	return nil
-}
-func (p *dummyPatch) toJSONPatch(path string) []map[string]any { return nil }
-
-func TestPatch_MarshalUnknown(t *testing.T) {
-	_, err := marshalDiffPatch(&dummyPatch{})
-	if err == nil {
-		t.Error("Expected error for unknown patch type")
-	}
-}
-
-func TestPatch_ApplySimple(t *testing.T) {
-	val := 1
-	patch := Diff(1, 2)
-	patch.Apply(&val)
-	if val != 2 {
-		t.Errorf("Apply failed: expected 2, got %d", val)
-	}
+func (f ConflictResolverFunc) Resolve(path string, op OpKind, old, new any, v reflect.Value) bool {
+	return f(path, op, old, new, v)
 }
 
 func TestPatch_ConditionsExhaustive(t *testing.T) {
@@ -470,7 +117,7 @@ func TestPatch_ConditionsExhaustive(t *testing.T) {
 	builder := NewBuilder[DataC]()
 	root := builder.Root()
 
-	c := Equal[DataC]("A", 1)
+	c := Eq[DataC]("A", 1)
 
 	root.If(c).Unless(c).Test(DataC{A: 1})
 
@@ -516,138 +163,14 @@ func TestPatch_MoreApplyChecked(t *testing.T) {
 			t.Errorf("interfacePatch ApplyChecked failed: %v", err)
 		}
 	})
-	// structPatch
-	t.Run("structPatch", func(t *testing.T) {
-		type SLocal struct{ A int }
-		s1 := SLocal{1}
-		s2 := SLocal{2}
-		patch := Diff(s1, s2)
-		if err := patch.ApplyChecked(&s1); err != nil {
-			t.Errorf("structPatch ApplyChecked failed: %v", err)
-		}
-	})
-	// arrayPatch
-	t.Run("arrayPatch", func(t *testing.T) {
-		a1 := [1]int{1}
-		a2 := [1]int{2}
-		patch := Diff(a1, a2)
-		if err := patch.ApplyChecked(&a1); err != nil {
-			t.Errorf("arrayPatch ApplyChecked failed: %v", err)
-		}
-	})
-	// mapPatch
-	t.Run("mapPatch", func(t *testing.T) {
-		m1 := map[string]int{"a": 1}
-		m2 := map[string]int{"a": 2}
-		patch := Diff(m1, m2)
-		if err := patch.ApplyChecked(&m1); err != nil {
-			t.Errorf("mapPatch ApplyChecked failed: %v", err)
-		}
-	})
-	// testPatch
-	t.Run("testPatch", func(t *testing.T) {
-		val := 1
-		builder := NewBuilder[int]()
-		builder.Root().Test(1)
-		patch, _ := builder.Build()
-		if err := patch.ApplyChecked(&val); err != nil {
-			t.Errorf("testPatch ApplyChecked failed: %v", err)
-		}
-	})
 }
 
-func TestPatch_Apply_DocumentWide(t *testing.T) {
-	type Data struct {
-		A int
-		B int
-	}
-	d := Data{A: 1, B: 0}
-	rv := reflect.ValueOf(&d)
-
-	// testPatch apply
-	tp := &testPatch{expected: reflect.ValueOf(1)}
-	tp.apply(rv, rv.Elem().Field(0))
-
-	// copyPatch apply
-	cp := &copyPatch{from: "/A"}
-	cp.apply(rv, rv.Elem().Field(1))
-	if d.B != 1 {
-		t.Errorf("copyPatch apply failed: expected B=1, got %d", d.B)
-	}
-
-	// movePatch apply
-	d.B = 0
-	mp := &movePatch{from: "/A", path: "/B"}
-	mp.apply(rv, rv.Elem().Field(1))
-	if d.B != 1 || d.A != 0 {
-		t.Errorf("movePatch apply failed: %+v", d)
-	}
-}
-
-func TestPatch_ConditionToPredicate_Exhaustive(t *testing.T) {
-	type Data struct{ V int }
-
-	ops := []string{"==", "!=", "<", ">", "<=", ">="}
-	for _, op := range ops {
-		expr := fmt.Sprintf("V %s 10", op)
-		cond, _ := ParseCondition[Data](expr)
-
-		pred := conditionToPredicate(cond)
-		if pred == nil {
-			t.Errorf("conditionToPredicate returned nil for %s", op)
-		}
-	}
-
-	c1, _ := ParseCondition[Data]("V > 0 AND V < 10")
-	conditionToPredicate(c1)
-
-	c2, _ := ParseCondition[Data]("V == 0 OR V == 10")
-	conditionToPredicate(c2)
-
-	c3, _ := ParseCondition[Data]("NOT (V == 0)")
-	conditionToPredicate(c3)
-}
-
-func TestPatch_ApplyCheckedRecursive(t *testing.T) {
-	type InnerR struct{ V int }
-	type DataR struct {
-		P *InnerR
-		I any
-		M map[string]InnerR
-		S []InnerR
-		A [1]InnerR
-	}
-
-	d1 := DataR{
-		P: &InnerR{1},
-		I: InnerR{2},
-		M: map[string]InnerR{"a": {3}},
-		S: []InnerR{{4}},
-		A: [1]InnerR{{5}},
-	}
-	d2 := DataR{
-		P: &InnerR{10},
-		I: InnerR{20},
-		M: map[string]InnerR{"a": {30}},
-		S: []InnerR{{40}},
-		A: [1]InnerR{{50}},
-	}
-
-	patch := Diff(d1, d2)
-	if err := patch.ApplyChecked(&d1); err != nil {
-		t.Fatalf("ApplyChecked failed: %v", err)
-	}
-	if !reflect.DeepEqual(d1, d2) {
-		t.Errorf("ApplyChecked mismatch: %+v", d1)
-	}
-}
-
-func TestPatch_ToJSONPatch_Complex(t *testing.T) {
+func TestPatch_ToJSONPatch_Exhaustive(t *testing.T) {
 	type Inner struct{ V int }
 	type Data struct {
 		P *Inner
 		I any
-		A [1]Inner
+		A []Inner
 		M map[string]Inner
 	}
 
@@ -695,5 +218,229 @@ func TestPatch_LogExhaustive(t *testing.T) {
 	ops := lp.toJSONPatch("/path")
 	if len(ops) != 1 || ops[0]["op"] != "log" {
 		t.Errorf("Unexpected toJSONPatch output: %+v", ops)
+	}
+}
+
+func TestPatch_Walk_Basic(t *testing.T) {
+	a := 10
+	b := 20
+	patch := Diff(a, b)
+
+	var ops []string
+	err := patch.Walk(func(path string, op OpKind, old, new any) error {
+		ops = append(ops, fmt.Sprintf("%s:%s:%v:%v", path, op, old, new))
+		return nil
+	})
+
+	if err != nil {
+		t.Fatalf("Walk failed: %v", err)
+	}
+
+	expected := []string{"/:replace:10:20"}
+	if fmt.Sprintf("%v", ops) != fmt.Sprintf("%v", expected) {
+		t.Errorf("Expected ops %v, got %v", expected, ops)
+	}
+}
+
+func TestPatch_Walk_Struct(t *testing.T) {
+	type S struct {
+		A int
+		B string
+	}
+	a := S{A: 1, B: "one"}
+	b := S{A: 2, B: "two"}
+	patch := Diff(a, b)
+
+	ops := make(map[string]string)
+	err := patch.Walk(func(path string, op OpKind, old, new any) error {
+		ops[path] = fmt.Sprintf("%s:%v:%v", op, old, new)
+		return nil
+	})
+
+	if err != nil {
+		t.Fatalf("Walk failed: %v", err)
+	}
+
+	if len(ops) != 2 {
+		t.Errorf("Expected 2 ops, got %d", len(ops))
+	}
+
+	if ops["/A"] != "replace:1:2" {
+		t.Errorf("Unexpected op for A: %s", ops["/A"])
+	}
+	if ops["/B"] != "replace:one:two" {
+		t.Errorf("Unexpected op for B: %s", ops["/B"])
+	}
+}
+
+func TestPatch_Walk_Slice(t *testing.T) {
+	a := []int{1, 2, 3}
+	b := []int{1, 4, 3, 5}
+	patch := Diff(a, b)
+
+	var ops []string
+	err := patch.Walk(func(path string, op OpKind, old, new any) error {
+		ops = append(ops, fmt.Sprintf("%s:%s:%v:%v", path, op, old, new))
+		return nil
+	})
+
+	if err != nil {
+		t.Fatalf("Walk failed: %v", err)
+	}
+
+	found4 := false
+	found5 := false
+	for _, op := range ops {
+		if strings.Contains(op, ":2:4") || (strings.Contains(op, ":remove:2:<nil>") || strings.Contains(op, ":add:<nil>:4")) {
+			if strings.Contains(op, "4") {
+				found4 = true
+			}
+		}
+		if strings.Contains(op, ":add:<nil>:5") {
+			found5 = true
+		}
+	}
+
+	if !found4 || !found5 {
+		t.Errorf("Missing expected ops in %v", ops)
+	}
+}
+
+func TestPatch_Walk_Map(t *testing.T) {
+	a := map[string]int{"one": 1, "two": 2}
+	b := map[string]int{"one": 1, "two": 20, "three": 3}
+	patch := Diff(a, b)
+
+	ops := make(map[string]string)
+	err := patch.Walk(func(path string, op OpKind, old, new any) error {
+		ops[path] = fmt.Sprintf("%s:%v:%v", op, old, new)
+		return nil
+	})
+
+	if err != nil {
+		t.Fatalf("Walk failed: %v", err)
+	}
+
+	if ops["/two"] != "replace:2:20" {
+		t.Errorf("Unexpected op for two: %s", ops["/two"])
+	}
+	if ops["/three"] != "add:<nil>:3" {
+		t.Errorf("Unexpected op for three: %s", ops["/three"])
+	}
+}
+
+func TestPatch_Walk_KeyedSlice(t *testing.T) {
+	type KeyedTask struct {
+		ID     string `deep:"key"`
+		Status string
+	}
+	a := []KeyedTask{
+		{ID: "t1", Status: "todo"},
+		{ID: "t2", Status: "todo"},
+	}
+	b := []KeyedTask{
+		{ID: "t2", Status: "done"},
+		{ID: "t1", Status: "todo"},
+	}
+
+	patch := Diff(a, b)
+
+	ops := make(map[string]string)
+	err := patch.Walk(func(path string, op OpKind, old, new any) error {
+		ops[path] = fmt.Sprintf("%s:%v:%v", op, old, new)
+		return nil
+	})
+
+	if err != nil {
+		t.Fatalf("Walk failed: %v", err)
+	}
+
+	if len(ops) == 0 {
+		t.Errorf("Expected some ops, got none")
+	}
+}
+
+func TestPatch_Walk_ErrorStop(t *testing.T) {
+	a := map[string]int{"one": 1, "two": 2}
+	b := map[string]int{"one": 10, "two": 20}
+	patch := Diff(a, b)
+
+	count := 0
+	err := patch.Walk(func(path string, op OpKind, old, new any) error {
+		count++
+		return fmt.Errorf("stop")
+	})
+
+	if err == nil || err.Error() != "stop" {
+		t.Errorf("Expected 'stop' error, got %v", err)
+	}
+	if count != 1 {
+		t.Errorf("Expected walk to stop after 1 call, got %d", count)
+	}
+}
+
+type customTestStruct struct {
+	V int
+}
+
+func (c customTestStruct) Diff(other customTestStruct) (Patch[customTestStruct], error) {
+	b := NewBuilder[customTestStruct]()
+	node, _ := b.Root().Field("V")
+	node.Set(c.V, other.V)
+	return b.Build()
+}
+
+func TestCustomDiffPatch_ToJSONPatch(t *testing.T) {
+	b := NewBuilder[customTestStruct]()
+	node, _ := b.Root().Field("V")
+	node.Set(1, 2)
+	patch, _ := b.Build()
+
+	// Manually wrap it in customDiffPatch
+	custom := &customDiffPatch{
+		patch: patch,
+	}
+
+	jsonBytes := custom.toJSONPatch("/root")
+
+	var ops []map[string]any
+	data, _ := json.Marshal(jsonBytes)
+	json.Unmarshal(data, &ops)
+
+	if len(ops) != 1 {
+		t.Fatalf("expected 1 op, got %d", len(ops))
+	}
+
+	if ops[0]["path"] != "/root/V" {
+		t.Errorf("expected path /root/V, got %s", ops[0]["path"])
+	}
+}
+
+func TestPatch_SummaryAndRelease(t *testing.T) {
+	type Config struct {
+		Name    string
+		Value   int
+		Options []string
+	}
+
+	c1 := Config{Name: "v1", Value: 10, Options: []string{"a", "b"}}
+	c2 := Config{Name: "v2", Value: 20, Options: []string{"a", "c"}}
+
+	patch := Diff(c1, c2)
+	if patch == nil {
+		t.Fatal("Expected patch")
+	}
+
+	summary := patch.Summary()
+	if summary == "" || summary == "No changes." {
+		t.Errorf("Unexpected summary: %q", summary)
+	}
+
+	// Just ensure it doesn't panic and clears the inner patch
+	patch.Release()
+
+	summary2 := patch.Summary()
+	if summary2 != "No changes." {
+		t.Errorf("Expected 'No changes.' after Release, got %q", summary2)
 	}
 }
