@@ -21,13 +21,6 @@ func (c Conflict) String() string {
 	return fmt.Sprintf("conflict at %s: %s (A: %v %v, B: %v %v)", c.Path, c.Message, c.OpA, c.ValA, c.OpB, c.ValB)
 }
 
-type opInfo struct {
-	path string
-	op   OpKind
-	old  any
-	new  any
-}
-
 // Merge combines two patches into a single patch.
 // If both patches modify the same field to different values, a conflict is recorded.
 // patchA and patchB are assumed to be derived from the same base state.
@@ -58,11 +51,6 @@ func Merge[T any](patchA, patchB Patch[T]) (Patch[T], []Conflict, error) {
 	mapA := make(map[string]opInfo)
 	for _, op := range opsA {
 		mapA[op.path] = op
-	}
-
-	mapB := make(map[string]opInfo)
-	for _, op := range opsB {
-		mapB[op.path] = op
 	}
 
 	for _, b := range opsB {
@@ -111,14 +99,12 @@ func Merge[T any](patchA, patchB Patch[T]) (Patch[T], []Conflict, error) {
 	}
 
 	// Combine and sort all non-conflicting ops
-	// For conflicts, we'll prefer A's version by default
 	mergedOps := make(map[string]opInfo)
 	for _, a := range opsA {
 		mergedOps[a.path] = a
 	}
 	for _, b := range opsB {
 		if _, ok := mergedOps[b.path]; !ok {
-			// Only add if no conflict with A's path or any of A's parent removals/replacements
 			hasConflict := false
 			for _, a := range opsA {
 				if (a.op == OpRemove || a.op == OpReplace) && isSubPath(a.path, b.path) {
@@ -137,9 +123,14 @@ func Merge[T any](patchA, patchB Patch[T]) (Patch[T], []Conflict, error) {
 		finalOps = append(finalOps, op)
 	}
 
-	// Sort by path to ensure parents are created before children
-	// and slice indices are applied in order.
+	// Sort by kind and path to ensure parents are created before children,
+	// and that Copy/Move happen before Remove.
 	sort.Slice(finalOps, func(i, j int) bool {
+		ki := opPriority(finalOps[i].op)
+		kj := opPriority(finalOps[j].op)
+		if ki != kj {
+			return ki < kj
+		}
 		return finalOps[i].path < finalOps[j].path
 	})
 
@@ -165,74 +156,4 @@ func isSubPath(parent, child string) bool {
 		prefix += "/"
 	}
 	return strings.HasPrefix(child, prefix)
-}
-
-func applyToBuilder[T any](b *Builder[T], op opInfo) error {
-	// Navigate to parent if it's an addition or removal in a map/slice
-	parts := parsePath(op.path)
-	if len(parts) > 0 {
-		parentParts := parts[:len(parts)-1]
-		lastPart := parts[len(parts)-1]
-
-		parentNode, err := b.Root().NavigateParts(parentParts)
-		if err == nil && parentNode.typ != nil {
-			kind := parentNode.typ.Kind()
-			if kind == reflect.Map {
-				var key any
-				if lastPart.isIndex {
-					// Map key could be an int
-					key = lastPart.index
-				} else {
-					key = lastPart.key
-				}
-
-				if op.op == OpAdd {
-					return parentNode.AddMapEntry(key, op.new)
-				}
-				if op.op == OpRemove {
-					return parentNode.Delete(key, op.old)
-				}
-			} else if kind == reflect.Slice {
-				if lastPart.isIndex {
-					if op.op == OpAdd {
-						return parentNode.Add(lastPart.index, op.new)
-					}
-					if op.op == OpRemove {
-						return parentNode.Delete(lastPart.index, op.old)
-					}
-				}
-			}
-		}
-	}
-
-	node, err := b.Root().Navigate(op.path)
-	if err != nil {
-		return err
-	}
-
-	switch op.op {
-	case OpAdd, OpReplace:
-		if op.old != nil {
-			node.Set(op.old, op.new)
-		} else {
-			node.Put(op.new)
-		}
-	case OpRemove:
-		return node.Remove(op.old)
-	case OpMove:
-		if from, ok := op.old.(string); ok {
-			node.Move(from)
-		}
-	case OpCopy:
-		if from, ok := op.old.(string); ok {
-			node.Copy(from)
-		}
-	case OpTest:
-		node.Test(op.new)
-	case OpLog:
-		if msg, ok := op.new.(string); ok {
-			node.Log(msg)
-		}
-	}
-	return nil
 }
