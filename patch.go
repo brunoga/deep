@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
-	"sort"
 	"strings"
 )
 
@@ -132,38 +131,8 @@ func (p *typedPatch[T]) Apply(v *T) {
 	if p.inner == nil {
 		return
 	}
-
-	// Collect all operations
-	var ops []opInfo
-	p.Walk(func(path string, op OpKind, old, new any) error {
-		ops = append(ops, opInfo{path, op, old, new})
-		return nil
-	})
-
-	// Sort by priority (Copy/Move first, then Remove)
-	sort.Slice(ops, func(i, j int) bool {
-		ki := opPriority(ops[i].op)
-		kj := opPriority(ops[j].op)
-		if ki != kj {
-			return ki < kj
-		}
-		// Short paths first for parents, except for removal where long paths (children)
-		// might need to be removed first? Actually, JSON Pointer removal usually
-		// works top-down or bottom-up depending on index shifts.
-		// For consistency with Builder, we'll use path order.
-		return ops[i].path < ops[j].path
-	})
-
 	rv := reflect.ValueOf(v).Elem()
-	for _, o := range ops {
-		// Use a fresh Builder Node for each operation to ensure independent resolution
-		b := NewBuilder[T]()
-		applyToBuilder(b, o)
-		p2, _ := b.Build()
-		if p2 != nil {
-			p2.(*typedPatch[T]).inner.apply(reflect.ValueOf(v), rv)
-		}
-	}
+	p.inner.apply(reflect.ValueOf(v), rv)
 }
 
 func (p *typedPatch[T]) ApplyChecked(v *T) error {
@@ -181,43 +150,13 @@ func (p *typedPatch[T]) ApplyChecked(v *T) error {
 		return nil
 	}
 
-	// Collect all operations
-	var ops []opInfo
-	p.Walk(func(path string, op OpKind, old, new any) error {
-		ops = append(ops, opInfo{path, op, old, new})
-		return nil
-	})
-
-	// Sort by priority
-	sort.Slice(ops, func(i, j int) bool {
-		ki := opPriority(ops[i].op)
-		kj := opPriority(ops[j].op)
-		if ki != kj {
-			return ki < kj
-		}
-		return ops[i].path < ops[j].path
-	})
-
-	var errs []error
 	rv := reflect.ValueOf(v).Elem()
-	for _, o := range ops {
-		b := NewBuilder[T]()
-		applyToBuilder(b, o)
-		p2, _ := b.Build()
-		if p2 != nil {
-			err := p2.(*typedPatch[T]).inner.applyChecked(reflect.ValueOf(v), rv, p.strict)
-			if err != nil {
-				if ae, ok := err.(*ApplyError); ok {
-					errs = append(errs, ae.Errors...)
-				} else {
-					errs = append(errs, err)
-				}
-			}
+	err := p.inner.applyChecked(reflect.ValueOf(v), rv, p.strict)
+	if err != nil {
+		if ae, ok := err.(*ApplyError); ok {
+			return ae
 		}
-	}
-
-	if len(errs) > 0 {
-		return &ApplyError{Errors: errs}
+		return &ApplyError{Errors: []error{err}}
 	}
 	return nil
 }

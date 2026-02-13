@@ -539,7 +539,17 @@ func (n *Node) Delete(keyOrIndex any, oldVal any) error {
 		if !ok {
 			return fmt.Errorf("index must be int for slices")
 		}
-		vOld := reflect.ValueOf(oldVal)
+		var vOld reflect.Value
+		if rv, ok := oldVal.(reflect.Value); ok {
+			vOld = rv
+		} else {
+			vOld = reflect.ValueOf(oldVal)
+		}
+
+		if !vOld.IsValid() {
+			vOld = reflect.Zero(n.typ.Elem())
+		}
+
 		if vOld.Type() != n.typ.Elem() {
 			return fmt.Errorf("invalid old value type: expected %v, got %v", n.typ.Elem(), vOld.Type())
 		}
@@ -559,9 +569,27 @@ func (n *Node) Delete(keyOrIndex any, oldVal any) error {
 	if n.typ.Kind() == reflect.Map {
 		vKey := reflect.ValueOf(keyOrIndex)
 		if vKey.Type() != n.typ.Key() {
-			return fmt.Errorf("invalid key type: expected %v, got %v", n.typ.Key(), vKey.Type())
+			// Try to convert if it's a simple string representation
+			if s, ok := keyOrIndex.(string); ok {
+				if n.typ.Key().Kind() == reflect.String {
+					vKey = reflect.ValueOf(s)
+				}
+			}
+			if vKey.Type() != n.typ.Key() {
+				return fmt.Errorf("invalid key type: expected %v, got %v", n.typ.Key(), vKey.Type())
+			}
 		}
-		vOld := reflect.ValueOf(oldVal)
+		var vOld reflect.Value
+		if rv, ok := oldVal.(reflect.Value); ok {
+			vOld = rv
+		} else {
+			vOld = reflect.ValueOf(oldVal)
+		}
+
+		if !vOld.IsValid() {
+			vOld = reflect.Zero(n.typ.Elem())
+		}
+
 		if vOld.Type() != n.typ.Elem() {
 			return fmt.Errorf("invalid old value type: expected %v, got %v", n.typ.Elem(), vOld.Type())
 		}
