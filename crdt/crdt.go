@@ -92,14 +92,10 @@ func (c *CRDT[T]) CreateDelta(patch deep.Patch[T]) Delta[T] {
 
 func (c *CRDT[T]) updateMetadataLocked(patch deep.Patch[T], ts hlc.HLC) {
 	patch.Walk(func(path string, op deep.OpKind, old, new any) error {
-		p := path
-		if p == "" {
-			p = "<root>"
-		}
 		if op == deep.OpRemove {
-			c.Tombstones[p] = ts
+			c.Tombstones[path] = ts
 		} else {
-			c.Clocks[p] = ts
+			c.Clocks[path] = ts
 		}
 		return nil
 	})

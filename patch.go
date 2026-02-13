@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"strings"
 )
 
 // OpKind represents the type of operation in a patch.
@@ -60,7 +61,7 @@ type Patch[T any] interface {
 	ApplyResolved(v *T, r ConflictResolver) error
 
 	// Walk calls fn for every operation in the patch.
-	// The path is a Go-style dot-notation path (e.g. "Field.SubField[0]").
+	// The path is a JSON Pointer dot-notation path (e.g. "/Field/SubField/0").
 	// If fn returns an error, walking stops and that error is returned.
 	Walk(fn func(path string, op OpKind, old, new any) error) error
 
@@ -75,6 +76,9 @@ type Patch[T any] interface {
 
 	// ToJSONPatch returns an RFC 6902 compliant JSON Patch representation of this patch.
 	ToJSONPatch() ([]byte, error)
+
+	// Summary returns a human-readable summary of the changes in the patch.
+	Summary() string
 }
 
 // NewPatch returns a new, empty patch for type T.
@@ -86,6 +90,27 @@ func NewPatch[T any]() Patch[T] {
 // This is required if you want to use Gob serialization with Patch[T].
 func Register[T any]() {
 	gob.Register(&typedPatch[T]{})
+}
+
+// ApplyError represents one or more errors that occurred during patch application.
+type ApplyError struct {
+	Errors []error
+}
+
+func (e *ApplyError) Error() string {
+	if len(e.Errors) == 1 {
+		return e.Errors[0].Error()
+	}
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("%d errors during apply:\n", len(e.Errors)))
+	for _, err := range e.Errors {
+		b.WriteString("- " + err.Error() + "\n")
+	}
+	return b.String()
+}
+
+func (e *ApplyError) Unwrap() []error {
+	return e.Errors
 }
 
 type typedPatch[T any] struct {
@@ -114,10 +139,10 @@ func (p *typedPatch[T]) ApplyChecked(v *T) error {
 	if p.cond != nil {
 		ok, err := p.cond.Evaluate(v)
 		if err != nil {
-			return fmt.Errorf("condition evaluation failed: %w", err)
+			return &ApplyError{Errors: []error{fmt.Errorf("condition evaluation failed: %w", err)}}
 		}
 		if !ok {
-			return fmt.Errorf("condition failed")
+			return &ApplyError{Errors: []error{fmt.Errorf("condition failed")}}
 		}
 	}
 
@@ -126,7 +151,14 @@ func (p *typedPatch[T]) ApplyChecked(v *T) error {
 	}
 
 	rv := reflect.ValueOf(v).Elem()
-	return p.inner.applyChecked(reflect.ValueOf(v), rv, p.strict)
+	err := p.inner.applyChecked(reflect.ValueOf(v), rv, p.strict)
+	if err != nil {
+		if ae, ok := err.(*ApplyError); ok {
+			return ae
+		}
+		return &ApplyError{Errors: []error{err}}
+	}
+	return nil
 }
 
 func (p *typedPatch[T]) ApplyResolved(v *T, r ConflictResolver) error {
@@ -135,14 +167,24 @@ func (p *typedPatch[T]) ApplyResolved(v *T, r ConflictResolver) error {
 	}
 
 	rv := reflect.ValueOf(v).Elem()
-	return p.inner.applyResolved(reflect.ValueOf(v), rv, "", r)
+	return p.inner.applyResolved(reflect.ValueOf(v), rv, "/", r)
 }
 
 func (p *typedPatch[T]) Walk(fn func(path string, op OpKind, old, new any) error) error {
 	if p.inner == nil {
 		return nil
 	}
-	return p.inner.walk("", fn)
+
+	return p.inner.walk("", func(path string, op OpKind, old, new any) error {
+		fullPath := path
+		if fullPath == "" {
+			fullPath = "/"
+		} else if fullPath[0] != '/' {
+			fullPath = "/" + fullPath
+		}
+
+		return fn(fullPath, op, old, new)
+	})
 }
 
 func (p *typedPatch[T]) WithCondition(c Condition[T]) Patch[T] {
@@ -178,6 +220,13 @@ func (p *typedPatch[T]) ToJSONPatch() ([]byte, error) {
 	// We pass empty string because toJSONPatch prepends "/" when needed
 	// and handles root as "/".
 	return json.Marshal(p.inner.toJSONPatch(""))
+}
+
+func (p *typedPatch[T]) Summary() string {
+	if p.inner == nil {
+		return "No changes."
+	}
+	return p.inner.summary("/")
 }
 
 func (p *typedPatch[T]) String() string {

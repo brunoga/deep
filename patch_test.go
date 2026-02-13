@@ -433,8 +433,9 @@ func (p *dummyPatch) applyChecked(root, v reflect.Value, strict bool) error { re
 func (p *dummyPatch) applyResolved(root, v reflect.Value, path string, resolver ConflictResolver) error {
 	return nil
 }
-func (p *dummyPatch) reverse() diffPatch       { return p }
-func (p *dummyPatch) format(indent int) string { return "" }
+func (p *dummyPatch) reverse() diffPatch         { return p }
+func (p *dummyPatch) format(indent int) string   { return "" }
+func (p *dummyPatch) summary(path string) string { return "" }
 func (p *dummyPatch) walk(path string, fn func(path string, op OpKind, old, new any) error) error {
 	return nil
 }
