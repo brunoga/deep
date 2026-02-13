@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/brunoga/deep/v2"
+	"github.com/brunoga/deep/v3"
 )
 
 // UIState represents something typically shared between a Go backend and a JS frontend.
@@ -47,7 +47,11 @@ func main() {
 	// 5. Demonstrate normal JSON serialization of the Patch object itself.
 	// This is useful if you want to save the patch in a database (like MongoDB)
 	// and restore it later in another Go service.
-	serializedPatch, _ := json.MarshalIndent(patch, "", "  ")
+	serializedPatch, err := json.MarshalIndent(patch, "", "  ")
+	if err != nil {
+		fmt.Printf("Marshal failed: %v\n", err)
+		return
+	}
 	fmt.Println("\nINTERNAL DEEP JSON REPRESENTATION (for persistence):")
 	fmt.Println(string(serializedPatch))
 }

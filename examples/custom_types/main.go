@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 	"time"
-	"github.com/brunoga/deep/v2"
+	"github.com/brunoga/deep/v3"
 )
 
 type Audit struct {
@@ -46,7 +46,11 @@ func main() {
 
 	// 4. Verify Application
 	final := base
-	patch.ApplyChecked(&final)
+	err := patch.ApplyChecked(&final)
+	if err != nil {
+		fmt.Printf("Apply failed: %v\n", err)
+		return
+	}
 
 	fmt.Printf("Initial: %v\n", base.Timestamp.Format(time.Kitchen))
 	fmt.Printf("Final:   %v\n", final.Timestamp.Format(time.Kitchen))

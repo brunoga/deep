@@ -369,23 +369,23 @@ func (c CompareCondition[T]) MarshalJSON() ([]byte, error) {
 	return json.Marshal(s)
 }
 
-// Equal returns a condition that checks if the value at the path is equal to the given value.
-func Equal[T any](path string, val any) Condition[T] {
+// Eq returns a condition that checks if the value at the path is equal to the given value.
+func Eq[T any](path string, val any) Condition[T] {
 	return CompareCondition[T]{Path: Path(path), Val: val, Op: "=="}
 }
 
-// EqualFold returns a condition that checks if the value at the path is equal to the given value (case-insensitive).
-func EqualFold[T any](path string, val any) Condition[T] {
+// EqFold returns a condition that checks if the value at the path is equal to the given value (case-insensitive).
+func EqFold[T any](path string, val any) Condition[T] {
 	return CompareCondition[T]{Path: Path(path), Val: val, Op: "==", IgnoreCase: true}
 }
 
-// NotEqual returns a condition that checks if the value at the path is not equal to the given value.
-func NotEqual[T any](path string, val any) Condition[T] {
+// Ne returns a condition that checks if the value at the path is not equal to the given value.
+func Ne[T any](path string, val any) Condition[T] {
 	return CompareCondition[T]{Path: Path(path), Val: val, Op: "!="}
 }
 
-// NotEqualFold returns a condition that checks if the value at the path is not equal to the given value (case-insensitive).
-func NotEqualFold[T any](path string, val any) Condition[T] {
+// NeFold returns a condition that checks if the value at the path is not equal to the given value (case-insensitive).
+func NeFold[T any](path string, val any) Condition[T] {
 	return CompareCondition[T]{Path: Path(path), Val: val, Op: "!=", IgnoreCase: true}
 }
 

@@ -3,7 +3,7 @@ package crdt
 import (
 	"testing"
 
-	"github.com/brunoga/deep/v2/crdt/hlc"
+	"github.com/brunoga/deep/v3/crdt/hlc"
 )
 
 func TestText_Insert(t *testing.T) {

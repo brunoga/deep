@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 
-	"github.com/brunoga/deep/v2"
+	"github.com/brunoga/deep/v3"
 )
 
 // Resource is the data we want to manage over the network.
@@ -33,7 +33,11 @@ func main() {
 		}
 
 		// 1. Read the serialized patch from the request body.
-		body, _ := io.ReadAll(r.Body)
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "Failed to read request body", http.StatusBadRequest)
+			return
+		}
 
 		// 2. Deserialize the patch.
 		// NOTE: We use deep.NewPatch[Resource]() to get a typed patch object
@@ -76,7 +80,11 @@ func main() {
 	patch := deep.Diff(clientLocalCopy, updatedCopy)
 
 	// Serialize the patch to JSON for transmission.
-	patchJSON, _ := json.Marshal(patch)
+	patchJSON, err := json.Marshal(patch)
+	if err != nil {
+		fmt.Printf("Failed to marshal patch: %v\n", err)
+		return
+	}
 
 	fmt.Printf("Client: Sending patch to server (%d bytes)\n", len(patchJSON))
 
@@ -89,7 +97,11 @@ func main() {
 	defer resp.Body.Close()
 
 	// --- PART 3: VERIFICATION ---
-	status, _ := io.ReadAll(resp.Body)
+	status, err := io.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Printf("Failed to read response: %v\n", err)
+		return
+	}
 	fmt.Printf("Server Response: %s\n", string(status))
 	fmt.Printf("Server Final State for res-1: %+v\n", ServerState["res-1"])
 }

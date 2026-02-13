@@ -134,7 +134,7 @@ func TestPatchWithConditionSerialization(t *testing.T) {
 	s1 := TestStruct{I: 1}
 	s2 := TestStruct{I: 2}
 
-	p := Diff(s1, s2).WithCondition(Equal[TestStruct]("I", 1))
+	p := Diff(s1, s2).WithCondition(Eq[TestStruct]("I", 1))
 
 	data, err := json.Marshal(p)
 	if err != nil {
@@ -193,7 +193,7 @@ func TestPatch_SerializationExhaustive(t *testing.T) {
 func TestPatch_Serialization_Conditions(t *testing.T) {
 	type Data struct{ A int }
 	builder := NewBuilder[Data]()
-	c := Equal[Data]("A", 1)
+	c := Eq[Data]("A", 1)
 	builder.Root().If(c).Unless(c).Test(Data{A: 1})
 	patch, _ := builder.Build()
 

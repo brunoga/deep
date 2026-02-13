@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"github.com/brunoga/deep/v2"
+	"github.com/brunoga/deep/v3"
 )
 
 // ResourceID represents a complex key that might have transient state.

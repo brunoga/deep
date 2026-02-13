@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/brunoga/deep/v2"
+	"github.com/brunoga/deep/v3"
 )
 
 // Account represents a financial account.
@@ -28,7 +28,11 @@ func main() {
 	builder := deep.NewBuilder[Account]()
 
 	// Set the new status
-	statusNode, _ := builder.Root().Field("Status")
+	statusNode, err := builder.Root().Field("Status")
+	if err != nil {
+		fmt.Printf("Error navigating to Status: %v\n", err)
+		return
+	}
 	statusNode.Set("Pending", "Active")
 
 	// Attach a condition: ONLY apply this field update if Balance > 0.

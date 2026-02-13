@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"strconv"
 
-	"github.com/brunoga/deep/v2/internal/unsafe"
+	"github.com/brunoga/deep/v3/internal/unsafe"
 )
 
 type opInfo struct {

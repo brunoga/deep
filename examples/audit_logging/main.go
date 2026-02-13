@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/brunoga/deep/v2"
+	"github.com/brunoga/deep/v3"
 )
 
 // User represents a typical user profile in a system.

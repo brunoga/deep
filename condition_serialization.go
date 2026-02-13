@@ -197,27 +197,27 @@ func convertFromCondSurrogate[T any](s any) (Condition[T], error) {
 	switch kind {
 	case "equal":
 		d := data.(map[string]any)
-		ic, _ := d["ic"].(bool)
+		ic := getBool(d, "ic")
 		return CompareCondition[T]{Path: Path(d["p"].(string)), Val: d["v"], Op: "==", IgnoreCase: ic}, nil
 	case "not_equal":
 		d := data.(map[string]any)
-		ic, _ := d["ic"].(bool)
+		ic := getBool(d, "ic")
 		return CompareCondition[T]{Path: Path(d["p"].(string)), Val: d["v"], Op: "!=", IgnoreCase: ic}, nil
 	case "compare":
 		d := data.(map[string]any)
-		ic, _ := d["ic"].(bool)
+		ic := getBool(d, "ic")
 		return CompareCondition[T]{Path: Path(d["p"].(string)), Val: d["v"], Op: d["o"].(string), IgnoreCase: ic}, nil
 	case "equal_field":
 		d := data.(map[string]any)
-		ic, _ := d["ic"].(bool)
+		ic := getBool(d, "ic")
 		return CompareFieldCondition[T]{Path1: Path(d["p1"].(string)), Path2: Path(d["p2"].(string)), Op: "==", IgnoreCase: ic}, nil
 	case "not_equal_field":
 		d := data.(map[string]any)
-		ic, _ := d["ic"].(bool)
+		ic := getBool(d, "ic")
 		return CompareFieldCondition[T]{Path1: Path(d["p1"].(string)), Path2: Path(d["p2"].(string)), Op: "!=", IgnoreCase: ic}, nil
 	case "compare_field":
 		d := data.(map[string]any)
-		ic, _ := d["ic"].(bool)
+		ic := getBool(d, "ic")
 		return CompareFieldCondition[T]{Path1: Path(d["p1"].(string)), Path2: Path(d["p2"].(string)), Op: d["o"].(string), IgnoreCase: ic}, nil
 	case "defined":
 		d := data.(map[string]any)
@@ -230,11 +230,11 @@ func convertFromCondSurrogate[T any](s any) (Condition[T], error) {
 		return TypeCondition[T]{Path: Path(d["p"].(string)), TypeName: d["t"].(string)}, nil
 	case "string":
 		d := data.(map[string]any)
-		ic, _ := d["ic"].(bool)
+		ic := getBool(d, "ic")
 		return StringCondition[T]{Path: Path(d["p"].(string)), Val: d["v"].(string), Op: d["o"].(string), IgnoreCase: ic}, nil
 	case "in":
 		d := data.(map[string]any)
-		ic, _ := d["ic"].(bool)
+		ic := getBool(d, "ic")
 		return InCondition[T]{Path: Path(d["p"].(string)), Values: d["v"].([]any), IgnoreCase: ic}, nil
 	case "log":
 		d := data.(map[string]any)
@@ -270,4 +270,13 @@ func convertFromCondSurrogate[T any](s any) (Condition[T], error) {
 	}
 
 	return nil, fmt.Errorf("unknown condition kind: %s", kind)
+}
+
+func getBool(d map[string]any, key string) bool {
+	if v, ok := d[key]; ok {
+		if b, ok := v.(bool); ok {
+			return b
+		}
+	}
+	return false
 }
