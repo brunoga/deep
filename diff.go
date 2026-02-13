@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"reflect"
 	"strconv"
-	"strings"
 
 	"github.com/brunoga/deep/v2/internal/unsafe"
 )
@@ -25,7 +24,6 @@ type diffConfig struct {
 }
 
 // DiffIgnorePath returns an option that tells Diff to ignore changes at the specified path.
-// It accepts both dot-notation and JSON Pointers.
 func DiffIgnorePath(path string) DiffOption {
 	return diffOptionFunc(func(c *diffConfig) {
 		c.ignoredPaths[NormalizePath(path)] = true
@@ -39,13 +37,10 @@ type Keyer interface {
 	CanonicalKey() any
 }
 
-// Differ is a stateful engine for calculating patches between two values.
+// Differ is a stateless engine for calculating patches between two values.
 type Differ struct {
-	config *diffConfig
-	// Tracks values in 'a' to detect moves/copies.
-	valueIndex map[any]string
-	// Custom diffing logic for specific types.
-	customDiffs map[reflect.Type]func(a, b reflect.Value) (diffPatch, error)
+	config      *diffConfig
+	customDiffs map[reflect.Type]func(a, b reflect.Value, ctx *diffContext) (diffPatch, error)
 }
 
 // NewDiffer creates a new Differ with the given options.
@@ -58,17 +53,21 @@ func NewDiffer(opts ...DiffOption) *Differ {
 	}
 	return &Differ{
 		config:      config,
-		valueIndex:  make(map[any]string),
-		customDiffs: make(map[reflect.Type]func(a, b reflect.Value) (diffPatch, error)),
+		customDiffs: make(map[reflect.Type]func(a, b reflect.Value, ctx *diffContext) (diffPatch, error)),
 	}
 }
 
+// diffContext holds transient state for a single Diff execution.
+type diffContext struct {
+	valueIndex map[any]string
+	visited    map[visitKey]bool
+}
+
 // RegisterCustomDiff registers a custom diff function for a specific type.
-// This is useful for third-party types that cannot implement the Differ interface.
 func RegisterCustomDiff[T any](d *Differ, fn func(a, b T) (Patch[T], error)) {
 	var t T
 	typ := reflect.TypeOf(t)
-	d.customDiffs[typ] = func(a, b reflect.Value) (diffPatch, error) {
+	d.customDiffs[typ] = func(a, b reflect.Value, ctx *diffContext) (diffPatch, error) {
 		p, err := fn(a.Interface().(T), b.Interface().(T))
 		if err != nil {
 			return nil, err
@@ -83,113 +82,34 @@ func RegisterCustomDiff[T any](d *Differ, fn func(a, b T) (Patch[T], error)) {
 	}
 }
 
-// Diff compares two values a and b and returns a Patch that can be applied
-// to a to make it equal to b.
+// Diff compares two values a and b and returns a Patch that can be applied.
 func (d *Differ) Diff(a, b any) (diffPatch, error) {
-	va := reflect.ValueOf(a)
-	vb := reflect.ValueOf(b)
-
-	// Reset/Initialize move detection index
-	d.valueIndex = make(map[any]string)
-	d.indexValues(va, "/", make(map[uintptr]bool))
-
-	return d.diffRecursive(va, vb, make(map[visitKey]bool), "/", false)
-}
-
-func (d *Differ) indexValues(v reflect.Value, path string, visited map[uintptr]bool) {
-	if !v.IsValid() {
-		return
-	}
-
-	// Only index complex types that are worth moving/copying
-	kind := v.Kind()
-	if kind == reflect.Pointer || kind == reflect.Interface {
-		if v.IsNil() {
-			return
-		}
-		ptr := v.Pointer()
-		if visited[ptr] {
-			return
-		}
-		visited[ptr] = true
-		d.indexValues(v.Elem(), path, visited)
-		return
-	}
-
-	// Use interface value as key for indexing if possible
-	iv := v
-	for iv.Kind() == reflect.Pointer || iv.Kind() == reflect.Interface {
-		if iv.IsNil() {
-			break
-		}
-		iv = iv.Elem()
-	}
-
-	if iv.IsValid() && iv.CanInterface() {
-		val := iv.Interface()
-		if isHashable(iv) {
-			switch iv.Kind() {
-			case reflect.Struct, reflect.Slice, reflect.Map:
-				if _, ok := d.valueIndex[val]; !ok {
-					d.valueIndex[val] = path
-				}
-			}
-		}
-	}
-
-	switch kind {
-	case reflect.Struct:
-		info := getTypeInfo(v.Type())
-		for _, fInfo := range info.fields {
-			if fInfo.tag.ignore {
-				continue
-			}
-			f := v.Field(fInfo.index)
-			subPath := path
-			if !strings.HasSuffix(subPath, "/") {
-				subPath += "/"
-			}
-			subPath += fInfo.name
-			d.indexValues(f, subPath, visited)
-		}
-	case reflect.Slice, reflect.Array:
-		for i := 0; i < v.Len(); i++ {
-			subPath := path
-			if !strings.HasSuffix(subPath, "/") {
-				subPath += "/"
-			}
-			subPath += strconv.Itoa(i)
-			d.indexValues(v.Index(i), subPath, visited)
-		}
-	case reflect.Map:
-		iter := v.MapRange()
-		for iter.Next() {
-			k := iter.Key()
-			val := iter.Value()
-			subPath := path
-			if !strings.HasSuffix(subPath, "/") {
-				subPath += "/"
-			}
-			subPath += fmt.Sprintf("%v", k.Interface())
-			d.indexValues(val, subPath, visited)
-		}
-	}
-}
-
-// Diff compares two values a and b and returns a Patch that can be applied
-// to a to make it equal to b.
-//
-// If a and b are deeply equal, it returns nil.
-func Diff[T any](a, b T, opts ...DiffOption) Patch[T] {
-	d := NewDiffer(opts...)
-
-	// We take the address of a and b to ensure that if T is an interface,
-	// reflect.ValueOf doesn't "peek through" to the concrete type immediately,
-	// preserving the interface wrapper which is important for ApplyChecked.
 	va := reflect.ValueOf(&a).Elem()
 	vb := reflect.ValueOf(&b).Elem()
 
-	patch, err := d.diffRecursive(va, vb, make(map[visitKey]bool), "/", false)
+	ctx := &diffContext{
+		valueIndex: make(map[any]string),
+		visited:    make(map[visitKey]bool),
+	}
+
+	d.indexValues(va, "/", make(map[uintptr]bool), ctx)
+
+	return d.diffRecursive(va, vb, "/", false, ctx)
+}
+
+// DiffTyped is a generic wrapper for Diff that returns a typed Patch[T].
+func DiffTyped[T any](d *Differ, a, b T) Patch[T] {
+	va := reflect.ValueOf(&a).Elem()
+	vb := reflect.ValueOf(&b).Elem()
+
+	ctx := &diffContext{
+		valueIndex: make(map[any]string),
+		visited:    make(map[visitKey]bool),
+	}
+
+	d.indexValues(va, "/", make(map[uintptr]bool), ctx)
+
+	patch, err := d.diffRecursive(va, vb, "/", false, ctx)
 	if err != nil {
 		panic(err)
 	}
@@ -204,12 +124,10 @@ func Diff[T any](a, b T, opts ...DiffOption) Patch[T] {
 	}
 }
 
-// DifferInterface is an interface that types can implement to provide their own
-// custom diff logic. The type T in Diff(other T) (Patch[T], error) must be the
-// same concrete type as the receiver that implements this interface.
-type DifferInterface[T any] interface {
-	// Diff returns a patch that transforms the receiver into other.
-	Diff(other T) (Patch[T], error)
+// Diff compares two values a and b and returns a Patch that can be applied.
+func Diff[T any](a, b T, opts ...DiffOption) Patch[T] {
+	d := NewDiffer(opts...)
+	return DiffTyped(d, a, b)
 }
 
 type visitKey struct {
@@ -238,7 +156,67 @@ func isHashable(v reflect.Value) bool {
 	return true
 }
 
-func (d *Differ) diffRecursive(a, b reflect.Value, visited map[visitKey]bool, path string, atomic bool) (diffPatch, error) {
+func (d *Differ) indexValues(v reflect.Value, path string, visited map[uintptr]bool, ctx *diffContext) {
+	if !v.IsValid() {
+		return
+	}
+
+	kind := v.Kind()
+	if kind == reflect.Pointer || kind == reflect.Interface {
+		if v.IsNil() {
+			return
+		}
+		if kind == reflect.Pointer {
+			ptr := v.Pointer()
+			if visited[ptr] {
+				return
+			}
+			visited[ptr] = true
+		}
+		d.indexValues(v.Elem(), path, visited, ctx)
+		return
+	}
+
+	iv := v
+	if iv.IsValid() && iv.CanInterface() {
+		val := iv.Interface()
+		if isHashable(iv) {
+			switch iv.Kind() {
+			case reflect.Struct, reflect.Slice, reflect.Map:
+				if _, ok := ctx.valueIndex[val]; !ok {
+					ctx.valueIndex[val] = path
+				}
+			}
+		}
+	}
+
+	switch kind {
+	case reflect.Struct:
+		info := getTypeInfo(v.Type())
+		for _, fInfo := range info.fields {
+			if fInfo.tag.ignore {
+				continue
+			}
+			d.indexValues(v.Field(fInfo.index), JoinPath(path, fInfo.name), visited, ctx)
+		}
+	case reflect.Slice, reflect.Array:
+		for i := 0; i < v.Len(); i++ {
+			d.indexValues(v.Index(i), JoinPath(path, strconv.Itoa(i)), visited, ctx)
+		}
+	case reflect.Map:
+		iter := v.MapRange()
+		for iter.Next() {
+			k := iter.Key()
+			ck := k.Interface()
+			if keyer, ok := ck.(Keyer); ok {
+				ck = keyer.CanonicalKey()
+			}
+			d.indexValues(iter.Value(), JoinPath(path, fmt.Sprintf("%v", ck)), visited, ctx)
+		}
+	}
+}
+
+func (d *Differ) diffRecursive(a, b reflect.Value, path string, atomic bool, ctx *diffContext) (diffPatch, error) {
 	if d.config.ignoredPaths[path] {
 		return nil, nil
 	}
@@ -269,9 +247,8 @@ func (d *Differ) diffRecursive(a, b reflect.Value, visited map[visitKey]bool, pa
 		return nil, nil
 	}
 
-	// Registry Check
 	if fn, ok := d.customDiffs[a.Type()]; ok {
-		return fn(a, b)
+		return fn(a, b, ctx)
 	}
 
 	// Move/Copy Detection
@@ -284,10 +261,9 @@ func (d *Differ) diffRecursive(a, b reflect.Value, visited map[visitKey]bool, pa
 	}
 
 	if ivb.IsValid() && ivb.CanInterface() && isHashable(ivb) {
-		// Only check for complex types
 		kind := ivb.Kind()
 		if kind == reflect.Struct || kind == reflect.Slice || kind == reflect.Map {
-			if fromPath, ok := d.valueIndex[ivb.Interface()]; ok && fromPath != path {
+			if fromPath, ok := ctx.valueIndex[ivb.Interface()]; ok && fromPath != path {
 				return &copyPatch{from: fromPath}, nil
 			}
 		}
@@ -306,14 +282,10 @@ func (d *Differ) diffRecursive(a, b reflect.Value, visited map[visitKey]bool, pa
 					if res[0].IsNil() {
 						return nil, nil
 					}
-
 					if unwrapper, ok := res[0].Interface().(patchUnwrapper); ok {
 						return unwrapper.unwrap(), nil
 					}
-
-					return &customDiffPatch{
-						patch: res[0].Interface(),
-					}, nil
+					return &customDiffPatch{patch: res[0].Interface()}, nil
 				}
 			}
 		}
@@ -327,17 +299,17 @@ func (d *Differ) diffRecursive(a, b reflect.Value, visited map[visitKey]bool, pa
 		return &valuePatch{oldVal: deepCopyValue(a), newVal: deepCopyValue(b)}, nil
 
 	case reflect.Pointer:
-		return d.diffPtr(a, b, visited, path)
+		return d.diffPtr(a, b, path, ctx)
 	case reflect.Interface:
-		return d.diffInterface(a, b, visited, path)
+		return d.diffInterface(a, b, path, ctx)
 	case reflect.Struct:
-		return d.diffStruct(a, b, visited, path)
+		return d.diffStruct(a, b, path, ctx)
 	case reflect.Slice:
-		return d.diffSlice(a, b, visited, path)
+		return d.diffSlice(a, b, path, ctx)
 	case reflect.Map:
-		return d.diffMap(a, b, visited, path)
+		return d.diffMap(a, b, path, ctx)
 	case reflect.Array:
-		return d.diffArray(a, b, visited, path)
+		return d.diffArray(a, b, path, ctx)
 	default:
 		if a.Kind() == reflect.Func || a.Kind() == reflect.Chan || a.Kind() == reflect.UnsafePointer {
 			if a.IsNil() && b.IsNil() {
@@ -348,7 +320,7 @@ func (d *Differ) diffRecursive(a, b reflect.Value, visited map[visitKey]bool, pa
 	}
 }
 
-func (d *Differ) diffPtr(a, b reflect.Value, visited map[visitKey]bool, path string) (diffPatch, error) {
+func (d *Differ) diffPtr(a, b reflect.Value, path string, ctx *diffContext) (diffPatch, error) {
 	if a.IsNil() && b.IsNil() {
 		return nil, nil
 	}
@@ -360,12 +332,12 @@ func (d *Differ) diffPtr(a, b reflect.Value, visited map[visitKey]bool, path str
 	}
 
 	k := visitKey{a.Pointer(), b.Pointer(), a.Type()}
-	if visited[k] {
+	if ctx.visited[k] {
 		return nil, nil
 	}
-	visited[k] = true
+	ctx.visited[k] = true
 
-	elemPatch, err := d.diffRecursive(a.Elem(), b.Elem(), visited, path, false)
+	elemPatch, err := d.diffRecursive(a.Elem(), b.Elem(), path, false, ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -376,7 +348,7 @@ func (d *Differ) diffPtr(a, b reflect.Value, visited map[visitKey]bool, path str
 	return &ptrPatch{elemPatch: elemPatch}, nil
 }
 
-func (d *Differ) diffInterface(a, b reflect.Value, visited map[visitKey]bool, path string) (diffPatch, error) {
+func (d *Differ) diffInterface(a, b reflect.Value, path string, ctx *diffContext) (diffPatch, error) {
 	if a.IsNil() && b.IsNil() {
 		return nil, nil
 	}
@@ -391,7 +363,7 @@ func (d *Differ) diffInterface(a, b reflect.Value, visited map[visitKey]bool, pa
 		return &valuePatch{oldVal: deepCopyValue(a), newVal: deepCopyValue(b)}, nil
 	}
 
-	elemPatch, err := d.diffRecursive(a.Elem(), b.Elem(), visited, path, false)
+	elemPatch, err := d.diffRecursive(a.Elem(), b.Elem(), path, false, ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -402,7 +374,7 @@ func (d *Differ) diffInterface(a, b reflect.Value, visited map[visitKey]bool, pa
 	return &interfacePatch{elemPatch: elemPatch}, nil
 }
 
-func (d *Differ) diffStruct(a, b reflect.Value, visited map[visitKey]bool, path string) (diffPatch, error) {
+func (d *Differ) diffStruct(a, b reflect.Value, path string, ctx *diffContext) (diffPatch, error) {
 	fields := make(map[string]diffPatch)
 	info := getTypeInfo(a.Type())
 
@@ -422,13 +394,9 @@ func (d *Differ) diffStruct(a, b reflect.Value, visited map[visitKey]bool, path 
 		}
 
 		fieldName := fInfo.name
-		fieldPath := path
-		if !strings.HasSuffix(fieldPath, "/") {
-			fieldPath += "/"
-		}
-		fieldPath += fieldName
+		fieldPath := JoinPath(path, fieldName)
 
-		patch, err := d.diffRecursive(fA, fB, visited, fieldPath, fInfo.tag.atomic)
+		patch, err := d.diffRecursive(fA, fB, fieldPath, fInfo.tag.atomic, ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -447,16 +415,12 @@ func (d *Differ) diffStruct(a, b reflect.Value, visited map[visitKey]bool, path 
 	return &structPatch{fields: fields}, nil
 }
 
-func (d *Differ) diffArray(a, b reflect.Value, visited map[visitKey]bool, path string) (diffPatch, error) {
+func (d *Differ) diffArray(a, b reflect.Value, path string, ctx *diffContext) (diffPatch, error) {
 	indices := make(map[int]diffPatch)
 
 	for i := 0; i < a.Len(); i++ {
-		indexPath := path
-		if !strings.HasSuffix(indexPath, "/") {
-			indexPath += "/"
-		}
-		indexPath += strconv.Itoa(i)
-		patch, err := d.diffRecursive(a.Index(i), b.Index(i), visited, indexPath, false)
+		indexPath := JoinPath(path, strconv.Itoa(i))
+		patch, err := d.diffRecursive(a.Index(i), b.Index(i), indexPath, false, ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -472,7 +436,7 @@ func (d *Differ) diffArray(a, b reflect.Value, visited map[visitKey]bool, path s
 	return &arrayPatch{indices: indices}, nil
 }
 
-func (d *Differ) diffMap(a, b reflect.Value, visited map[visitKey]bool, path string) (diffPatch, error) {
+func (d *Differ) diffMap(a, b reflect.Value, path string, ctx *diffContext) (diffPatch, error) {
 	if a.IsNil() && b.IsNil() {
 		return nil, nil
 	}
@@ -486,16 +450,25 @@ func (d *Differ) diffMap(a, b reflect.Value, visited map[visitKey]bool, path str
 	added := make(map[any]reflect.Value)
 	removed := make(map[any]reflect.Value)
 	modified := make(map[any]diffPatch)
+	originalKeys := make(map[any]any)
 
-	// Build lookup maps using canonical keys if possible
 	getCanonical := func(v reflect.Value) any {
 		if v.CanInterface() {
-			if k, ok := v.Interface().(Keyer); ok {
-				return k.CanonicalKey()
+			val := v.Interface()
+			if k, ok := val.(Keyer); ok {
+				ck := k.CanonicalKey()
+				originalKeys[ck] = val
+				return ck
 			}
-			return v.Interface()
+			return val
 		}
 		return v.Interface()
+	}
+
+	bByCanonical := make(map[any]reflect.Value)
+	iterB := b.MapRange()
+	for iterB.Next() {
+		bByCanonical[getCanonical(iterB.Key())] = iterB.Value()
 	}
 
 	iterA := a.MapRange()
@@ -504,44 +477,45 @@ func (d *Differ) diffMap(a, b reflect.Value, visited map[visitKey]bool, path str
 		vA := iterA.Value()
 		ck := getCanonical(k)
 
-		keyPath := path
-		if !strings.HasSuffix(keyPath, "/") {
-			keyPath += "/"
-		}
-		keyPath += fmt.Sprintf("%v", ck)
+		keyPath := JoinPath(path, fmt.Sprintf("%v", ck))
 
-		vB := b.MapIndex(k)
-		if !vB.IsValid() {
+		vB, found := bByCanonical[ck]
+		if !found {
 			if !d.config.ignoredPaths[keyPath] {
 				removed[ck] = deepCopyValue(vA)
 			}
 		} else {
-			patch, err := d.diffRecursive(vA, vB, visited, keyPath, false)
+			patch, err := d.diffRecursive(vA, vB, keyPath, false, ctx)
 			if err != nil {
 				return nil, err
 			}
 			if patch != nil {
 				modified[ck] = patch
 			}
+			delete(bByCanonical, ck)
 		}
 	}
 
-	iterB := b.MapRange()
-	for iterB.Next() {
-		k := iterB.Key()
-		vB := iterB.Value()
-		ck := getCanonical(k)
-
-		vA := a.MapIndex(k)
-		if !vA.IsValid() {
-			keyPath := path
-			if !strings.HasSuffix(keyPath, "/") {
-				keyPath += "/"
+	for ck, vB := range bByCanonical {
+		keyPath := JoinPath(path, fmt.Sprintf("%v", ck))
+		if !d.config.ignoredPaths[keyPath] {
+			if vB.CanInterface() {
+				ivb := vB
+				for ivb.Kind() == reflect.Pointer || ivb.Kind() == reflect.Interface {
+					if ivb.IsNil() {
+						break
+					}
+					ivb = ivb.Elem()
+				}
+				if ivb.IsValid() && isHashable(ivb) {
+					if fromPath, ok := ctx.valueIndex[ivb.Interface()]; ok && fromPath != keyPath {
+						modified[ck] = &copyPatch{from: fromPath}
+						delete(bByCanonical, ck)
+						continue
+					}
+				}
 			}
-			keyPath += fmt.Sprintf("%v", ck)
-			if !d.config.ignoredPaths[keyPath] {
-				added[ck] = deepCopyValue(vB)
-			}
+			added[ck] = deepCopyValue(vB)
 		}
 	}
 
@@ -550,14 +524,15 @@ func (d *Differ) diffMap(a, b reflect.Value, visited map[visitKey]bool, path str
 	}
 
 	return &mapPatch{
-		added:    added,
-		removed:  removed,
-		modified: modified,
-		keyType:  a.Type().Key(),
+		added:        added,
+		removed:      removed,
+		modified:     modified,
+		originalKeys: originalKeys,
+		keyType:      a.Type().Key(),
 	}, nil
 }
 
-func (d *Differ) diffSlice(a, b reflect.Value, visited map[visitKey]bool, path string) (diffPatch, error) {
+func (d *Differ) diffSlice(a, b reflect.Value, path string, ctx *diffContext) (diffPatch, error) {
 	if a.IsNil() && b.IsNil() {
 		return nil, nil
 	}
@@ -643,12 +618,12 @@ func (d *Differ) diffSlice(a, b reflect.Value, visited map[visitKey]bool, path s
 		return nil, nil
 	}
 
-	ops := d.computeSliceEdits(a, b, midAStart, midAEnd, midBStart, midBEnd, keyField, hasKey, path)
+	ops := d.computeSliceEdits(a, b, midAStart, midAEnd, midBStart, midBEnd, keyField, hasKey, path, ctx)
 
 	return &slicePatch{ops: ops}, nil
 }
 
-func (d *Differ) computeSliceEdits(a, b reflect.Value, aStart, aEnd, bStart, bEnd, keyField int, hasKey bool, path string) []sliceOp {
+func (d *Differ) computeSliceEdits(a, b reflect.Value, aStart, aEnd, bStart, bEnd, keyField int, hasKey bool, path string, ctx *diffContext) []sliceOp {
 	n := aEnd - aStart
 	m := bEnd - bStart
 
@@ -692,7 +667,7 @@ func (d *Differ) computeSliceEdits(a, b reflect.Value, aStart, aEnd, bStart, bEn
 			}
 			v[k+offset] = x
 			if x >= n && y >= m {
-				return d.backtrackMyers(a, b, aStart, aEnd, bStart, bEnd, keyField, hasKey, trace, path)
+				return d.backtrackMyers(a, b, aStart, aEnd, bStart, bEnd, keyField, hasKey, trace, path, ctx)
 			}
 		}
 	}
@@ -700,7 +675,7 @@ func (d *Differ) computeSliceEdits(a, b reflect.Value, aStart, aEnd, bStart, bEn
 	return nil
 }
 
-func (d *Differ) backtrackMyers(a, b reflect.Value, aStart, aEnd, bStart, bEnd, keyField int, hasKey bool, trace [][]int, path string) []sliceOp {
+func (d *Differ) backtrackMyers(a, b reflect.Value, aStart, aEnd, bStart, bEnd, keyField int, hasKey bool, trace [][]int, path string, ctx *diffContext) []sliceOp {
 	var ops []sliceOp
 	x, y := aEnd-aStart, bEnd-bStart
 	offset := (aEnd - aStart) + (bEnd - bStart)
@@ -723,12 +698,7 @@ func (d *Differ) backtrackMyers(a, b reflect.Value, aStart, aEnd, bStart, bEnd, 
 			vA := a.Index(aStart + x - 1)
 			vB := b.Index(bStart + y - 1)
 			if !reflect.DeepEqual(vA.Interface(), vB.Interface()) {
-				subPath := path
-				if !strings.HasSuffix(subPath, "/") {
-					subPath += "/"
-				}
-				subPath += fmt.Sprintf("%v", extractKey(vA, keyField))
-				p, _ := d.diffRecursive(vA, vB, make(map[visitKey]bool), subPath, false)
+				p, _ := d.diffRecursive(vA, vB, JoinPath(path, fmt.Sprintf("%v", extractKey(vA, keyField))), false, ctx)
 				op := sliceOp{
 					Kind:  OpReplace,
 					Index: aStart + x - 1,
@@ -758,10 +728,39 @@ func (d *Differ) backtrackMyers(a, b reflect.Value, aStart, aEnd, bStart, bEnd, 
 			if hasKey && (bStart+y-2 >= 0) {
 				prevKey = extractKey(b.Index(bStart+y-2), keyField)
 			}
+			val := b.Index(bStart + y - 1)
+
+			// Move/Copy Detection for slice additions
+			if val.CanInterface() {
+				iv := val
+				for iv.Kind() == reflect.Pointer || iv.Kind() == reflect.Interface {
+					if iv.IsNil() {
+						break
+					}
+					iv = iv.Elem()
+				}
+				if iv.IsValid() && isHashable(iv) {
+					if fromPath, ok := ctx.valueIndex[iv.Interface()]; ok {
+						op := sliceOp{
+							Kind:    OpCopy,
+							Index:   aStart + x,
+							Patch:   &copyPatch{from: fromPath},
+							PrevKey: prevKey,
+						}
+						if hasKey {
+							op.Key = extractKey(val, keyField)
+						}
+						ops = append(ops, op)
+						x, y = prevX, prevY
+						continue
+					}
+				}
+			}
+
 			op := sliceOp{
 				Kind:    OpAdd,
 				Index:   aStart + x,
-				Val:     deepCopyValue(b.Index(bStart + y - 1)),
+				Val:     deepCopyValue(val),
 				PrevKey: prevKey,
 			}
 			if hasKey {
@@ -776,12 +775,7 @@ func (d *Differ) backtrackMyers(a, b reflect.Value, aStart, aEnd, bStart, bEnd, 
 		vA := a.Index(aStart + x - 1)
 		vB := b.Index(bStart + y - 1)
 		if !reflect.DeepEqual(vA.Interface(), vB.Interface()) {
-			subPath := path
-			if !strings.HasSuffix(subPath, "/") {
-				subPath += "/"
-			}
-			subPath += fmt.Sprintf("%v", extractKey(vA, keyField))
-			p, _ := d.diffRecursive(vA, vB, make(map[visitKey]bool), subPath, false)
+			p, _ := d.diffRecursive(vA, vB, JoinPath(path, fmt.Sprintf("%v", extractKey(vA, keyField))), false, ctx)
 			op := sliceOp{
 				Kind:  OpReplace,
 				Index: aStart + x - 1,
