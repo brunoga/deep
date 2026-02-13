@@ -1,6 +1,7 @@
 package deep
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 )
@@ -349,5 +350,261 @@ func TestDiff_MapExhaustive(t *testing.T) {
 				t.Errorf("Apply failed: expected %v, got %v", tt.b, a)
 			}
 		})
+	}
+}
+
+type CustomTypeForDiffer struct {
+	Value int
+}
+
+func (c CustomTypeForDiffer) Diff(other CustomTypeForDiffer) (Patch[CustomTypeForDiffer], error) {
+	if c.Value == other.Value {
+		return nil, nil
+	}
+	type internal CustomTypeForDiffer
+	p := Diff(internal(c), internal{Value: other.Value + 1000})
+	return &typedPatch[CustomTypeForDiffer]{
+		inner:  p.(*typedPatch[internal]).inner,
+		strict: true,
+	}, nil
+}
+
+func TestDiff_CustomDiffer_ValueReceiver(t *testing.T) {
+	a := CustomTypeForDiffer{Value: 10}
+	b := CustomTypeForDiffer{Value: 20}
+
+	patch := Diff(a, b)
+	if patch == nil {
+		t.Fatal("Expected patch")
+	}
+
+	patch.Apply(&a)
+
+	expected := 20 + 1000
+	if a.Value != expected {
+		t.Errorf("Custom Diff method was not called correctly: expected %d, got %d", expected, a.Value)
+	}
+}
+
+type CustomPtrTypeForDiffer struct {
+	Value int
+}
+
+func (c *CustomPtrTypeForDiffer) Diff(other *CustomPtrTypeForDiffer) (Patch[*CustomPtrTypeForDiffer], error) {
+	if (c == nil && other == nil) || (c != nil && other != nil && c.Value == other.Value) {
+		return nil, nil
+	}
+
+	type internal CustomPtrTypeForDiffer
+	p := Diff((*internal)(c), &internal{Value: other.Value + 5000})
+	return &typedPatch[*CustomPtrTypeForDiffer]{
+		inner:  p.(*typedPatch[*internal]).inner,
+		strict: true,
+	}, nil
+}
+
+func TestDiff_CustomDiffer_PointerReceiver(t *testing.T) {
+	a := &CustomPtrTypeForDiffer{Value: 10}
+	b := &CustomPtrTypeForDiffer{Value: 20}
+
+	patch := Diff(a, b)
+	if patch == nil {
+		t.Fatal("Expected patch")
+	}
+
+	patch.Apply(&a)
+
+	expected := 20 + 5000
+	if a.Value != expected {
+		t.Errorf("Custom Diff method (ptr receiver) was not called correctly: expected %d, got %d", expected, a.Value)
+	}
+}
+
+type CustomErrorDiffer struct {
+	Value int
+}
+
+func (c CustomErrorDiffer) Diff(other CustomErrorDiffer) (Patch[CustomErrorDiffer], error) {
+	return nil, fmt.Errorf("custom error")
+}
+
+func TestDiff_CustomDiffer_ErrorCase(t *testing.T) {
+	a := CustomErrorDiffer{Value: 1}
+	b := CustomErrorDiffer{Value: 2}
+
+	defer func() {
+		if r := recover(); r == nil {
+			t.Errorf("Expected panic due to custom error in Diff")
+		} else {
+			if fmt.Sprintf("%v", r) != "custom error" {
+				t.Errorf("Expected panic 'custom error', got '%v'", r)
+			}
+		}
+	}()
+
+	Diff(a, b)
+}
+
+func TestDiff_CustomDiffer_ToJSONPatch(t *testing.T) {
+	a := CustomTypeForDiffer{Value: 10}
+	b := CustomTypeForDiffer{Value: 20}
+
+	patch := Diff(a, b)
+	if patch == nil {
+		t.Fatal("Expected patch")
+	}
+
+	jsonPatch, err := patch.ToJSONPatch()
+	if err != nil {
+		t.Fatalf("ToJSONPatch failed: %v", err)
+	}
+
+	expected := `[{"op":"replace","path":"/Value","value":1020}]`
+	if string(jsonPatch) != expected {
+		t.Errorf("Expected JSON patch %s, got %s", expected, string(jsonPatch))
+	}
+}
+
+type CustomNestedForJSON struct {
+	Inner CustomTypeForDiffer
+}
+
+func TestDiff_CustomDiffer_ToJSONPatch_Nested(t *testing.T) {
+	a := CustomNestedForJSON{Inner: CustomTypeForDiffer{Value: 10}}
+	b := CustomNestedForJSON{Inner: CustomTypeForDiffer{Value: 20}}
+
+	patch := Diff(a, b)
+	if patch == nil {
+		t.Fatal("Expected patch")
+	}
+
+	jsonPatch, err := patch.ToJSONPatch()
+	if err != nil {
+		t.Fatalf("ToJSONPatch failed: %v", err)
+	}
+
+	expected := `[{"op":"replace","path":"/Inner/Value","value":1020}]`
+	if string(jsonPatch) != expected {
+		t.Errorf("Expected JSON patch %s, got %s", expected, string(jsonPatch))
+	}
+}
+
+func TestRegisterCustomDiff(t *testing.T) {
+	type Custom struct {
+		Val string
+	}
+
+	d := NewDiffer()
+	RegisterCustomDiff(d, func(a, b Custom) (Patch[Custom], error) {
+		if a.Val == b.Val {
+			return nil, nil
+		}
+		builder := NewBuilder[Custom]()
+		node, _ := builder.Root().Field("Val")
+		node.Put("CUSTOM:" + b.Val)
+		return builder.Build()
+	})
+
+	c1 := Custom{Val: "old"}
+	c2 := Custom{Val: "new"}
+
+	patch := DiffTyped(d, c1, c2)
+	if patch == nil {
+		t.Fatal("Expected patch")
+	}
+
+	target := Custom{Val: "old"}
+	patch.Apply(&target)
+
+	if target.Val != "CUSTOM:new" {
+		t.Errorf("Expected CUSTOM:new, got %s", target.Val)
+	}
+}
+
+type KeyedTask struct {
+	ID     string `deep:"key"`
+	Status string
+	Value  int
+}
+
+func TestKeyedSlice_Basic(t *testing.T) {
+	a := []KeyedTask{
+		{ID: "t1", Status: "todo", Value: 1},
+		{ID: "t2", Status: "todo", Value: 2},
+	}
+	b := []KeyedTask{
+		{ID: "t2", Status: "done", Value: 2},
+		{ID: "t1", Status: "todo", Value: 1},
+	}
+
+	patch := Diff(a, b)
+	if patch == nil {
+		t.Fatal("Expected patch")
+	}
+
+	patch.Apply(&a)
+
+	if len(a) != 2 {
+		t.Fatalf("Expected 2 tasks, got %d", len(a))
+	}
+
+	if a[0].ID != "t2" || a[0].Status != "done" {
+		t.Errorf("Expected t2 done at index 0, got %+v", a[0])
+	}
+	if a[1].ID != "t1" || a[1].Status != "todo" {
+		t.Errorf("Expected t1 todo at index 1, got %+v", a[1])
+	}
+}
+
+func TestKeyedSlice_Ptr(t *testing.T) {
+	a := []*KeyedTask{
+		{ID: "t1", Status: "todo"},
+		{ID: "t2", Status: "todo"},
+	}
+	b := []*KeyedTask{
+		{ID: "t2", Status: "done"},
+		{ID: "t1", Status: "todo"},
+	}
+
+	patch := Diff(a, b)
+	if patch == nil {
+		t.Fatal("Expected patch")
+	}
+
+	patch.Apply(&a)
+
+	if a[0].ID != "t2" || a[0].Status != "done" {
+		t.Errorf("Expected t2 done at index 0, got %+v", a[0])
+	}
+	if a[1].ID != "t1" || a[1].Status != "todo" {
+		t.Errorf("Expected t1 todo at index 1, got %+v", a[1])
+	}
+}
+
+func TestKeyedSlice_Complex(t *testing.T) {
+	a := []KeyedTask{
+		{ID: "t1", Status: "todo"},
+		{ID: "t2", Status: "todo"},
+		{ID: "t3", Status: "todo"},
+	}
+	b := []KeyedTask{
+		{ID: "t3", Status: "todo"},
+		{ID: "t1", Status: "done"},
+		{ID: "t4", Status: "new"},
+	}
+
+	patch := Diff(a, b)
+	if patch == nil {
+		t.Fatal("Expected patch")
+	}
+
+	patch.Apply(&a)
+
+	if len(a) != 3 {
+		t.Fatalf("Expected 3 tasks, got %d", len(a))
+	}
+
+	if a[0].ID != "t3" || a[1].ID != "t1" || a[1].Status != "done" || a[2].ID != "t4" {
+		t.Errorf("Unexpected results after apply: %+v", a)
 	}
 }

@@ -134,8 +134,8 @@ func TestNewPredicates(t *testing.T) {
 		{"In_Age", In[User]("Age", 20, 30, 40), true},
 		{"In_Age_False", In[User]("Age", 20, 25, 40), false},
 		{"In_Bio_Fold", InFold[User]("Name", "ALICE", "BOB"), true},
-		{"EqualFold", EqualFold[User]("Name", "alice"), true},
-		{"NotEqualFold", NotEqualFold[User]("Name", "bob"), true},
+		{"EqFold", EqFold[User]("Name", "alice"), true},
+		{"NeFold", NeFold[User]("Name", "bob"), true},
 	}
 
 	for _, tt := range tests {
@@ -188,5 +188,29 @@ func TestCompareValues_Exhaustive(t *testing.T) {
 				t.Errorf("Evaluate() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestCondition_Aliases(t *testing.T) {
+	type Data struct { I int; S string }
+	d := Data{I: 10, S: "FOO"}
+
+	tests := []struct {
+		name string
+		cond Condition[Data]
+		want bool
+	}{
+		{"Ne", Ne[Data]("I", 11), true},
+		{"NeFold", NeFold[Data]("S", "bar"), true},
+		{"GreaterEqual", GreaterEqual[Data]("I", 10), true},
+		{"LessEqual", LessEqual[Data]("I", 10), true},
+		{"EqualFieldFold", EqualFieldFold[Data]("S", "S"), true},
+	}
+
+	for _, tt := range tests {
+		got, _ := tt.cond.Evaluate(&d)
+		if got != tt.want {
+			t.Errorf("%s: got %v, want %v", tt.name, got, tt.want)
+		}
 	}
 }
