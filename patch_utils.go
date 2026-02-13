@@ -1,7 +1,6 @@
 package deep
 
 import (
-	"fmt"
 	"reflect"
 	"strconv"
 
@@ -150,6 +149,13 @@ func convertValue(v reflect.Value, targetType reflect.Type) reflect.Value {
 		return v.Convert(targetType)
 	}
 
+	// Handle pointer wrapping
+	if targetType.Kind() == reflect.Pointer && v.Type().AssignableTo(targetType.Elem()) {
+		ptr := reflect.New(targetType.Elem())
+		ptr.Elem().Set(v)
+		return ptr
+	}
+
 	// Handle JSON/Gob numbers
 	if v.Kind() == reflect.Float64 {
 		switch targetType.Kind() {
@@ -173,8 +179,17 @@ func setValue(v, newVal reflect.Value) {
 		return
 	}
 
-	converted := convertValue(newVal, v.Type())
-	v.Set(converted)
+	// Navigate through pointers if needed
+	target := v
+	for target.Kind() == reflect.Pointer && target.Type() != newVal.Type() {
+		if target.IsNil() {
+			target.Set(reflect.New(target.Type().Elem()))
+		}
+		target = target.Elem()
+	}
+
+	converted := convertValue(newVal, target.Type())
+	target.Set(converted)
 }
 
 func valueToInterface(v reflect.Value) any {
