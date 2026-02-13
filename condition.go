@@ -434,6 +434,32 @@ func NormalizePath(path string) string {
 	return b.String()
 }
 
+// JoinPath joins two JSON Pointer paths with a slash.
+func JoinPath(parent, child string) string {
+	if parent == "" || parent == "/" {
+		if child == "" || child == "/" {
+			return "/"
+		}
+		if child[0] == '/' {
+			return child
+		}
+		return "/" + child
+	}
+	if child == "" || child == "/" {
+		return parent
+	}
+	res := parent
+	if !strings.HasSuffix(res, "/") {
+		res += "/"
+	}
+	if child[0] == '/' {
+		res += child[1:]
+	} else {
+		res += child
+	}
+	return res
+}
+
 func toReflectValue(v any) reflect.Value {
 	if rv, ok := v.(reflect.Value); ok {
 		return rv
