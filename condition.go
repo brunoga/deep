@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/brunoga/deep/v2/internal/unsafe"
+	"github.com/brunoga/deep/v3/internal/unsafe"
 )
 
 // Condition represents a logical check against a value of type T.

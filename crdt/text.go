@@ -3,7 +3,7 @@ package crdt
 import (
 	"strings"
 
-	"github.com/brunoga/deep/v2/crdt/hlc"
+	"github.com/brunoga/deep/v3/crdt/hlc"
 )
 
 // TextRun represents a contiguous run of characters with a unique starting ID.

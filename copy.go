@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/brunoga/deep/v2/internal/unsafe"
+	"github.com/brunoga/deep/v3/internal/unsafe"
 )
 
 // Copier is an interface that types can implement to provide their own

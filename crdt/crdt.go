@@ -2,11 +2,12 @@ package crdt
 
 import (
 	"encoding/json"
+	"fmt"
 	"sync"
 
-	"github.com/brunoga/deep/v2"
-	"github.com/brunoga/deep/v2/crdt/hlc"
-	crdtresolver "github.com/brunoga/deep/v2/resolvers/crdt"
+	"github.com/brunoga/deep/v3"
+	"github.com/brunoga/deep/v3/crdt/hlc"
+	crdtresolver "github.com/brunoga/deep/v3/resolvers/crdt"
 )
 
 // CRDT represents a Conflict-free Replicated Data Type wrapper around type T.
@@ -40,7 +41,14 @@ func NewCRDT[T any](initial T, nodeID string) *CRDT[T] {
 func (c *CRDT[T]) View() T {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	copied, _ := deep.Copy(c.Value)
+	copied, err := deep.Copy(c.Value)
+	if err != nil {
+		// Since View returns T, and Copy failed (which should be rare/impossible 
+		// for valid T), we return the internal value directly or panic.
+		// For robustness, returning zero value on error is safer than direct access.
+		var zero T
+		return zero
+	}
 	return copied
 }
 
@@ -49,7 +57,10 @@ func (c *CRDT[T]) Edit(fn func(*T)) Delta[T] {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	workingCopy, _ := deep.Copy(c.Value)
+	workingCopy, err := deep.Copy(c.Value)
+	if err != nil {
+		return Delta[T]{}
+	}
 	fn(&workingCopy)
 
 	patch := deep.Diff(c.Value, workingCopy)
@@ -91,7 +102,7 @@ func (c *CRDT[T]) CreateDelta(patch deep.Patch[T]) Delta[T] {
 }
 
 func (c *CRDT[T]) updateMetadataLocked(patch deep.Patch[T], ts hlc.HLC) {
-	patch.Walk(func(path string, op deep.OpKind, old, new any) error {
+	err := patch.Walk(func(path string, op deep.OpKind, old, new any) error {
 		if op == deep.OpRemove {
 			c.Tombstones[path] = ts
 		} else {
@@ -99,6 +110,12 @@ func (c *CRDT[T]) updateMetadataLocked(patch deep.Patch[T], ts hlc.HLC) {
 		}
 		return nil
 	})
+	if err != nil {
+		// In CRDT, metadata update failing is critical.
+		// However, our Walk callback never returns error.
+		// We'll panic if Walk fails as it indicates an internal state corruption.
+		panic(fmt.Errorf("crdt metadata update failed: %w", err))
+	}
 }
 
 // ApplyDelta applies a delta using LWW resolution.

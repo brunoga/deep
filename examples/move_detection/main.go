@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"github.com/brunoga/deep/v2"
+	"github.com/brunoga/deep/v3"
 )
 
 type Document struct {
@@ -49,10 +49,14 @@ func main() {
 
 	// 4. Verify semantic efficiency
 	fmt.Println("--- PATCH OPERATIONS (Walk) ---")
-	patch.Walk(func(path string, op deep.OpKind, old, new any) error {
+	err := patch.Walk(func(path string, op deep.OpKind, old, new any) error {
 		fmt.Printf("[%s] Op: %s, From: %v\n", path, op, old)
 		return nil
 	})
+	if err != nil {
+		fmt.Printf("Walk failed: %v\n", err)
+		return
+	}
 	fmt.Println()
 
 	// 5. Apply and Verify
@@ -61,7 +65,11 @@ func main() {
 		fmt.Printf("Copy failed: %v\n", err)
 		return
 	}
-	patch.ApplyChecked(&final)
+	err = patch.ApplyChecked(&final)
+	if err != nil {
+		fmt.Printf("Apply failed: %v\n", err)
+		return
+	}
 
 	fmt.Println("--- FINAL WORKSPACE ---")
 	fmt.Printf("Drafts: %d, Archive: %d\n", len(final.Drafts), len(final.Archive))

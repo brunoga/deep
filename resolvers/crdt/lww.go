@@ -3,8 +3,8 @@ package crdt
 import (
 	"reflect"
 
-	"github.com/brunoga/deep/v2"
-	"github.com/brunoga/deep/v2/crdt/hlc"
+	"github.com/brunoga/deep/v3"
+	"github.com/brunoga/deep/v3/crdt/hlc"
 )
 
 // ... (skipping LWWResolver.Resolve change since I'll do it separately or just replace the whole file if easier)

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/brunoga/deep/v2/internal/unsafe"
+	"github.com/brunoga/deep/v3/internal/unsafe"
 )
 
 var (
