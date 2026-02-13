@@ -56,7 +56,11 @@ func main() {
 	fmt.Println()
 
 	// 5. Apply and Verify
-	final, _ := deep.Copy(ws)
+	final, err := deep.Copy(ws)
+	if err != nil {
+		fmt.Printf("Copy failed: %v\n", err)
+		return
+	}
 	patch.ApplyChecked(&final)
 
 	fmt.Println("--- FINAL WORKSPACE ---")

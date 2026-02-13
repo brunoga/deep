@@ -896,6 +896,17 @@ func (p *mapPatch) apply(root, v reflect.Value) {
 	}
 	for k, patch := range p.modified {
 		keyVal := p.getOriginalKey(k, v.Type().Key(), v)
+		if cp, ok := patch.(*copyPatch); ok {
+			rvRoot := root
+			if rvRoot.Kind() == reflect.Pointer {
+				rvRoot = rvRoot.Elem()
+			}
+			fromVal, err := Path(cp.from).resolve(rvRoot)
+			if err == nil {
+				v.SetMapIndex(keyVal, convertValue(fromVal, v.Type().Elem()))
+			}
+			continue
+		}
 		elem := v.MapIndex(keyVal)
 		if elem.IsValid() {
 			newElem := reflect.New(elem.Type()).Elem()
@@ -970,6 +981,19 @@ func (p *mapPatch) applyChecked(root, v reflect.Value, strict bool) error {
 	}
 	for k, patch := range p.modified {
 		keyVal := p.getOriginalKey(k, v.Type().Key(), v)
+		if cp, ok := patch.(*copyPatch); ok {
+			rvRoot := root
+			if rvRoot.Kind() == reflect.Pointer {
+				rvRoot = rvRoot.Elem()
+			}
+			fromVal, err := Path(cp.from).resolve(rvRoot)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("map copy from %s failed: %w", cp.from, err))
+			} else {
+				v.SetMapIndex(keyVal, convertValue(fromVal, v.Type().Elem()))
+			}
+			continue
+		}
 		val := v.MapIndex(keyVal)
 		if !val.IsValid() {
 			errs = append(errs, fmt.Errorf("key %v not found for modification", k))
@@ -1206,6 +1230,19 @@ func (p *slicePatch) apply(root, v reflect.Value) {
 			newSlice = reflect.Append(newSlice, convertValue(op.Val, v.Type().Elem()))
 		case OpRemove:
 			curIdx++
+		case OpCopy, OpMove:
+			// Resolve source from root
+			if cp, ok := op.Patch.(*copyPatch); ok {
+				rvRoot := root
+				if rvRoot.Kind() == reflect.Pointer {
+					rvRoot = rvRoot.Elem()
+				}
+				fromVal, err := Path(cp.from).resolve(rvRoot)
+				if err == nil {
+					newSlice = reflect.Append(newSlice, convertValue(fromVal, v.Type().Elem()))
+				}
+			}
+			curIdx++
 		case OpReplace:
 			if curIdx < v.Len() {
 				elem := reflect.New(v.Type().Elem()).Elem()
@@ -1256,6 +1293,21 @@ func (p *slicePatch) applyChecked(root, v reflect.Value, strict bool) error {
 				convertedVal := convertValue(op.Val, v.Type().Elem())
 				if !reflect.DeepEqual(curr.Interface(), convertedVal.Interface()) {
 					errs = append(errs, fmt.Errorf("slice deletion mismatch at %d: expected %v, got %v", curIdx, convertedVal, curr))
+				}
+			}
+			curIdx++
+		case OpCopy, OpMove:
+			// Resolve source from root
+			if cp, ok := op.Patch.(*copyPatch); ok {
+				rvRoot := root
+				if rvRoot.Kind() == reflect.Pointer {
+					rvRoot = rvRoot.Elem()
+				}
+				fromVal, err := Path(cp.from).resolve(rvRoot)
+				if err != nil {
+					errs = append(errs, fmt.Errorf("slice copy from %s failed: %w", cp.from, err))
+				} else {
+					newSlice = reflect.Append(newSlice, convertValue(fromVal, v.Type().Elem()))
 				}
 			}
 			curIdx++
