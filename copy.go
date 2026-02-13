@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/brunoga/deep/v2/internal/unsafe"
+	"github.com/brunoga/deep/v3/internal/unsafe"
 )
 
 // Copier is an interface that types can implement to provide their own
@@ -104,17 +104,6 @@ func Copy[T any](src T, opts ...CopyOption) (T, error) {
 	}
 
 	return dst.Interface().(T), nil
-}
-
-// CopySkipUnsupported creates a deep copy of src. It returns the copy and a nil
-// error in case of success and the zero value for the type and a non-nil error
-// on failure. Unsupported types (e.g. non-nil functions, channels or unsafe
-// pointers) are skipped (the copy will have the zero value for the type) instead
-// of returning an error.
-//
-// Deprecated: Use Copy with the SkipUnsupported() option instead.
-func CopySkipUnsupported[T any](src T) (T, error) {
-	return Copy(src, SkipUnsupported())
 }
 
 // MustCopy creates a deep copy of src. It returns the copy on success or panics

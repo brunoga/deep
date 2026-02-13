@@ -45,11 +45,9 @@ func getKeyField(typ reflect.Type) (int, bool) {
 		return -1, false
 	}
 
-	for i := 0; i < typ.NumField(); i++ {
-		tag := parseTag(typ.Field(i))
-		if tag.key {
-			return i, true
-		}
+	info := getTypeInfo(typ)
+	if info.keyFieldIndex != -1 {
+		return info.keyFieldIndex, true
 	}
 
 	return -1, false

@@ -254,10 +254,16 @@ func (p *parser) parseComparison() (internalConditionImpl, error) {
 		val = valTok.val
 	case tokNumber:
 		if strings.Contains(valTok.val, ".") {
-			f, _ := strconv.ParseFloat(valTok.val, 64)
+			f, err := strconv.ParseFloat(valTok.val, 64)
+			if err != nil {
+				return nil, fmt.Errorf("invalid float literal: %s", valTok.val)
+			}
 			val = f
 		} else {
-			i, _ := strconv.ParseInt(valTok.val, 10, 64)
+			i, err := strconv.ParseInt(valTok.val, 10, 64)
+			if err != nil {
+				return nil, fmt.Errorf("invalid integer literal: %s", valTok.val)
+			}
 			val = int(i)
 		}
 	case tokBool:

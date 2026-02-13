@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/brunoga/deep/v2"
+	"github.com/brunoga/deep/v3"
 )
 
 // GameWorld represents a shared state (e.g., in a real-time game or collab tool).
@@ -47,7 +47,11 @@ func main() {
 	patch := deep.Diff(previousState, serverState)
 
 	// Network transport (simulated).
-	wireData, _ := json.Marshal(patch)
+	wireData, err := json.Marshal(patch)
+	if err != nil {
+		fmt.Printf("Broadcast failed: %v\n", err)
+		return
+	}
 	fmt.Printf("\n[Network] Broadcasting Patch (%d bytes): %s\n", len(wireData), string(wireData))
 
 	// 5. CLIENT RECEIVE: The client receives the wire data.

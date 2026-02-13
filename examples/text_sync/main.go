@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/brunoga/deep/v2/crdt"
+	"github.com/brunoga/deep/v3/crdt"
 )
 
 // Document represents a text document.

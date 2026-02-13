@@ -268,19 +268,19 @@ func TestBuilder_Exhaustive(t *testing.T) {
 	t.Run("NavigationErrors", func(t *testing.T) {
 		type S struct{ A int }
 		b := NewBuilder[S]()
-		_, err := b.Root().navigate("NonExistent")
+		_, err := b.Root().Navigate("NonExistent")
 		if err == nil {
 			t.Error("Expected error for non-existent field navigation")
 		}
 
 		type M struct{ Data map[int]int }
 		b2 := NewBuilder[M]()
-		_, err = b2.Root().navigate("Data.not_an_int")
+		_, err = b2.Root().Navigate("Data.not_an_int")
 		if err == nil {
 			t.Error("Expected error for invalid map key type navigation")
 		}
 
-		_, err = b2.Root().navigate("Data[0]") // Index on map
+		_, err = b2.Root().Navigate("Data[0]") // Index on map
 		if err == nil {
 			t.Error("Expected error for index navigation on map")
 		}
@@ -325,7 +325,7 @@ func TestBuilder_Exhaustive(t *testing.T) {
 	})
 
 	t.Run("WithConditionOnAllTypes", func(t *testing.T) {
-		cond := Equal[int]("", 1)
+		cond := Eq[int]("", 1)
 
 		// Pointer
 		b1 := NewBuilder[*int]()
@@ -503,9 +503,9 @@ func TestBuilder_SoftConditions(t *testing.T) {
 
 	builder := NewBuilder[User]()
 	nodeName, _ := builder.Root().Field("Name")
-	nodeName.If(Equal[User]("Age", 20)).Set("Alice", "Bob")
+	nodeName.If(Eq[User]("Age", 20)).Set("Alice", "Bob")
 	nodeAge, _ := builder.Root().Field("Age")
-	nodeAge.If(Equal[User]("Name", "Alice")).Set(30, 31)
+	nodeAge.If(Eq[User]("Name", "Alice")).Set(30, 31)
 
 	patch, _ := builder.Build()
 
@@ -530,7 +530,7 @@ func TestBuilder_Unless(t *testing.T) {
 	u := User{Name: "Alice"}
 	builder := NewBuilder[User]()
 	node, _ := builder.Root().Field("Name")
-	node.Unless(Equal[User]("Name", "Alice")).Set("Alice", "Bob")
+	node.Unless(Eq[User]("Name", "Alice")).Set("Alice", "Bob")
 	patch, _ := builder.Build()
 
 	err := patch.ApplyChecked(&u)

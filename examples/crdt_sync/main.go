@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/brunoga/deep/v2/crdt"
+	"github.com/brunoga/deep/v3/crdt"
 )
 
 type Config struct {
@@ -48,20 +48,34 @@ func main() {
 	printState(nodeB)
 
 	fmt.Println("\n--- Syncing Node A -> Node B ---")
-	nodeB.ApplyDelta(deltaA)
+	if !nodeB.ApplyDelta(deltaA) {
+		fmt.Println("ApplyDelta failed!")
+		return
+	}
 	printState(nodeB)
 
 	fmt.Println("\n--- Syncing Node B -> Node A (Full Merge) ---")
-	nodeA.Merge(nodeB)
+	if !nodeA.Merge(nodeB) {
+		fmt.Println("Merge failed!")
+		return
+	}
 	printState(nodeA)
 
 	fmt.Println("\n--- Serialized State ---")
-	data, _ := json.MarshalIndent(nodeA, "", "  ")
+	data, err := json.MarshalIndent(nodeA, "", "  ")
+	if err != nil {
+		fmt.Printf("State serialization failed: %v\n", err)
+		return
+	}
 	fmt.Println(string(data))
 }
 
 func printState[T any](c *crdt.CRDT[T]) {
 	val := c.View()
-	data, _ := json.Marshal(val)
+	data, err := json.Marshal(val)
+	if err != nil {
+		fmt.Printf("Serialization failed: %v\n", err)
+		return
+	}
 	fmt.Printf("[%s] Value: %s\n", c.NodeID, string(data))
 }

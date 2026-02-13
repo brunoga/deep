@@ -45,6 +45,7 @@ func (b *Builder[T]) Root() *Node {
 		},
 		current:  b.patch,
 		fullPath: "",
+		parent:   nil,
 	}
 }
 
@@ -65,7 +66,7 @@ func (b *Builder[T]) AddCondition(expr string) *Builder[T] {
 	paths := raw.paths()
 	prefix := lcpParts(paths)
 
-	node, err := b.Root().navigateParts(prefix)
+	node, err := b.Root().NavigateParts(prefix)
 	if err != nil {
 		b.err = err
 		return b
@@ -103,7 +104,7 @@ func lcpParts(paths []Path) []pathPart {
 	return common
 }
 
-func (n *Node) navigateParts(parts []pathPart) (*Node, error) {
+func (n *Node) NavigateParts(parts []pathPart) (*Node, error) {
 	curr := n
 	var err error
 	for _, part := range parts {
@@ -125,6 +126,11 @@ type Node struct {
 	update   func(diffPatch)
 	current  diffPatch
 	fullPath string
+
+	parent *Node
+	key    string
+	index  int
+	isIdx  bool
 }
 
 // navigate returns a Node for the specified path relative to the current node.
@@ -134,7 +140,7 @@ func (n *Node) Navigate(path string) (*Node, error) {
 	if path == "" {
 		return n, nil
 	}
-	return n.navigateParts(parsePath(path))
+	return n.NavigateParts(parsePath(path))
 }
 
 // Put replaces the value at the current node without requiring the 'old' value.
@@ -152,10 +158,6 @@ func (n *Node) Put(value any) *Node {
 	return n
 }
 
-func (n *Node) navigate(path string) (*Node, error) {
-	return n.Navigate(path)
-}
-
 // FieldOrMapKey returns a Node for the specified field or map key.
 func (n *Node) FieldOrMapKey(key string) (*Node, error) {
 	curr := n.Elem()
@@ -171,7 +173,15 @@ func (n *Node) FieldOrMapKey(key string) (*Node, error) {
 			}
 			keyVal = i
 		} else {
-			return nil, fmt.Errorf("unsupported map key type for navigation: %v", keyType)
+			// If it's a Keyer, we can't easily find the original key from just the string
+			// unless we have an instance of the map or the original keys mapping.
+			// In the context of Merge/Apply, we should have access to original keys.
+			
+			// For now, let's allow MapKey to be called with the string key if the map key
+			// implements Keyer, and we'll handle the resolution during Build/Apply.
+			// Actually, let's try to match by stringifying existing keys if we can.
+			
+			return curr.MapKey(key)
 		}
 		return curr.MapKey(keyVal)
 	}
@@ -267,10 +277,11 @@ func (n *Node) ensurePatch() {
 			p = &slicePatch{}
 		case reflect.Map:
 			p = &mapPatch{
-				added:    make(map[any]reflect.Value),
-				removed:  make(map[any]reflect.Value),
-				modified: make(map[any]diffPatch),
-				keyType:  n.typ.Key(),
+				added:        make(map[any]reflect.Value),
+				removed:      make(map[any]reflect.Value),
+				modified:     make(map[any]diffPatch),
+				originalKeys: make(map[any]any),
+				keyType:      n.typ.Key(),
 			}
 		case reflect.Pointer:
 			p = &ptrPatch{}
@@ -341,6 +352,8 @@ func (n *Node) Field(name string) (*Node, error) {
 		},
 		current:  sp.fields[name],
 		fullPath: n.fullPath + "/" + name,
+		parent:   n,
+		key:      name,
 	}, nil
 }
 
@@ -368,6 +381,9 @@ func (n *Node) Index(i int) (*Node, error) {
 			},
 			current:  ap.indices[i],
 			fullPath: n.fullPath + "/" + strconv.Itoa(i),
+			parent:   n,
+			index:    i,
+			isIdx:    true,
 		}, nil
 	}
 	sp, ok := n.current.(*slicePatch)
@@ -397,6 +413,9 @@ func (n *Node) Index(i int) (*Node, error) {
 		},
 		current:  modOp.Patch,
 		fullPath: n.fullPath + "/" + strconv.Itoa(i),
+		parent:   n,
+		index:    i,
+		isIdx:    true,
 	}, nil
 }
 
@@ -408,7 +427,12 @@ func (n *Node) MapKey(key any) (*Node, error) {
 	}
 	vKey := reflect.ValueOf(key)
 	if vKey.Type() != n.typ.Key() {
-		return nil, fmt.Errorf("invalid key type: expected %v, got %v", n.typ.Key(), vKey.Type())
+		// If it's a string, we might be navigating by canonical key.
+		if _, ok := key.(string); ok {
+			// Special handling for canonical keys during navigation
+		} else {
+			return nil, fmt.Errorf("invalid key type: expected %v, got %v", n.typ.Key(), vKey.Type())
+		}
 	}
 	mp, ok := n.current.(*mapPatch)
 	if !ok {
@@ -428,6 +452,8 @@ func (n *Node) MapKey(key any) (*Node, error) {
 		},
 		current:  mp.modified[key],
 		fullPath: n.fullPath + "/" + fmt.Sprintf("%v", key),
+		parent:   n,
+		key:      fmt.Sprintf("%v", key),
 	}, nil
 }
 
@@ -466,6 +492,10 @@ func (n *Node) Elem() *Node {
 		update:   updateFunc,
 		current:  currentPatch,
 		fullPath: n.fullPath, // Elem doesn't add to path in JSON Pointer
+		parent:   n.parent,
+		key:      n.key,
+		index:    n.index,
+		isIdx:    n.isIdx,
 	}
 }
 
@@ -474,7 +504,17 @@ func (n *Node) Add(i int, val any) error {
 	if n.typ.Kind() != reflect.Slice {
 		return fmt.Errorf("Add only supported on slices, got %v", n.typ)
 	}
-	v := reflect.ValueOf(val)
+	var v reflect.Value
+	if rv, ok := val.(reflect.Value); ok {
+		v = rv
+	} else {
+		v = reflect.ValueOf(val)
+	}
+
+	if !v.IsValid() {
+		v = reflect.Zero(n.typ.Elem())
+	}
+
 	if v.Type() != n.typ.Elem() {
 		return fmt.Errorf("invalid value type: expected %v, got %v", n.typ.Elem(), v.Type())
 	}
@@ -499,7 +539,17 @@ func (n *Node) Delete(keyOrIndex any, oldVal any) error {
 		if !ok {
 			return fmt.Errorf("index must be int for slices")
 		}
-		vOld := reflect.ValueOf(oldVal)
+		var vOld reflect.Value
+		if rv, ok := oldVal.(reflect.Value); ok {
+			vOld = rv
+		} else {
+			vOld = reflect.ValueOf(oldVal)
+		}
+
+		if !vOld.IsValid() {
+			vOld = reflect.Zero(n.typ.Elem())
+		}
+
 		if vOld.Type() != n.typ.Elem() {
 			return fmt.Errorf("invalid old value type: expected %v, got %v", n.typ.Elem(), vOld.Type())
 		}
@@ -519,19 +569,38 @@ func (n *Node) Delete(keyOrIndex any, oldVal any) error {
 	if n.typ.Kind() == reflect.Map {
 		vKey := reflect.ValueOf(keyOrIndex)
 		if vKey.Type() != n.typ.Key() {
-			return fmt.Errorf("invalid key type: expected %v, got %v", n.typ.Key(), vKey.Type())
+			// Try to convert if it's a simple string representation
+			if s, ok := keyOrIndex.(string); ok {
+				if n.typ.Key().Kind() == reflect.String {
+					vKey = reflect.ValueOf(s)
+				}
+			}
+			if vKey.Type() != n.typ.Key() {
+				return fmt.Errorf("invalid key type: expected %v, got %v", n.typ.Key(), vKey.Type())
+			}
 		}
-		vOld := reflect.ValueOf(oldVal)
+		var vOld reflect.Value
+		if rv, ok := oldVal.(reflect.Value); ok {
+			vOld = rv
+		} else {
+			vOld = reflect.ValueOf(oldVal)
+		}
+
+		if !vOld.IsValid() {
+			vOld = reflect.Zero(n.typ.Elem())
+		}
+
 		if vOld.Type() != n.typ.Elem() {
 			return fmt.Errorf("invalid old value type: expected %v, got %v", n.typ.Elem(), vOld.Type())
 		}
 		mp, ok := n.current.(*mapPatch)
 		if !ok {
 			mp = &mapPatch{
-				added:    make(map[any]reflect.Value),
-				removed:  make(map[any]reflect.Value),
-				modified: make(map[any]diffPatch),
-				keyType:  n.typ.Key(),
+				added:        make(map[any]reflect.Value),
+				removed:      make(map[any]reflect.Value),
+				modified:     make(map[any]diffPatch),
+				originalKeys: make(map[any]any),
+				keyType:      n.typ.Key(),
 			}
 			n.update(mp)
 			n.current = mp
@@ -549,23 +618,56 @@ func (n *Node) AddMapEntry(key, val any) error {
 	}
 	vKey := reflect.ValueOf(key)
 	if vKey.Type() != n.typ.Key() {
-		return fmt.Errorf("invalid key type: expected %v, got %v", n.typ.Key(), vKey.Type())
+		// Try to convert if it's a simple string representation
+		if s, ok := key.(string); ok {
+			if n.typ.Key().Kind() == reflect.String {
+				vKey = reflect.ValueOf(s)
+			}
+		}
+		if vKey.Type() != n.typ.Key() {
+			return fmt.Errorf("invalid key type: expected %v, got %v", n.typ.Key(), vKey.Type())
+		}
 	}
-	vVal := reflect.ValueOf(val)
+	var vVal reflect.Value
+	if rv, ok := val.(reflect.Value); ok {
+		vVal = rv
+	} else {
+		vVal = reflect.ValueOf(val)
+	}
+
+	if !vVal.IsValid() {
+		vVal = reflect.Zero(n.typ.Elem())
+	}
+
 	if vVal.Type() != n.typ.Elem() {
 		return fmt.Errorf("invalid value type: expected %v, got %v", n.typ.Elem(), vVal.Type())
 	}
 	mp, ok := n.current.(*mapPatch)
 	if !ok {
 		mp = &mapPatch{
-			added:    make(map[any]reflect.Value),
-			removed:  make(map[any]reflect.Value),
-			modified: make(map[any]diffPatch),
-			keyType:  n.typ.Key(),
+			added:        make(map[any]reflect.Value),
+			removed:      make(map[any]reflect.Value),
+			modified:     make(map[any]diffPatch),
+			originalKeys: make(map[any]any),
+			keyType:      n.typ.Key(),
 		}
 		n.update(mp)
 		n.current = mp
 	}
 	mp.added[key] = deepCopyValue(vVal)
 	return nil
+}
+
+// Remove removes the current node from its parent.
+func (n *Node) Remove(oldVal any) error {
+	if n.parent == nil {
+		return fmt.Errorf("cannot remove root node")
+	}
+	if n.isIdx {
+		return n.parent.Delete(n.index, oldVal)
+	}
+	// For maps, we need the actual key. Node.key is currently a string.
+	// If the map key is a string, it works. If not, this is a limitation.
+	// In the context of Merge, Walk gives us the actual key if it's not a slice index.
+	return n.parent.Delete(n.key, oldVal)
 }

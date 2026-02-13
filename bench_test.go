@@ -79,19 +79,59 @@ func BenchmarkCopy_Map(b *testing.B) {
 	}
 }
 
-func BenchmarkCopy_DeepNested(b *testing.B) {
-	type Node struct {
-		Value int
-		Next  *Node
+func BenchmarkDiff_Struct(b *testing.B) {
+	type S struct {
+		A, B, C, D, E int
+		F, G, H, I, J string
+		K, L, M, N, O float64
 	}
-	src := &Node{Value: 0}
-	curr := src
-	for i := 1; i < 50; i++ {
-		curr.Next = &Node{Value: i}
-		curr = curr.Next
+	s1 := S{
+		A: 1, B: 2, C: 3, D: 4, E: 5,
+		F: "a", G: "b", H: "c", I: "d", J: "e",
+		K: 1.1, L: 2.2, M: 3.3, N: 4.4, O: 5.5,
 	}
+	s2 := s1
+	s2.O = 6.6 // One change
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		Copy(src)
+		Diff(s1, s2)
+	}
+}
+
+func BenchmarkDiff_LargeNested(b *testing.B) {
+	type Node struct {
+		ID       int
+		Metadata map[string]string
+		Children []*Node
+	}
+
+	var makeTree func(depth int) *Node
+	makeTree = func(depth int) *Node {
+		if depth == 0 {
+			return nil
+		}
+		return &Node{
+			ID:       depth,
+			Metadata: map[string]string{"env": "prod", "tier": "backend"},
+			Children: []*Node{makeTree(depth - 1), makeTree(depth - 1)},
+		}
+	}
+
+	tree1 := makeTree(10)
+	tree2, _ := Copy(tree1)
+	// Change one value deep in the tree
+	curr := tree2
+	for curr.Children[0] != nil {
+		curr = curr.Children[0]
+	}
+	curr.ID = 999
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		patch := Diff(tree1, tree2)
+		if patch != nil {
+			patch.Release()
+		}
 	}
 }

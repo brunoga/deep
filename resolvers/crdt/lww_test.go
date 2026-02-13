@@ -4,8 +4,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/brunoga/deep/v2"
-	"github.com/brunoga/deep/v2/crdt/hlc"
+	"github.com/brunoga/deep/v3"
+	"github.com/brunoga/deep/v3/crdt/hlc"
 )
 
 func TestLWWResolver(t *testing.T) {

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/brunoga/deep/v2"
+	"github.com/brunoga/deep/v3"
 )
 
 // --- CONFIGURATION SCHEMA ---
@@ -141,7 +141,11 @@ func (m *ConfigManager) Rollback() error {
 func (m *ConfigManager) Current() string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	data, _ := json.MarshalIndent(m.live, "", "  ")
+	data, err := json.MarshalIndent(m.live, "", "  ")
+	if err != nil {
+		fmt.Printf("State serialization failed: %v\n", err)
+		return ""
+	}
 	return string(data)
 }
 
