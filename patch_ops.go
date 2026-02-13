@@ -875,10 +875,11 @@ func (p *arrayPatch) summary(path string) string {
 // mapPatch handles additions, removals, and modifications in a map.
 type mapPatch struct {
 	basePatch
-	added    map[any]reflect.Value
-	removed  map[any]reflect.Value
-	modified map[any]diffPatch
-	keyType  reflect.Type
+	added        map[any]reflect.Value
+	removed      map[any]reflect.Value
+	modified     map[any]diffPatch
+	originalKeys map[any]any // Canonical -> Original
+	keyType      reflect.Type
 }
 
 func (p *mapPatch) apply(root, v reflect.Value) {
@@ -891,10 +892,10 @@ func (p *mapPatch) apply(root, v reflect.Value) {
 		}
 	}
 	for k := range p.removed {
-		v.SetMapIndex(convertValue(reflect.ValueOf(k), v.Type().Key()), reflect.Value{})
+		v.SetMapIndex(p.getOriginalKey(k, v.Type().Key(), v), reflect.Value{})
 	}
 	for k, patch := range p.modified {
-		keyVal := convertValue(reflect.ValueOf(k), v.Type().Key())
+		keyVal := p.getOriginalKey(k, v.Type().Key(), v)
 		elem := v.MapIndex(keyVal)
 		if elem.IsValid() {
 			newElem := reflect.New(elem.Type()).Elem()
@@ -904,9 +905,40 @@ func (p *mapPatch) apply(root, v reflect.Value) {
 		}
 	}
 	for k, val := range p.added {
-		keyVal := convertValue(reflect.ValueOf(k), v.Type().Key())
+		keyVal := p.getOriginalKey(k, v.Type().Key(), v)
 		v.SetMapIndex(keyVal, convertValue(val, v.Type().Elem()))
 	}
+}
+
+func (p *mapPatch) getOriginalKey(k any, targetType reflect.Type, v reflect.Value) reflect.Value {
+	if orig, ok := p.originalKeys[k]; ok {
+		return convertValue(reflect.ValueOf(orig), targetType)
+	}
+	
+	// If it's a Keyer, we can search the target map for a matching canonical key.
+	mv := v
+	for mv.Kind() == reflect.Pointer || mv.Kind() == reflect.Interface {
+		if mv.IsNil() {
+			break
+		}
+		mv = mv.Elem()
+	}
+
+	if mv.Kind() == reflect.Map {
+		iter := mv.MapRange()
+		for iter.Next() {
+			mk := iter.Key()
+			if mk.CanInterface() {
+				if keyer, ok := mk.Interface().(Keyer); ok {
+					if keyer.CanonicalKey() == k {
+						return mk
+					}
+				}
+			}
+		}
+	}
+
+	return convertValue(reflect.ValueOf(k), targetType)
 }
 
 func (p *mapPatch) applyChecked(root, v reflect.Value, strict bool) error {
@@ -926,7 +958,7 @@ func (p *mapPatch) applyChecked(root, v reflect.Value, strict bool) error {
 	}
 	var errs []error
 	for k, oldVal := range p.removed {
-		keyVal := convertValue(reflect.ValueOf(k), v.Type().Key())
+		keyVal := p.getOriginalKey(k, v.Type().Key(), v)
 		val := v.MapIndex(keyVal)
 		if !val.IsValid() {
 			errs = append(errs, fmt.Errorf("key %v not found for removal", k))
@@ -937,7 +969,7 @@ func (p *mapPatch) applyChecked(root, v reflect.Value, strict bool) error {
 		}
 	}
 	for k, patch := range p.modified {
-		keyVal := convertValue(reflect.ValueOf(k), v.Type().Key())
+		keyVal := p.getOriginalKey(k, v.Type().Key(), v)
 		val := v.MapIndex(keyVal)
 		if !val.IsValid() {
 			errs = append(errs, fmt.Errorf("key %v not found for modification", k))
@@ -951,10 +983,10 @@ func (p *mapPatch) applyChecked(root, v reflect.Value, strict bool) error {
 		v.SetMapIndex(keyVal, newElem)
 	}
 	for k := range p.removed {
-		v.SetMapIndex(convertValue(reflect.ValueOf(k), v.Type().Key()), reflect.Value{})
+		v.SetMapIndex(p.getOriginalKey(k, v.Type().Key(), v), reflect.Value{})
 	}
 	for k, val := range p.added {
-		keyVal := convertValue(reflect.ValueOf(k), v.Type().Key())
+		keyVal := p.getOriginalKey(k, v.Type().Key(), v)
 		curr := v.MapIndex(keyVal)
 		if strict && curr.IsValid() {
 			errs = append(errs, fmt.Errorf("key %v already exists", k))
@@ -990,12 +1022,12 @@ func (p *mapPatch) applyResolved(root, v reflect.Value, path string, resolver Co
 				continue
 			}
 		}
-		v.SetMapIndex(convertValue(reflect.ValueOf(k), v.Type().Key()), reflect.Value{})
+		v.SetMapIndex(p.getOriginalKey(k, v.Type().Key(), v), reflect.Value{})
 	}
 
 	// Modifications
 	for k, patch := range p.modified {
-		keyVal := convertValue(reflect.ValueOf(k), v.Type().Key())
+		keyVal := p.getOriginalKey(k, v.Type().Key(), v)
 		val := v.MapIndex(keyVal)
 		if !val.IsValid() {
 			continue // Or error? Let's skip if missing, concurrent delete handling.
@@ -1028,7 +1060,7 @@ func (p *mapPatch) applyResolved(root, v reflect.Value, path string, resolver Co
 				continue
 			}
 		}
-		v.SetMapIndex(convertValue(reflect.ValueOf(k), v.Type().Key()), convertValue(val, v.Type().Elem()))
+		v.SetMapIndex(p.getOriginalKey(k, v.Type().Key(), v), convertValue(val, v.Type().Elem()))
 	}
 	return nil
 }
@@ -1234,8 +1266,10 @@ func (p *slicePatch) applyChecked(root, v reflect.Value, strict bool) error {
 			}
 			elem := reflect.New(v.Type().Elem()).Elem()
 			elem.Set(deepCopyValue(v.Index(curIdx)))
-			if err := op.Patch.applyChecked(root, elem, strict); err != nil {
-				errs = append(errs, fmt.Errorf("slice index %d: %w", curIdx, err))
+			if op.Patch != nil {
+				if err := op.Patch.applyChecked(root, elem, strict); err != nil {
+					errs = append(errs, fmt.Errorf("slice index %d: %w", curIdx, err))
+				}
 			}
 			newSlice = reflect.Append(newSlice, elem)
 			curIdx++
@@ -1316,8 +1350,10 @@ func (p *slicePatch) applyResolved(root, v reflect.Value, path string, resolver 
 				if curIdx < v.Len() {
 					elem := reflect.New(v.Type().Elem()).Elem()
 					elem.Set(deepCopyValue(v.Index(curIdx)))
-					if err := op.Patch.applyResolved(root, elem, subPath, resolver); err != nil {
-						return err
+					if op.Patch != nil {
+						if err := op.Patch.applyResolved(root, elem, subPath, resolver); err != nil {
+							return err
+						}
 					}
 					newSlice = reflect.Append(newSlice, elem)
 					curIdx++
