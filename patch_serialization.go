@@ -105,10 +105,15 @@ func marshalDiffPatch(p diffPatch) (any, error) {
 			}
 			modified = append(modified, map[string]any{"k": k, "p": p})
 		}
+		orig := make([]map[string]any, 0, len(v.originalKeys))
+		for k, v := range v.originalKeys {
+			orig = append(orig, map[string]any{"k": k, "v": v})
+		}
 		return makeSurrogate("map", map[string]any{
 			"a": added,
 			"r": removed,
 			"m": modified,
+			"o": orig,
 		}, v)
 	case *slicePatch:
 		ops := make([]map[string]any, 0, len(v.ops))
@@ -314,10 +319,24 @@ func convertFromSurrogate(s any) (diffPatch, error) {
 				}
 			}
 		}
+		originalKeys := make(map[any]any)
+		if o := d["o"]; o != nil {
+			if slice, ok := o.([]any); ok {
+				for _, entry := range slice {
+					e := entry.(map[string]any)
+					originalKeys[e["k"]] = e["v"]
+				}
+			} else if slice, ok := o.([]map[string]any); ok {
+				for _, e := range slice {
+					originalKeys[e["k"]] = e["v"]
+				}
+			}
+		}
 		return &mapPatch{
-			added:    added,
-			removed:  removed,
-			modified: modified,
+			added:        added,
+			removed:      removed,
+			modified:     modified,
+			originalKeys: originalKeys,
 			basePatch: basePatch{
 				cond:       unmarshalCondFromMap(d, "c"),
 				ifCond:     unmarshalCondFromMap(d, "if"),
