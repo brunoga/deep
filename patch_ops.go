@@ -180,7 +180,7 @@ func (p *valuePatch) applyChecked(root, v reflect.Value, strict bool) error {
 	if strict && p.oldVal.IsValid() {
 		if v.IsValid() {
 			convertedOldVal := convertValue(p.oldVal, v.Type())
-			if !reflect.DeepEqual(v.Interface(), convertedOldVal.Interface()) {
+			if !Equal(v.Interface(), convertedOldVal.Interface()) {
 				return fmt.Errorf("value mismatch: expected %v, got %v", convertedOldVal, v)
 			}
 		} else {
@@ -280,7 +280,7 @@ func (p *testPatch) applyChecked(root, v reflect.Value, strict bool) error {
 			return fmt.Errorf("test failed: expected %v, got invalid", p.expected)
 		}
 		convertedExpected := convertValue(p.expected, v.Type())
-		if !reflect.DeepEqual(v.Interface(), convertedExpected.Interface()) {
+		if !Equal(v.Interface(), convertedExpected.Interface()) {
 			return fmt.Errorf("test failed: expected %v, got %v", convertedExpected, v)
 		}
 	}
@@ -1050,7 +1050,7 @@ func (p *mapPatch) applyChecked(root, v reflect.Value, strict bool) error {
 			errs = append(errs, fmt.Errorf("key %v not found for removal", k))
 			continue
 		}
-		if strict && !reflect.DeepEqual(val.Interface(), oldVal.Interface()) {
+		if strict && !Equal(val.Interface(), oldVal.Interface()) {
 			errs = append(errs, fmt.Errorf("map removal mismatch for key %v: expected %v, got %v", k, oldVal, val))
 		}
 	}
@@ -1366,7 +1366,7 @@ func (p *slicePatch) applyChecked(root, v reflect.Value, strict bool) error {
 			curr := v.Index(curIdx)
 			if strict && op.Val.IsValid() {
 				convertedVal := convertValue(op.Val, v.Type().Elem())
-				if !reflect.DeepEqual(curr.Interface(), convertedVal.Interface()) {
+				if !Equal(curr.Interface(), convertedVal.Interface()) {
 					errs = append(errs, fmt.Errorf("slice deletion mismatch at %d: expected %v, got %v", curIdx, convertedVal, curr))
 				}
 			}

@@ -2,7 +2,6 @@ package deep
 
 import (
 	"fmt"
-	"reflect"
 	"sort"
 	"strings"
 )
@@ -36,16 +35,22 @@ func Merge[T any](patchA, patchB Patch[T]) (Patch[T], []Conflict, error) {
 	var conflicts []Conflict
 
 	var opsA []opInfo
-	patchA.Walk(func(path string, op OpKind, old, new any) error {
+	err := patchA.Walk(func(path string, op OpKind, old, new any) error {
 		opsA = append(opsA, opInfo{path, op, old, new})
 		return nil
 	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("walk A failed: %w", err)
+	}
 
 	var opsB []opInfo
-	patchB.Walk(func(path string, op OpKind, old, new any) error {
+	err = patchB.Walk(func(path string, op OpKind, old, new any) error {
 		opsB = append(opsB, opInfo{path, op, old, new})
 		return nil
 	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("walk B failed: %w", err)
+	}
 
 	// Detect conflicts and nested modifications
 	mapA := make(map[string]opInfo)
@@ -55,7 +60,7 @@ func Merge[T any](patchA, patchB Patch[T]) (Patch[T], []Conflict, error) {
 
 	for _, b := range opsB {
 		if a, ok := mapA[b.path]; ok {
-			if a.op != b.op || !reflect.DeepEqual(a.new, b.new) {
+			if a.op != b.op || !Equal(a.new, b.new) {
 				conflicts = append(conflicts, Conflict{
 					Path:    b.path,
 					OpA:     a.op,

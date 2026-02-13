@@ -282,7 +282,7 @@ func (d *Differ) diffRecursive(a, b reflect.Value, atomic bool, ctx *diffContext
 	}
 
 	if atomic {
-		if a.CanInterface() && b.CanInterface() && reflect.DeepEqual(a.Interface(), b.Interface()) {
+		if ValueEqual(a, b) {
 			return nil, nil
 		}
 		return newValuePatch(deepCopyValue(a), deepCopyValue(b)), nil
@@ -290,27 +290,25 @@ func (d *Differ) diffRecursive(a, b reflect.Value, atomic bool, ctx *diffContext
 
 	if !a.IsValid() || !b.IsValid() {
 		if !b.IsValid() {
-			return newValuePatch(deepCopyValue(a), reflect.Value{}), nil
+			return newValuePatch(a, reflect.Value{}), nil
 		}
-		return newValuePatch(deepCopyValue(a), deepCopyValue(b)), nil
+		return newValuePatch(a, b), nil
 	}
 
 	if a.Type() != b.Type() {
-		return newValuePatch(deepCopyValue(a), deepCopyValue(b)), nil
+		return newValuePatch(a, b), nil
 	}
 
 	if a.Kind() == reflect.Struct || a.Kind() == reflect.Map || a.Kind() == reflect.Slice {
-		// For complex types, we either recurse or use DeepEqual if atomic.
-		// If not atomic, we just continue to recurse.
 		if !atomic {
-			// Skip DeepEqual and recurse
+			// Skip ValueEqual and recurse
 		} else {
-			if a.CanInterface() && b.CanInterface() && reflect.DeepEqual(a.Interface(), b.Interface()) {
+			if ValueEqual(a, b) {
 				return nil, nil
 			}
 		}
 	} else {
-		// For basic types, we check equality later in the Kind switch.
+		// Basic types equality handled by Kind switch below.
 	}
 
 	if fn, ok := d.customDiffs[a.Type()]; ok {
@@ -406,8 +404,8 @@ func (d *Differ) diffRecursive(a, b reflect.Value, atomic bool, ctx *diffContext
 			}
 		}
 	}
-	// For basic types, we use direct reflect.Value instead of deepCopyValue
-	// because they are immutable.
+	
+	// Default: if types are basic and immutable, return valuePatch without deep copy.
 	k := a.Kind()
 	if (k >= reflect.Bool && k <= reflect.String) || k == reflect.Float32 || k == reflect.Float64 || k == reflect.Complex64 || k == reflect.Complex128 {
 		return newValuePatch(a, b), nil
@@ -424,6 +422,10 @@ func (d *Differ) diffPtr(a, b reflect.Value, ctx *diffContext) (diffPatch, error
 	}
 	if b.IsNil() {
 		return newValuePatch(deepCopyValue(a), reflect.Zero(a.Type())), nil
+	}
+
+	if a.Pointer() == b.Pointer() {
+		return nil, nil
 	}
 
 	k := visitKey{a.Pointer(), b.Pointer(), a.Type()}
@@ -546,9 +548,13 @@ func (d *Differ) diffMap(a, b reflect.Value, ctx *diffContext) (diffPatch, error
 	}
 	if a.IsNil() || b.IsNil() {
 		if !b.IsValid() {
-			return newValuePatch(deepCopyValue(a), reflect.Value{}), nil
+			return newValuePatch(a, reflect.Value{}), nil
 		}
-		return newValuePatch(deepCopyValue(a), deepCopyValue(b)), nil
+		return newValuePatch(a, b), nil
+	}
+
+	if a.Pointer() == b.Pointer() {
+		return nil, nil
 	}
 
 	var added map[any]reflect.Value
@@ -669,9 +675,13 @@ func (d *Differ) diffSlice(a, b reflect.Value, ctx *diffContext) (diffPatch, err
 	}
 	if a.IsNil() || b.IsNil() {
 		if !b.IsValid() {
-			return newValuePatch(deepCopyValue(a), reflect.Value{}), nil
+			return newValuePatch(a, reflect.Value{}), nil
 		}
-		return newValuePatch(deepCopyValue(a), deepCopyValue(b)), nil
+		return newValuePatch(a, b), nil
+	}
+
+	if a.Pointer() == b.Pointer() {
+		return nil, nil
 	}
 
 	lenA := a.Len()
@@ -681,7 +691,7 @@ func (d *Differ) diffSlice(a, b reflect.Value, ctx *diffContext) (diffPatch, err
 	for prefix < lenA && prefix < lenB {
 		vA := a.Index(prefix)
 		vB := b.Index(prefix)
-		if reflect.DeepEqual(vA.Interface(), vB.Interface()) {
+		if ValueEqual(vA, vB) {
 			prefix++
 		} else {
 			break
@@ -692,7 +702,7 @@ func (d *Differ) diffSlice(a, b reflect.Value, ctx *diffContext) (diffPatch, err
 	for suffix < (lenA-prefix) && suffix < (lenB-prefix) {
 		vA := a.Index(lenA - 1 - suffix)
 		vB := b.Index(lenB - 1 - suffix)
-		if reflect.DeepEqual(vA.Interface(), vB.Interface()) {
+		if ValueEqual(vA, vB) {
 			suffix++
 		} else {
 			break
@@ -772,9 +782,9 @@ func (d *Differ) computeSliceEdits(a, b reflect.Value, aStart, aEnd, bStart, bEn
 				k1 = k1.Elem()
 				k2 = k2.Elem()
 			}
-			return reflect.DeepEqual(k1.Field(keyField).Interface(), k2.Field(keyField).Interface())
+			return ValueEqual(k1.Field(keyField), k2.Field(keyField))
 		}
-		return reflect.DeepEqual(v1.Interface(), v2.Interface())
+		return ValueEqual(v1, v2)
 	}
 
 	max := n + m
@@ -831,7 +841,7 @@ func (d *Differ) backtrackMyers(a, b reflect.Value, aStart, aEnd, bStart, bEnd, 
 		for x > prevX && y > prevY {
 			vA := a.Index(aStart + x - 1)
 			vB := b.Index(bStart + y - 1)
-			if !reflect.DeepEqual(vA.Interface(), vB.Interface()) {
+			if !ValueEqual(vA, vB) {
 				ctx.pathStack = append(ctx.pathStack, fmt.Sprintf("%v", extractKey(vA, keyField)))
 				p, err := d.diffRecursive(vA, vB, false, ctx)
 				ctx.pathStack = ctx.pathStack[:len(ctx.pathStack)-1]
@@ -917,7 +927,7 @@ func (d *Differ) backtrackMyers(a, b reflect.Value, aStart, aEnd, bStart, bEnd, 
 	for x > 0 && y > 0 {
 		vA := a.Index(aStart + x - 1)
 		vB := b.Index(bStart + y - 1)
-		if !reflect.DeepEqual(vA.Interface(), vB.Interface()) {
+		if !ValueEqual(vA, vB) {
 			ctx.pathStack = append(ctx.pathStack, fmt.Sprintf("%v", extractKey(vA, keyField)))
 			p, err := d.diffRecursive(vA, vB, false, ctx)
 			ctx.pathStack = ctx.pathStack[:len(ctx.pathStack)-1]
