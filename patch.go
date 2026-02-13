@@ -79,6 +79,10 @@ type Patch[T any] interface {
 
 	// Summary returns a human-readable summary of the changes in the patch.
 	Summary() string
+
+	// Release returns the patch and its internal structures to the pool.
+	// The patch must not be used after calling this.
+	Release()
 }
 
 // NewPatch returns a new, empty patch for type T.
@@ -227,6 +231,13 @@ func (p *typedPatch[T]) Summary() string {
 		return "No changes."
 	}
 	return p.inner.summary("/")
+}
+
+func (p *typedPatch[T]) Release() {
+	if p.inner != nil {
+		p.inner.release()
+		p.inner = nil
+	}
 }
 
 func (p *typedPatch[T]) String() string {

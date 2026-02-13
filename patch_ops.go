@@ -6,8 +6,35 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/brunoga/deep/v2/internal/unsafe"
+)
+
+var (
+	valuePatchPool = sync.Pool{
+		New: func() any { return &valuePatch{} },
+	}
+	ptrPatchPool = sync.Pool{
+		New: func() any { return &ptrPatch{} },
+	}
+	structPatchPool = sync.Pool{
+		New: func() any {
+			return &structPatch{
+				fields: make(map[string]diffPatch),
+			}
+		},
+	}
+	mapPatchPool = sync.Pool{
+		New: func() any {
+			return &mapPatch{
+				added:        make(map[any]reflect.Value),
+				removed:      make(map[any]reflect.Value),
+				modified:     make(map[any]diffPatch),
+				originalKeys: make(map[any]any),
+			}
+		},
+	}
 )
 
 var ErrConditionSkipped = fmt.Errorf("condition skipped")
@@ -26,6 +53,7 @@ type diffPatch interface {
 	conditions() (cond, ifCond, unlessCond any)
 	toJSONPatch(path string) []map[string]any
 	summary(path string) string
+	release()
 }
 
 type basePatch struct {
@@ -114,6 +142,25 @@ type valuePatch struct {
 	basePatch
 	oldVal reflect.Value
 	newVal reflect.Value
+}
+
+func newValuePatch(oldVal, newVal reflect.Value) *valuePatch {
+	p := valuePatchPool.Get().(*valuePatch)
+	p.oldVal = oldVal
+	p.newVal = newVal
+	p.cond = nil
+	p.ifCond = nil
+	p.unlessCond = nil
+	return p
+}
+
+func (p *valuePatch) release() {
+	p.oldVal = reflect.Value{}
+	p.newVal = reflect.Value{}
+	p.cond = nil
+	p.ifCond = nil
+	p.unlessCond = nil
+	valuePatchPool.Put(p)
 }
 
 func (p *valuePatch) apply(root, v reflect.Value) {
@@ -476,6 +523,34 @@ func (p *logPatch) toJSONPatch(path string) []map[string]any {
 
 func (p *logPatch) summary(path string) string {
 	return fmt.Sprintf("Log: %s", p.message)
+}
+
+func newPtrPatch(elemPatch diffPatch) *ptrPatch {
+	p := ptrPatchPool.Get().(*ptrPatch)
+	p.elemPatch = elemPatch
+	p.cond = nil
+	p.ifCond = nil
+	p.unlessCond = nil
+	return p
+}
+
+func newStructPatch() *structPatch {
+	p := structPatchPool.Get().(*structPatch)
+	p.cond = nil
+	p.ifCond = nil
+	p.unlessCond = nil
+	// fields map is cleared during release, so it should be empty here
+	return p
+}
+
+func newMapPatch(keyType reflect.Type) *mapPatch {
+	p := mapPatchPool.Get().(*mapPatch)
+	p.keyType = keyType
+	p.cond = nil
+	p.ifCond = nil
+	p.unlessCond = nil
+	// maps are cleared during release
+	return p
 }
 
 // ptrPatch handles changes to the content pointed to by a pointer.
@@ -2003,12 +2078,91 @@ func (p *readOnlyPatch) setUnlessCondition(cond any) { p.inner.setUnlessConditio
 func (p *readOnlyPatch) conditions() (any, any, any) { return p.inner.conditions() }
 
 func (p *readOnlyPatch) toJSONPatch(path string) []map[string]any {
-	// For JSON Patch, we don't really have a way to say "don't apply this but keep it".
-	// Maybe we should just return empty?
-	// Actually, if it's readonly, we probably shouldn't even include it in the JSON patch.
 	return nil
 }
 
 func (p *readOnlyPatch) summary(path string) string {
 	return fmt.Sprintf("[ReadOnly] %s", p.inner.summary(path))
 }
+
+func (p *testPatch) release() {}
+func (p *copyPatch) release() {}
+func (p *movePatch) release() {}
+func (p *logPatch) release()  {}
+
+func (p *ptrPatch) release() {
+	if p.elemPatch != nil {
+		p.elemPatch.release()
+	}
+	p.elemPatch = nil
+	p.cond = nil
+	p.ifCond = nil
+	p.unlessCond = nil
+	ptrPatchPool.Put(p)
+}
+
+func (p *interfacePatch) release() {
+	if p.elemPatch != nil {
+		p.elemPatch.release()
+	}
+	p.elemPatch = nil
+	p.cond = nil
+	p.ifCond = nil
+	p.unlessCond = nil
+}
+
+func (p *structPatch) release() {
+	for k, v := range p.fields {
+		v.release()
+		delete(p.fields, k)
+	}
+	p.cond = nil
+	p.ifCond = nil
+	p.unlessCond = nil
+	structPatchPool.Put(p)
+}
+
+func (p *arrayPatch) release() {
+	for k, v := range p.indices {
+		v.release()
+		delete(p.indices, k)
+	}
+	p.cond = nil
+	p.ifCond = nil
+	p.unlessCond = nil
+}
+
+func (p *mapPatch) release() {
+	for k, v := range p.modified {
+		v.release()
+		delete(p.modified, k)
+	}
+	for k := range p.added {
+		delete(p.added, k)
+	}
+	for k := range p.removed {
+		delete(p.removed, k)
+	}
+	for k := range p.originalKeys {
+		delete(p.originalKeys, k)
+	}
+	p.cond = nil
+	p.ifCond = nil
+	p.unlessCond = nil
+	mapPatchPool.Put(p)
+}
+
+func (p *slicePatch) release() {
+	for _, op := range p.ops {
+		if op.Patch != nil {
+			op.Patch.release()
+		}
+	}
+	p.ops = nil
+	p.cond = nil
+	p.ifCond = nil
+	p.unlessCond = nil
+}
+
+func (p *customDiffPatch) release() {}
+func (p *readOnlyPatch) release()   { p.inner.release() }

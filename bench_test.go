@@ -98,3 +98,40 @@ func BenchmarkDiff_Struct(b *testing.B) {
 		Diff(s1, s2)
 	}
 }
+
+func BenchmarkDiff_LargeNested(b *testing.B) {
+	type Node struct {
+		ID       int
+		Metadata map[string]string
+		Children []*Node
+	}
+
+	var makeTree func(depth int) *Node
+	makeTree = func(depth int) *Node {
+		if depth == 0 {
+			return nil
+		}
+		return &Node{
+			ID:       depth,
+			Metadata: map[string]string{"env": "prod", "tier": "backend"},
+			Children: []*Node{makeTree(depth - 1), makeTree(depth - 1)},
+		}
+	}
+
+	tree1 := makeTree(10)
+	tree2, _ := Copy(tree1)
+	// Change one value deep in the tree
+	curr := tree2
+	for curr.Children[0] != nil {
+		curr = curr.Children[0]
+	}
+	curr.ID = 999
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		patch := Diff(tree1, tree2)
+		if patch != nil {
+			patch.Release()
+		}
+	}
+}
