@@ -144,7 +144,10 @@ func (p Path) set(v reflect.Value, val reflect.Value) error {
 		if keyType.Kind() == reflect.String {
 			keyVal = reflect.ValueOf(key)
 		} else if keyType.Kind() == reflect.Int {
-			i, _ := strconv.Atoi(key)
+			i, err := strconv.Atoi(key)
+			if err != nil {
+				return fmt.Errorf("invalid int key: %s", key)
+			}
 			keyVal = reflect.ValueOf(i)
 		}
 		parent.SetMapIndex(keyVal, convertValue(val, parent.Type().Elem()))
@@ -152,6 +155,7 @@ func (p Path) set(v reflect.Value, val reflect.Value) error {
 	case reflect.Slice:
 		idx := lastPart.index
 		if !lastPart.isIndex {
+			var err error
 			idx, err = strconv.Atoi(lastPart.key)
 			if err != nil {
 				return fmt.Errorf("invalid slice index: %s", lastPart.key)
@@ -202,7 +206,10 @@ func (p Path) delete(v reflect.Value) error {
 		if keyType.Kind() == reflect.String {
 			keyVal = reflect.ValueOf(key)
 		} else if keyType.Kind() == reflect.Int {
-			i, _ := strconv.Atoi(key)
+			i, err := strconv.Atoi(key)
+			if err != nil {
+				return fmt.Errorf("invalid int key: %s", key)
+			}
 			keyVal = reflect.ValueOf(i)
 		}
 		parent.SetMapIndex(keyVal, reflect.Value{})
@@ -210,6 +217,7 @@ func (p Path) delete(v reflect.Value) error {
 	case reflect.Slice:
 		idx := lastPart.index
 		if !lastPart.isIndex {
+			var err error
 			idx, err = strconv.Atoi(lastPart.key)
 			if err != nil {
 				return fmt.Errorf("invalid slice index: %s", lastPart.key)

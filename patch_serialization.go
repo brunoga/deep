@@ -162,13 +162,35 @@ func unmarshalDiffPatch(data []byte) (diffPatch, error) {
 	return convertFromSurrogate(&s)
 }
 
-func unmarshalCondFromMap(d map[string]any, key string) any {
+func unmarshalCondFromMap(d map[string]any, key string) (any, error) {
 	if cData, ok := d[key]; ok && cData != nil {
-		jsonData, _ := json.Marshal(cData)
-		c, _ := unmarshalCondition[any](jsonData)
-		return c
+		jsonData, err := json.Marshal(cData)
+		if err != nil {
+			return nil, err
+		}
+		return unmarshalCondition[any](jsonData)
 	}
-	return nil
+	return nil, nil
+}
+
+func unmarshalBasePatch(d map[string]any) (basePatch, error) {
+	c, err := unmarshalCondFromMap(d, "c")
+	if err != nil {
+		return basePatch{}, err
+	}
+	ifCond, err := unmarshalCondFromMap(d, "if")
+	if err != nil {
+		return basePatch{}, err
+	}
+	unlessCond, err := unmarshalCondFromMap(d, "un")
+	if err != nil {
+		return basePatch{}, err
+	}
+	return basePatch{
+		cond:       c,
+		ifCond:     ifCond,
+		unlessCond: unlessCond,
+	}, nil
 }
 
 func convertFromSurrogate(s any) (diffPatch, error) {
@@ -190,48 +212,38 @@ func convertFromSurrogate(s any) (diffPatch, error) {
 		return nil, fmt.Errorf("invalid surrogate type: %T", s)
 	}
 
+	d := data.(map[string]any)
+	base, err := unmarshalBasePatch(d)
+	if err != nil {
+		return nil, err
+	}
+
 	switch kind {
 	case "value":
-		d := data.(map[string]any)
 		return &valuePatch{
-			oldVal: interfaceToValue(d["o"]),
-			newVal: interfaceToValue(d["n"]),
-			basePatch: basePatch{
-				cond:       unmarshalCondFromMap(d, "c"),
-				ifCond:     unmarshalCondFromMap(d, "if"),
-				unlessCond: unmarshalCondFromMap(d, "un"),
-			},
+			oldVal:    interfaceToValue(d["o"]),
+			newVal:    interfaceToValue(d["n"]),
+			basePatch: base,
 		}, nil
 	case "ptr":
-		d := data.(map[string]any)
 		elem, err := convertFromSurrogate(d["p"])
 		if err != nil {
 			return nil, err
 		}
 		return &ptrPatch{
 			elemPatch: elem,
-			basePatch: basePatch{
-				cond:       unmarshalCondFromMap(d, "c"),
-				ifCond:     unmarshalCondFromMap(d, "if"),
-				unlessCond: unmarshalCondFromMap(d, "un"),
-			},
+			basePatch: base,
 		}, nil
 	case "interface":
-		d := data.(map[string]any)
 		elem, err := convertFromSurrogate(d["p"])
 		if err != nil {
 			return nil, err
 		}
 		return &interfacePatch{
 			elemPatch: elem,
-			basePatch: basePatch{
-				cond:       unmarshalCondFromMap(d, "c"),
-				ifCond:     unmarshalCondFromMap(d, "if"),
-				unlessCond: unmarshalCondFromMap(d, "un"),
-			},
+			basePatch: base,
 		}, nil
 	case "struct":
-		d := data.(map[string]any)
 		fieldsData := d["f"].(map[string]any)
 		fields := make(map[string]diffPatch)
 		for name, pData := range fieldsData {
@@ -242,15 +254,10 @@ func convertFromSurrogate(s any) (diffPatch, error) {
 			fields[name] = p
 		}
 		return &structPatch{
-			fields: fields,
-			basePatch: basePatch{
-				cond:       unmarshalCondFromMap(d, "c"),
-				ifCond:     unmarshalCondFromMap(d, "if"),
-				unlessCond: unmarshalCondFromMap(d, "un"),
-			},
+			fields:    fields,
+			basePatch: base,
 		}, nil
 	case "array":
-		d := data.(map[string]any)
 		indicesData := d["i"].(map[string]any)
 		indices := make(map[int]diffPatch)
 		for idxStr, pData := range indicesData {
@@ -263,15 +270,10 @@ func convertFromSurrogate(s any) (diffPatch, error) {
 			indices[idx] = p
 		}
 		return &arrayPatch{
-			indices: indices,
-			basePatch: basePatch{
-				cond:       unmarshalCondFromMap(d, "c"),
-				ifCond:     unmarshalCondFromMap(d, "if"),
-				unlessCond: unmarshalCondFromMap(d, "un"),
-			},
+			indices:   indices,
+			basePatch: base,
 		}, nil
 	case "map":
-		d := data.(map[string]any)
 		added := make(map[any]reflect.Value)
 		if a := d["a"]; a != nil {
 			if slice, ok := a.([]any); ok {
@@ -337,14 +339,9 @@ func convertFromSurrogate(s any) (diffPatch, error) {
 			removed:      removed,
 			modified:     modified,
 			originalKeys: originalKeys,
-			basePatch: basePatch{
-				cond:       unmarshalCondFromMap(d, "c"),
-				ifCond:     unmarshalCondFromMap(d, "if"),
-				unlessCond: unmarshalCondFromMap(d, "un"),
-			},
+			basePatch:    base,
 		}, nil
 	case "slice":
-		d := data.(map[string]any)
 		var opsDataRaw []any
 		if raw, ok := d["o"].([]any); ok {
 			opsDataRaw = raw
@@ -394,52 +391,28 @@ func convertFromSurrogate(s any) (diffPatch, error) {
 			})
 		}
 		return &slicePatch{
-			ops: ops,
-			basePatch: basePatch{
-				cond:       unmarshalCondFromMap(d, "c"),
-				ifCond:     unmarshalCondFromMap(d, "if"),
-				unlessCond: unmarshalCondFromMap(d, "un"),
-			},
+			ops:       ops,
+			basePatch: base,
 		}, nil
 	case "test":
-		d := data.(map[string]any)
 		return &testPatch{
-			expected: interfaceToValue(d["e"]),
-			basePatch: basePatch{
-				cond:       unmarshalCondFromMap(d, "c"),
-				ifCond:     unmarshalCondFromMap(d, "if"),
-				unlessCond: unmarshalCondFromMap(d, "un"),
-			},
+			expected:  interfaceToValue(d["e"]),
+			basePatch: base,
 		}, nil
 	case "copy":
-		d := data.(map[string]any)
 		return &copyPatch{
-			from: d["f"].(string),
-			basePatch: basePatch{
-				cond:       unmarshalCondFromMap(d, "c"),
-				ifCond:     unmarshalCondFromMap(d, "if"),
-				unlessCond: unmarshalCondFromMap(d, "un"),
-			},
+			from:      d["f"].(string),
+			basePatch: base,
 		}, nil
 	case "move":
-		d := data.(map[string]any)
 		return &movePatch{
-			from: d["f"].(string),
-			basePatch: basePatch{
-				cond:       unmarshalCondFromMap(d, "c"),
-				ifCond:     unmarshalCondFromMap(d, "if"),
-				unlessCond: unmarshalCondFromMap(d, "un"),
-			},
+			from:      d["f"].(string),
+			basePatch: base,
 		}, nil
 	case "log":
-		d := data.(map[string]any)
 		return &logPatch{
-			message: d["m"].(string),
-			basePatch: basePatch{
-				cond:       unmarshalCondFromMap(d, "c"),
-				ifCond:     unmarshalCondFromMap(d, "if"),
-				unlessCond: unmarshalCondFromMap(d, "un"),
-			},
+			message:   d["m"].(string),
+			basePatch: base,
 		}, nil
 	}
 	return nil, fmt.Errorf("unknown patch kind: %s", kind)

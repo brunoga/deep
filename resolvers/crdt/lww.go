@@ -18,7 +18,7 @@ type LWWResolver struct {
 }
 
 func (r *LWWResolver) Resolve(path string, op deep.OpKind, key, prevKey any, val reflect.Value) bool {
-	lClock, _ := r.Clocks[path]
+	lClock := r.Clocks[path]
 	lTomb, hasLT := r.Tombstones[path]
 	lTime := lClock
 	if hasLT && lTomb.After(lTime) {
@@ -52,7 +52,7 @@ type StateResolver struct {
 
 func (r *StateResolver) Resolve(path string, op deep.OpKind, key, prevKey any, val reflect.Value) bool {
 	// Local Time
-	lClock, _ := r.LocalClocks[path]
+	lClock := r.LocalClocks[path]
 	lTomb, hasLT := r.LocalTombstones[path]
 	lTime := lClock
 	if hasLT && lTomb.After(lTime) {
