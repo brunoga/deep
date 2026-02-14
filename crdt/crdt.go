@@ -3,12 +3,142 @@ package crdt
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"sync"
 
 	"github.com/brunoga/deep/v3"
 	"github.com/brunoga/deep/v3/crdt/hlc"
 	crdtresolver "github.com/brunoga/deep/v3/resolvers/crdt"
 )
+
+func init() {
+	deep.RegisterCustomDiff[Text](nil, func(a, b Text) (deep.Patch[Text], error) {
+		// ...
+		return &textPatch{runs: b}, nil
+	})
+}
+
+// textPatch is a specialized patch for Text CRDT.
+type textPatch struct {
+	runs Text
+}
+
+func (p *textPatch) Apply(v *Text) {
+	*v = p.runs.normalize()
+}
+
+func (p *textPatch) ApplyChecked(v *Text) error {
+	p.Apply(v)
+	return nil
+}
+
+func (p *textPatch) ApplyResolved(v *Text, r deep.ConflictResolver) error {
+	*v = mergeTextRuns(*v, p.runs)
+	return nil
+}
+
+func mergeTextRuns(a, b Text) Text {
+	allRuns := append(a[:0:0], a...)
+	allRuns = append(allRuns, b...)
+
+	// 1. Find all split points for each base ID (NodeID + WallTime)
+	type baseID struct {
+		WallTime int64
+		NodeID   string
+	}
+	splits := make(map[baseID]map[int32]bool)
+
+	for _, run := range allRuns {
+		base := baseID{run.ID.WallTime, run.ID.NodeID}
+		if splits[base] == nil {
+			splits[base] = make(map[int32]bool)
+		}
+		splits[base][run.ID.Logical] = true
+		splits[base][run.ID.Logical+int32(len(run.Value))] = true
+	}
+
+	// 2. Re-split all runs according to split points and merge into a map
+	combinedMap := make(map[hlc.HLC]TextRun)
+	for _, run := range allRuns {
+		base := baseID{run.ID.WallTime, run.ID.NodeID}
+
+		relevantSplits := []int32{}
+		for s := range splits[base] {
+			if s > run.ID.Logical && s < run.ID.Logical+int32(len(run.Value)) {
+				relevantSplits = append(relevantSplits, s)
+			}
+		}
+		sort.Slice(relevantSplits, func(i, j int) bool { return relevantSplits[i] < relevantSplits[j] })
+
+		currentLogical := run.ID.Logical
+		currentValue := run.Value
+		currentPrev := run.Prev
+
+		for _, s := range relevantSplits {
+			offset := int(s - currentLogical)
+
+			id := run.ID
+			id.Logical = currentLogical
+
+			newRun := TextRun{
+				ID:      id,
+				Value:   currentValue[:offset],
+				Prev:    currentPrev,
+				Deleted: run.Deleted,
+			}
+			if existing, ok := combinedMap[id]; ok {
+				if newRun.Deleted {
+					existing.Deleted = true
+				}
+				combinedMap[id] = existing
+			} else {
+				combinedMap[id] = newRun
+			}
+
+			currentPrev = id
+			currentPrev.Logical += int32(offset - 1)
+			currentValue = currentValue[offset:]
+			currentLogical = s
+		}
+
+		id := run.ID
+		id.Logical = currentLogical
+		newRun := TextRun{
+			ID:      id,
+			Value:   currentValue,
+			Prev:    currentPrev,
+			Deleted: run.Deleted,
+		}
+		if existing, ok := combinedMap[id]; ok {
+			if newRun.Deleted {
+				existing.Deleted = true
+			}
+			combinedMap[id] = existing
+		} else {
+			combinedMap[id] = newRun
+		}
+	}
+
+	// 3. Reconstruct the slice
+	result := make(Text, 0, len(combinedMap))
+	for _, run := range combinedMap {
+		result = append(result, run)
+	}
+
+	return result.normalize()
+}
+
+func (p *textPatch) Walk(fn func(path string, op deep.OpKind, old, new any) error) error {
+	return fn("", deep.OpReplace, nil, p.runs)
+}
+
+func (p *textPatch) WithCondition(c deep.Condition[Text]) deep.Patch[Text] { return p }
+func (p *textPatch) WithStrict(strict bool) deep.Patch[Text]             { return p }
+func (p *textPatch) Reverse() deep.Patch[Text]                           { return p }
+func (p *textPatch) ToJSONPatch() ([]byte, error)                        { return nil, nil }
+func (p *textPatch) Summary() string                                     { return "Text update" }
+func (p *textPatch) Release()                                            {}
+func (p *textPatch) String() string                                      { return "TextPatch" }
 
 // CRDT represents a Conflict-free Replicated Data Type wrapper around type T.
 type CRDT[T any] struct {
@@ -162,6 +292,15 @@ func (c *CRDT[T]) Merge(other *CRDT[T]) bool {
 	}
 
 	// State-based Resolver
+	if _, ok := any(c.Value).(*Text); ok {
+		// Special case for Text
+		v := any(c.Value).(Text)
+		otherV := any(other.Value).(Text)
+		c.Value = any(mergeTextRuns(v, otherV)).(T)
+		c.mergeMeta(other)
+		return true
+	}
+
 	resolver := &crdtresolver.StateResolver{
 		LocalClocks:      c.Clocks,
 		LocalTombstones:  c.Tombstones,
@@ -176,6 +315,7 @@ func (c *CRDT[T]) Merge(other *CRDT[T]) bool {
 	c.mergeMeta(other)
 	return true
 }
+
 
 func (c *CRDT[T]) mergeMeta(other *CRDT[T]) {
 	for k, v := range other.Clocks {

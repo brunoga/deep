@@ -111,8 +111,18 @@ func (ctx *diffContext) buildPath() string {
 	return b.String()
 }
 
+var (
+	defaultDiffer = NewDiffer()
+	mu            sync.RWMutex
+)
+
 // RegisterCustomDiff registers a custom diff function for a specific type.
 func RegisterCustomDiff[T any](d *Differ, fn func(a, b T) (Patch[T], error)) {
+	if d == nil {
+		mu.Lock()
+		d = defaultDiffer
+		mu.Unlock()
+	}
 	var t T
 	typ := reflect.TypeOf(t)
 	d.customDiffs[typ] = func(a, b reflect.Value, ctx *diffContext) (diffPatch, error) {
@@ -174,6 +184,11 @@ func DiffTyped[T any](d *Differ, a, b T) Patch[T] {
 
 // Diff compares two values a and b and returns a Patch that can be applied.
 func Diff[T any](a, b T, opts ...DiffOption) Patch[T] {
+	if len(opts) == 0 {
+		mu.RLock()
+		defer mu.RUnlock()
+		return DiffTyped(defaultDiffer, a, b)
+	}
 	d := NewDiffer(opts...)
 	return DiffTyped(d, a, b)
 }

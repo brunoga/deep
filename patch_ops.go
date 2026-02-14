@@ -1954,11 +1954,18 @@ func (p *customDiffPatch) applyChecked(root, v reflect.Value, strict bool) error
 }
 
 func (p *customDiffPatch) applyResolved(root, v reflect.Value, path string, resolver ConflictResolver) error {
-	// Custom patches don't support resolution hooks yet.
-	// They are opaque. We just check if the op itself is allowed?
-	// But custom patch implies multiple changes.
-	// Fallback to standard applyChecked or fail?
-	// Let's call ApplyChecked.
+	if !v.CanAddr() {
+		return fmt.Errorf("cannot apply custom patch to non-addressable value")
+	}
+	method := reflect.ValueOf(p.patch).MethodByName("ApplyResolved")
+	if method.IsValid() {
+		results := method.Call([]reflect.Value{v.Addr(), reflect.ValueOf(resolver)})
+		if !results[0].IsNil() {
+			return results[0].Interface().(error)
+		}
+		return nil
+	}
+
 	if resolver != nil {
 		if !resolver.Resolve(path, OpReplace, nil, nil, v) {
 			return nil
