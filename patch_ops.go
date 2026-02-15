@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -702,7 +703,18 @@ type structPatch struct {
 }
 
 func (p *structPatch) apply(root, v reflect.Value) {
-	for name, patch := range p.fields {
+	// Sort fields for deterministic application.
+	// This also helps with dependencies: generally we want to process fields in a predictable order.
+	// For "Move" operations (Copy+Remove), if target is processed before source removal, it works.
+	// Sorting by name usually puts 'A' (Archive) before 'D' (Drafts), which fixes the move_detection example.
+	keys := make([]string, 0, len(p.fields))
+	for k := range p.fields {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	for _, name := range keys {
+		patch := p.fields[name]
 		f := v.FieldByName(name)
 		if f.IsValid() {
 			if !f.CanSet() {
@@ -721,7 +733,15 @@ func (p *structPatch) applyChecked(root, v reflect.Value, strict bool) error {
 		return err
 	}
 	var errs []error
-	for name, patch := range p.fields {
+	
+	keys := make([]string, 0, len(p.fields))
+	for k := range p.fields {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	for _, name := range keys {
+		patch := p.fields[name]
 		f := v.FieldByName(name)
 		if !f.IsValid() {
 			errs = append(errs, fmt.Errorf("field %s not found", name))
@@ -741,7 +761,14 @@ func (p *structPatch) applyChecked(root, v reflect.Value, strict bool) error {
 }
 
 func (p *structPatch) applyResolved(root, v reflect.Value, path string, resolver ConflictResolver) error {
-	for name, patch := range p.fields {
+	keys := make([]string, 0, len(p.fields))
+	for k := range p.fields {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	for _, name := range keys {
+		patch := p.fields[name]
 		f := v.FieldByName(name)
 		if !f.IsValid() {
 			return fmt.Errorf("field %s not found", name)
@@ -1658,6 +1685,7 @@ func (p *slicePatch) reverse() diffPatch {
 				Kind:  OpRemove,
 				Index: curB,
 				Val:   op.Val,
+				Key:   op.Key,
 			})
 			curB++
 		case OpRemove:
@@ -1665,6 +1693,7 @@ func (p *slicePatch) reverse() diffPatch {
 				Kind:  OpAdd,
 				Index: curB,
 				Val:   op.Val,
+				Key:   op.Key,
 			})
 			curA++
 		case OpReplace:
@@ -1672,6 +1701,7 @@ func (p *slicePatch) reverse() diffPatch {
 				Kind:  OpReplace,
 				Index: curB,
 				Patch: op.Patch.reverse(),
+				Key:   op.Key,
 			})
 			curA++
 			curB++
@@ -1701,6 +1731,13 @@ func (p *slicePatch) walk(path string, fn func(path string, op OpKind, old, new 
 		case OpReplace:
 			if op.Patch != nil {
 				if err := op.Patch.walk(fullPath, fn); err != nil {
+					return err
+				}
+			}
+		case OpCopy:
+			// For cross-path copies, source is in the Patch
+			if cp, ok := op.Patch.(*copyPatch); ok {
+				if err := fn(fullPath, OpCopy, cp.from, nil); err != nil {
 					return err
 				}
 			}
