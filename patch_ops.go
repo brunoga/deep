@@ -702,18 +702,75 @@ type structPatch struct {
 	fields map[string]diffPatch
 }
 
+func isDestructive(p diffPatch) bool {
+	if p == nil {
+		return false
+	}
+	switch v := p.(type) {
+	case *valuePatch:
+		return !v.newVal.IsValid() // Removal
+	case *slicePatch:
+		for _, op := range v.ops {
+			if op.Kind == OpRemove || op.Kind == OpMove { // Move implies removal from source? 
+				// In slicePatch, OpMove currently inserts. But semantically moves might change indices.
+				// OpRemove is definitely destructive.
+				return true
+			}
+		}
+		// Also if it replaces with a destructive patch?
+		for _, op := range v.ops {
+			if op.Kind == OpReplace && op.Patch != nil && isDestructive(op.Patch) {
+				return true
+			}
+		}
+	case *mapPatch:
+		if len(v.removed) > 0 {
+			return true
+		}
+		for _, sub := range v.modified {
+			if isDestructive(sub) {
+				return true
+			}
+		}
+	case *structPatch:
+		for _, sub := range v.fields {
+			if isDestructive(sub) {
+				return true
+			}
+		}
+	case *ptrPatch:
+		return isDestructive(v.elemPatch)
+	case *interfacePatch:
+		return isDestructive(v.elemPatch)
+	case *arrayPatch:
+		for _, sub := range v.indices {
+			if isDestructive(sub) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (p *structPatch) apply(root, v reflect.Value) {
-	// Sort fields for deterministic application.
-	// This also helps with dependencies: generally we want to process fields in a predictable order.
-	// For "Move" operations (Copy+Remove), if target is processed before source removal, it works.
-	// Sorting by name usually puts 'A' (Archive) before 'D' (Drafts), which fixes the move_detection example.
 	keys := make([]string, 0, len(p.fields))
 	for k := range p.fields {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
 
+	var deferred []string
+	var immediate []string
+
 	for _, name := range keys {
+		if isDestructive(p.fields[name]) {
+			deferred = append(deferred, name)
+		} else {
+			immediate = append(immediate, name)
+		}
+	}
+
+	applyField := func(name string) {
 		patch := p.fields[name]
 		f := v.FieldByName(name)
 		if f.IsValid() {
@@ -722,6 +779,13 @@ func (p *structPatch) apply(root, v reflect.Value) {
 			}
 			patch.apply(root, f)
 		}
+	}
+
+	for _, name := range immediate {
+		applyField(name)
+	}
+	for _, name := range deferred {
+		applyField(name)
 	}
 }
 
@@ -740,12 +804,23 @@ func (p *structPatch) applyChecked(root, v reflect.Value, strict bool) error {
 	}
 	sort.Strings(keys)
 
+	var deferred []string
+	var immediate []string
+
 	for _, name := range keys {
+		if isDestructive(p.fields[name]) {
+			deferred = append(deferred, name)
+		} else {
+			immediate = append(immediate, name)
+		}
+	}
+
+	processField := func(name string) {
 		patch := p.fields[name]
 		f := v.FieldByName(name)
 		if !f.IsValid() {
 			errs = append(errs, fmt.Errorf("field %s not found", name))
-			continue
+			return
 		}
 		if !f.CanSet() {
 			unsafe.DisableRO(&f)
@@ -753,6 +828,13 @@ func (p *structPatch) applyChecked(root, v reflect.Value, strict bool) error {
 		if err := patch.applyChecked(root, f, strict); err != nil {
 			errs = append(errs, fmt.Errorf("field %s: %w", name, err))
 		}
+	}
+
+	for _, name := range immediate {
+		processField(name)
+	}
+	for _, name := range deferred {
+		processField(name)
 	}
 	if len(errs) > 0 {
 		return &ApplyError{Errors: errs}
@@ -767,7 +849,18 @@ func (p *structPatch) applyResolved(root, v reflect.Value, path string, resolver
 	}
 	sort.Strings(keys)
 
+	var deferred []string
+	var immediate []string
+
 	for _, name := range keys {
+		if isDestructive(p.fields[name]) {
+			deferred = append(deferred, name)
+		} else {
+			immediate = append(immediate, name)
+		}
+	}
+
+	processField := func(name string) error {
 		patch := p.fields[name]
 		f := v.FieldByName(name)
 		if !f.IsValid() {
@@ -785,6 +878,18 @@ func (p *structPatch) applyResolved(root, v reflect.Value, path string, resolver
 
 		if err := patch.applyResolved(root, f, subPath, resolver); err != nil {
 			return fmt.Errorf("field %s: %w", name, err)
+		}
+		return nil
+	}
+
+	for _, name := range immediate {
+		if err := processField(name); err != nil {
+			return err
+		}
+	}
+	for _, name := range deferred {
+		if err := processField(name); err != nil {
+			return err
 		}
 	}
 	return nil
