@@ -1,6 +1,7 @@
 package deep
 
 import (
+	"encoding/json"
 	"reflect"
 	"strconv"
 
@@ -165,6 +166,20 @@ func convertValue(v reflect.Value, targetType reflect.Type) reflect.Value {
 			return reflect.ValueOf(uint64(v.Float())).Convert(targetType)
 		case reflect.Float32, reflect.Float64:
 			return reflect.ValueOf(v.Float()).Convert(targetType)
+		}
+	}
+
+	// Handle Map -> Struct (JSON Unmarshal)
+	if v.Kind() == reflect.Map && targetType.Kind() == reflect.Struct {
+		if v.Type().Key().Kind() == reflect.String {
+			// Best effort: marshal map to JSON, unmarshal to struct
+			data, err := json.Marshal(v.Interface())
+			if err == nil {
+				newStruct := reflect.New(targetType).Elem()
+				if err := json.Unmarshal(data, newStruct.Addr().Interface()); err == nil {
+					return newStruct
+				}
+			}
 		}
 	}
 
