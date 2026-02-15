@@ -12,19 +12,34 @@ import (
 )
 
 func init() {
+	deep.RegisterCustomPatch("text", &textPatch{})
 	deep.RegisterCustomDiff[Text](nil, func(a, b Text) (deep.Patch[Text], error) {
-		// ...
-		return &textPatch{runs: b}, nil
+		// Optimization: if both are same, return nil
+		if len(a) == len(b) {
+			same := true
+			for i := range a {
+				if a[i] != b[i] {
+					same = false
+					break
+				}
+			}
+			if same {
+				return nil, nil
+			}
+		}
+		return &textPatch{Runs: b}, nil
 	})
 }
 
 // textPatch is a specialized patch for Text CRDT.
 type textPatch struct {
-	runs Text
+	Runs Text
 }
 
+func (p *textPatch) PatchKind() string { return "text" }
+
 func (p *textPatch) Apply(v *Text) {
-	*v = p.runs.normalize()
+	*v = p.Runs.normalize()
 }
 
 func (p *textPatch) ApplyChecked(v *Text) error {
@@ -33,7 +48,7 @@ func (p *textPatch) ApplyChecked(v *Text) error {
 }
 
 func (p *textPatch) ApplyResolved(v *Text, r deep.ConflictResolver) error {
-	*v = mergeTextRuns(*v, p.runs)
+	*v = mergeTextRuns(*v, p.Runs)
 	return nil
 }
 
@@ -129,7 +144,7 @@ func mergeTextRuns(a, b Text) Text {
 }
 
 func (p *textPatch) Walk(fn func(path string, op deep.OpKind, old, new any) error) error {
-	return fn("", deep.OpReplace, nil, p.runs)
+	return fn("", deep.OpReplace, nil, p.Runs)
 }
 
 func (p *textPatch) WithCondition(c deep.Condition[Text]) deep.Patch[Text] { return p }
@@ -154,6 +169,25 @@ type CRDT[T any] struct {
 type Delta[T any] struct {
 	Patch     deep.Patch[T] `json:"p"`
 	Timestamp hlc.HLC       `json:"t"`
+}
+
+func (d *Delta[T]) UnmarshalJSON(data []byte) error {
+	var m struct {
+		Patch     json.RawMessage `json:"p"`
+		Timestamp hlc.HLC         `json:"t"`
+	}
+	if err := json.Unmarshal(data, &m); err != nil {
+		return err
+	}
+	d.Timestamp = m.Timestamp
+	if len(m.Patch) > 0 && string(m.Patch) != "null" {
+		p := deep.NewPatch[T]()
+		if err := json.Unmarshal(m.Patch, p); err != nil {
+			return err
+		}
+		d.Patch = p
+	}
+	return nil
 }
 
 // NewCRDT creates a new CRDT wrapper.

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"sync"
 )
 
 type patchSurrogate struct {
@@ -36,6 +37,19 @@ func makeSurrogate(kind string, data map[string]any, p diffPatch) (*patchSurroga
 		data["un"] = uc
 	}
 	return &patchSurrogate{Kind: kind, Data: data}, nil
+}
+
+var (
+	customPatchTypes = make(map[string]reflect.Type)
+	muCustom         sync.RWMutex
+)
+
+// RegisterCustomPatch registers a custom patch implementation for serialization.
+// The provided patch instance is used to determine the type.
+func RegisterCustomPatch(kind string, p any) {
+	muCustom.Lock()
+	defer muCustom.Unlock()
+	customPatchTypes[kind] = reflect.TypeOf(p)
 }
 
 func marshalDiffPatch(p diffPatch) (any, error) {
@@ -150,6 +164,14 @@ func marshalDiffPatch(p diffPatch) (any, error) {
 		return makeSurrogate("log", map[string]any{
 			"m": v.message,
 		}, v)
+	case *customDiffPatch:
+		if pk, ok := v.patch.(interface{ PatchKind() string }); ok {
+			return makeSurrogate("custom", map[string]any{
+				"k": pk.PatchKind(),
+				"v": v.patch,
+			}, v)
+		}
+		return nil, fmt.Errorf("unknown patch type: %T (does not implement PatchKind())", v.patch)
 	}
 	return nil, fmt.Errorf("unknown patch type: %T", p)
 }
@@ -412,6 +434,32 @@ func convertFromSurrogate(s any) (diffPatch, error) {
 	case "log":
 		return &logPatch{
 			message:   d["m"].(string),
+			basePatch: base,
+		}, nil
+	case "custom":
+		kind := d["k"].(string)
+		muCustom.RLock()
+		typ, ok := customPatchTypes[kind]
+		muCustom.RUnlock()
+		if !ok {
+			return nil, fmt.Errorf("unknown custom patch kind: %s", kind)
+		}
+
+		// Create a new instance of the patch type.
+		// We expect typ to be a pointer type (e.g. *textPatch).
+		patchPtr := reflect.New(typ.Elem()).Interface()
+
+		// Unmarshal the data into the new instance.
+		vData, err := json.Marshal(d["v"])
+		if err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(vData, patchPtr); err != nil {
+			return nil, err
+		}
+
+		return &customDiffPatch{
+			patch:     patchPtr,
 			basePatch: base,
 		}, nil
 	}
