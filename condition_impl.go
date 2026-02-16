@@ -10,12 +10,12 @@ import (
 
 type internalConditionImpl interface {
 	evaluateAny(v any) (bool, error)
-	paths() []Path
+	paths() []deepPath
 	withRelativeParts(prefix []pathPart) internalConditionImpl
 }
 
 type rawDefinedCondition struct {
-	Path Path
+	Path deepPath
 }
 
 func (c *rawDefinedCondition) evaluateAny(v any) (bool, error) {
@@ -27,14 +27,14 @@ func (c *rawDefinedCondition) evaluateAny(v any) (bool, error) {
 	return target.IsValid(), nil
 }
 
-func (c *rawDefinedCondition) paths() []Path { return []Path{c.Path} }
+func (c *rawDefinedCondition) paths() []deepPath { return []deepPath{c.Path} }
 
 func (c *rawDefinedCondition) withRelativeParts(prefix []pathPart) internalConditionImpl {
 	return &rawDefinedCondition{Path: c.Path.stripParts(prefix)}
 }
 
 type rawUndefinedCondition struct {
-	Path Path
+	Path deepPath
 }
 
 func (c *rawUndefinedCondition) evaluateAny(v any) (bool, error) {
@@ -46,14 +46,14 @@ func (c *rawUndefinedCondition) evaluateAny(v any) (bool, error) {
 	return !target.IsValid(), nil
 }
 
-func (c *rawUndefinedCondition) paths() []Path { return []Path{c.Path} }
+func (c *rawUndefinedCondition) paths() []deepPath { return []deepPath{c.Path} }
 
 func (c *rawUndefinedCondition) withRelativeParts(prefix []pathPart) internalConditionImpl {
 	return &rawUndefinedCondition{Path: c.Path.stripParts(prefix)}
 }
 
 type rawTypeCondition struct {
-	Path     Path
+	Path     deepPath
 	TypeName string
 }
 
@@ -91,14 +91,14 @@ func (c *rawTypeCondition) evaluateAny(v any) (bool, error) {
 	}
 }
 
-func (c *rawTypeCondition) paths() []Path { return []Path{c.Path} }
+func (c *rawTypeCondition) paths() []deepPath { return []deepPath{c.Path} }
 
 func (c *rawTypeCondition) withRelativeParts(prefix []pathPart) internalConditionImpl {
 	return &rawTypeCondition{Path: c.Path.stripParts(prefix), TypeName: c.TypeName}
 }
 
 type rawStringCondition struct {
-	Path       Path
+	Path       deepPath
 	Val        string
 	Op         string
 	IgnoreCase bool
@@ -136,7 +136,7 @@ func (c *rawStringCondition) evaluateAny(v any) (bool, error) {
 	return false, fmt.Errorf("unknown string operator: %s", c.Op)
 }
 
-func (c *rawStringCondition) paths() []Path { return []Path{c.Path} }
+func (c *rawStringCondition) paths() []deepPath { return []deepPath{c.Path} }
 
 func (c *rawStringCondition) withRelativeParts(prefix []pathPart) internalConditionImpl {
 	return &rawStringCondition{
@@ -148,7 +148,7 @@ func (c *rawStringCondition) withRelativeParts(prefix []pathPart) internalCondit
 }
 
 type rawInCondition struct {
-	Path       Path
+	Path       deepPath
 	Values     []any
 	IgnoreCase bool
 }
@@ -171,7 +171,7 @@ func (c *rawInCondition) evaluateAny(v any) (bool, error) {
 	return false, nil
 }
 
-func (c *rawInCondition) paths() []Path { return []Path{c.Path} }
+func (c *rawInCondition) paths() []deepPath { return []deepPath{c.Path} }
 
 func (c *rawInCondition) withRelativeParts(prefix []pathPart) internalConditionImpl {
 	return &rawInCondition{
@@ -190,14 +190,14 @@ func (c *rawLogCondition) evaluateAny(v any) (bool, error) {
 	return true, nil
 }
 
-func (c *rawLogCondition) paths() []Path { return nil }
+func (c *rawLogCondition) paths() []deepPath { return nil }
 
 func (c *rawLogCondition) withRelativeParts(prefix []pathPart) internalConditionImpl {
 	return c
 }
 
 type rawCompareCondition struct {
-	Path       Path
+	Path       deepPath
 	Val        any
 	Op         string
 	IgnoreCase bool
@@ -212,8 +212,8 @@ func (c *rawCompareCondition) evaluateAny(v any) (bool, error) {
 	return compareValues(target, reflect.ValueOf(c.Val), c.Op, c.IgnoreCase)
 }
 
-func (c *rawCompareCondition) paths() []Path {
-	return []Path{c.Path}
+func (c *rawCompareCondition) paths() []deepPath {
+	return []deepPath{c.Path}
 }
 
 func (c *rawCompareCondition) withRelativeParts(prefix []pathPart) internalConditionImpl {
@@ -226,8 +226,8 @@ func (c *rawCompareCondition) withRelativeParts(prefix []pathPart) internalCondi
 }
 
 type rawCompareFieldCondition struct {
-	Path1      Path
-	Path2      Path
+	Path1      deepPath
+	Path2      deepPath
 	Op         string
 	IgnoreCase bool
 }
@@ -245,8 +245,8 @@ func (c *rawCompareFieldCondition) evaluateAny(v any) (bool, error) {
 	return compareValues(target1, target2, c.Op, c.IgnoreCase)
 }
 
-func (c *rawCompareFieldCondition) paths() []Path {
-	return []Path{c.Path1, c.Path2}
+func (c *rawCompareFieldCondition) paths() []deepPath {
+	return []deepPath{c.Path1, c.Path2}
 }
 
 func (c *rawCompareFieldCondition) withRelativeParts(prefix []pathPart) internalConditionImpl {
@@ -275,8 +275,8 @@ func (c *rawAndCondition) evaluateAny(v any) (bool, error) {
 	return true, nil
 }
 
-func (c *rawAndCondition) paths() []Path {
-	var res []Path
+func (c *rawAndCondition) paths() []deepPath {
+	var res []deepPath
 	for _, sub := range c.Conditions {
 		res = append(res, sub.paths()...)
 	}
@@ -308,8 +308,8 @@ func (c *rawOrCondition) evaluateAny(v any) (bool, error) {
 	return false, nil
 }
 
-func (c *rawOrCondition) paths() []Path {
-	var res []Path
+func (c *rawOrCondition) paths() []deepPath {
+	var res []deepPath
 	for _, sub := range c.Conditions {
 		res = append(res, sub.paths()...)
 	}
@@ -336,7 +336,7 @@ func (c *rawNotCondition) evaluateAny(v any) (bool, error) {
 	return !ok, nil
 }
 
-func (c *rawNotCondition) paths() []Path {
+func (c *rawNotCondition) paths() []deepPath {
 	return c.C.paths()
 }
 
@@ -344,24 +344,24 @@ func (c *rawNotCondition) withRelativeParts(prefix []pathPart) internalCondition
 	return &rawNotCondition{C: c.C.withRelativeParts(prefix)}
 }
 
-// CompareCondition represents a comparison between a path and a literal value.
-type CompareCondition[T any] struct {
-	Path       Path
+// compareCondition represents a comparison between a path and a literal value.
+type compareCondition[T any] struct {
+	Path       deepPath
 	Val        any
 	Op         string
 	IgnoreCase bool
 }
 
-func (c CompareCondition[T]) Evaluate(v *T) (bool, error) {
+func (c compareCondition[T]) Evaluate(v *T) (bool, error) {
 	return c.evaluateAny(v)
 }
 
-func (c CompareCondition[T]) evaluateAny(v any) (bool, error) {
+func (c compareCondition[T]) evaluateAny(v any) (bool, error) {
 	raw := &rawCompareCondition{Path: c.Path, Val: c.Val, Op: c.Op, IgnoreCase: c.IgnoreCase}
 	return raw.evaluateAny(v)
 }
 
-func (c CompareCondition[T]) MarshalJSON() ([]byte, error) {
+func (c compareCondition[T]) MarshalJSON() ([]byte, error) {
 	s, err := marshalConditionAny(c)
 	if err != nil {
 		return nil, err
@@ -370,63 +370,63 @@ func (c CompareCondition[T]) MarshalJSON() ([]byte, error) {
 }
 
 // Eq returns a condition that checks if the value at the path is equal to the given value.
-func Eq[T any](path string, val any) Condition[T] {
-	return CompareCondition[T]{Path: Path(path), Val: val, Op: "=="}
+func Eq[T any](p string, val any) Condition[T] {
+	return compareCondition[T]{Path: deepPath(p), Val: val, Op: "=="}
 }
 
 // EqFold returns a condition that checks if the value at the path is equal to the given value (case-insensitive).
-func EqFold[T any](path string, val any) Condition[T] {
-	return CompareCondition[T]{Path: Path(path), Val: val, Op: "==", IgnoreCase: true}
+func EqFold[T any](p string, val any) Condition[T] {
+	return compareCondition[T]{Path: deepPath(p), Val: val, Op: "==", IgnoreCase: true}
 }
 
 // Ne returns a condition that checks if the value at the path is not equal to the given value.
-func Ne[T any](path string, val any) Condition[T] {
-	return CompareCondition[T]{Path: Path(path), Val: val, Op: "!="}
+func Ne[T any](p string, val any) Condition[T] {
+	return compareCondition[T]{Path: deepPath(p), Val: val, Op: "!="}
 }
 
 // NeFold returns a condition that checks if the value at the path is not equal to the given value (case-insensitive).
-func NeFold[T any](path string, val any) Condition[T] {
-	return CompareCondition[T]{Path: Path(path), Val: val, Op: "!=", IgnoreCase: true}
+func NeFold[T any](p string, val any) Condition[T] {
+	return compareCondition[T]{Path: deepPath(p), Val: val, Op: "!=", IgnoreCase: true}
 }
 
 // Greater returns a condition that checks if the value at the path is greater than the given value.
-func Greater[T any](path string, val any) Condition[T] {
-	return CompareCondition[T]{Path: Path(path), Val: val, Op: ">"}
+func Greater[T any](p string, val any) Condition[T] {
+	return compareCondition[T]{Path: deepPath(p), Val: val, Op: ">"}
 }
 
 // Less returns a condition that checks if the value at the path is less than the given value.
-func Less[T any](path string, val any) Condition[T] {
-	return CompareCondition[T]{Path: Path(path), Val: val, Op: "<"}
+func Less[T any](p string, val any) Condition[T] {
+	return compareCondition[T]{Path: deepPath(p), Val: val, Op: "<"}
 }
 
 // GreaterEqual returns a condition that checks if the value at the path is greater than or equal to the given value.
-func GreaterEqual[T any](path string, val any) Condition[T] {
-	return CompareCondition[T]{Path: Path(path), Val: val, Op: ">="}
+func GreaterEqual[T any](p string, val any) Condition[T] {
+	return compareCondition[T]{Path: deepPath(p), Val: val, Op: ">="}
 }
 
 // LessEqual returns a condition that checks if the value at the path is less than or equal to the given value.
-func LessEqual[T any](path string, val any) Condition[T] {
-	return CompareCondition[T]{Path: Path(path), Val: val, Op: "<="}
+func LessEqual[T any](p string, val any) Condition[T] {
+	return compareCondition[T]{Path: deepPath(p), Val: val, Op: "<="}
 }
 
-// CompareFieldCondition represents a comparison between two paths.
-type CompareFieldCondition[T any] struct {
-	Path1      Path
-	Path2      Path
+// compareFieldCondition represents a comparison between two paths.
+type compareFieldCondition[T any] struct {
+	Path1      deepPath
+	Path2      deepPath
 	Op         string
 	IgnoreCase bool
 }
 
-func (c CompareFieldCondition[T]) Evaluate(v *T) (bool, error) {
+func (c compareFieldCondition[T]) Evaluate(v *T) (bool, error) {
 	return c.evaluateAny(v)
 }
 
-func (c CompareFieldCondition[T]) evaluateAny(v any) (bool, error) {
+func (c compareFieldCondition[T]) evaluateAny(v any) (bool, error) {
 	raw := &rawCompareFieldCondition{Path1: c.Path1, Path2: c.Path2, Op: c.Op, IgnoreCase: c.IgnoreCase}
 	return raw.evaluateAny(v)
 }
 
-func (c CompareFieldCondition[T]) MarshalJSON() ([]byte, error) {
+func (c compareFieldCondition[T]) MarshalJSON() ([]byte, error) {
 	s, err := marshalConditionAny(c)
 	if err != nil {
 		return nil, err
@@ -436,54 +436,54 @@ func (c CompareFieldCondition[T]) MarshalJSON() ([]byte, error) {
 
 // EqualField returns a condition that checks if the value at path1 is equal to the value at path2.
 func EqualField[T any](path1, path2 string) Condition[T] {
-	return CompareFieldCondition[T]{Path1: Path(path1), Path2: Path(path2), Op: "=="}
+	return compareFieldCondition[T]{Path1: deepPath(path1), Path2: deepPath(path2), Op: "=="}
 }
 
 // EqualFieldFold returns a condition that checks if the value at path1 is equal to the value at path2 (case-insensitive).
 func EqualFieldFold[T any](path1, path2 string) Condition[T] {
-	return CompareFieldCondition[T]{Path1: Path(path1), Path2: Path(path2), Op: "==", IgnoreCase: true}
+	return compareFieldCondition[T]{Path1: deepPath(path1), Path2: deepPath(path2), Op: "==", IgnoreCase: true}
 }
 
 // NotEqualField returns a condition that checks if the value at path1 is not equal to the value at path2.
 func NotEqualField[T any](path1, path2 string) Condition[T] {
-	return CompareFieldCondition[T]{Path1: Path(path1), Path2: Path(path2), Op: "!="}
+	return compareFieldCondition[T]{Path1: deepPath(path1), Path2: deepPath(path2), Op: "!="}
 }
 
 // NotEqualFieldFold returns a condition that checks if the value at path1 is not equal to the value at path2 (case-insensitive).
 func NotEqualFieldFold[T any](path1, path2 string) Condition[T] {
-	return CompareFieldCondition[T]{Path1: Path(path1), Path2: Path(path2), Op: "!=", IgnoreCase: true}
+	return compareFieldCondition[T]{Path1: deepPath(path1), Path2: deepPath(path2), Op: "!=", IgnoreCase: true}
 }
 
 // GreaterField returns a condition that checks if the value at path1 is greater than the value at path2.
 func GreaterField[T any](path1, path2 string) Condition[T] {
-	return CompareFieldCondition[T]{Path1: Path(path1), Path2: Path(path2), Op: ">"}
+	return compareFieldCondition[T]{Path1: deepPath(path1), Path2: deepPath(path2), Op: ">"}
 }
 
 // LessField returns a condition that checks if the value at path1 is less than the value at path2.
 func LessField[T any](path1, path2 string) Condition[T] {
-	return CompareFieldCondition[T]{Path1: Path(path1), Path2: Path(path2), Op: "<"}
+	return compareFieldCondition[T]{Path1: deepPath(path1), Path2: deepPath(path2), Op: "<"}
 }
 
 // GreaterEqualField returns a condition that checks if the value at path1 is greater than or equal to the value at path2.
 func GreaterEqualField[T any](path1, path2 string) Condition[T] {
-	return CompareFieldCondition[T]{Path1: Path(path1), Path2: Path(path2), Op: ">="}
+	return compareFieldCondition[T]{Path1: deepPath(path1), Path2: deepPath(path2), Op: ">="}
 }
 
 // LessEqualField returns a condition that checks if the value at path1 is less than or equal to the value at path2.
 func LessEqualField[T any](path1, path2 string) Condition[T] {
-	return CompareFieldCondition[T]{Path1: Path(path1), Path2: Path(path2), Op: "<="}
+	return compareFieldCondition[T]{Path1: deepPath(path1), Path2: deepPath(path2), Op: "<="}
 }
 
-// AndCondition represents a logical AND of multiple conditions.
-type AndCondition[T any] struct {
+// andCondition represents a logical AND of multiple conditions.
+type andCondition[T any] struct {
 	Conditions []Condition[T]
 }
 
-func (c AndCondition[T]) Evaluate(v *T) (bool, error) {
+func (c andCondition[T]) Evaluate(v *T) (bool, error) {
 	return c.evaluateAny(v)
 }
 
-func (c AndCondition[T]) evaluateAny(v any) (bool, error) {
+func (c andCondition[T]) evaluateAny(v any) (bool, error) {
 	for _, sub := range c.Conditions {
 		ok, err := sub.evaluateAny(v)
 		if err != nil {
@@ -496,7 +496,7 @@ func (c AndCondition[T]) evaluateAny(v any) (bool, error) {
 	return true, nil
 }
 
-func (c AndCondition[T]) MarshalJSON() ([]byte, error) {
+func (c andCondition[T]) MarshalJSON() ([]byte, error) {
 	s, err := marshalConditionAny(c)
 	if err != nil {
 		return nil, err
@@ -506,19 +506,19 @@ func (c AndCondition[T]) MarshalJSON() ([]byte, error) {
 
 // And returns a condition that represents a logical AND of multiple conditions.
 func And[T any](conds ...Condition[T]) Condition[T] {
-	return AndCondition[T]{Conditions: conds}
+	return andCondition[T]{Conditions: conds}
 }
 
-// OrCondition represents a logical OR of multiple conditions.
-type OrCondition[T any] struct {
+// orCondition represents a logical OR of multiple conditions.
+type orCondition[T any] struct {
 	Conditions []Condition[T]
 }
 
-func (c OrCondition[T]) Evaluate(v *T) (bool, error) {
+func (c orCondition[T]) Evaluate(v *T) (bool, error) {
 	return c.evaluateAny(v)
 }
 
-func (c OrCondition[T]) evaluateAny(v any) (bool, error) {
+func (c orCondition[T]) evaluateAny(v any) (bool, error) {
 	for _, sub := range c.Conditions {
 		ok, err := sub.evaluateAny(v)
 		if err != nil {
@@ -531,7 +531,7 @@ func (c OrCondition[T]) evaluateAny(v any) (bool, error) {
 	return false, nil
 }
 
-func (c OrCondition[T]) MarshalJSON() ([]byte, error) {
+func (c orCondition[T]) MarshalJSON() ([]byte, error) {
 	s, err := marshalConditionAny(c)
 	if err != nil {
 		return nil, err
@@ -541,19 +541,19 @@ func (c OrCondition[T]) MarshalJSON() ([]byte, error) {
 
 // Or returns a condition that represents a logical OR of multiple conditions.
 func Or[T any](conds ...Condition[T]) Condition[T] {
-	return OrCondition[T]{Conditions: conds}
+	return orCondition[T]{Conditions: conds}
 }
 
-// NotCondition represents a logical NOT of a condition.
-type NotCondition[T any] struct {
+// notCondition represents a logical NOT of a condition.
+type notCondition[T any] struct {
 	C Condition[T]
 }
 
-func (c NotCondition[T]) Evaluate(v *T) (bool, error) {
+func (c notCondition[T]) Evaluate(v *T) (bool, error) {
 	return c.evaluateAny(v)
 }
 
-func (c NotCondition[T]) evaluateAny(v any) (bool, error) {
+func (c notCondition[T]) evaluateAny(v any) (bool, error) {
 	ok, err := c.C.evaluateAny(v)
 	if err != nil {
 		return false, err
@@ -561,7 +561,7 @@ func (c NotCondition[T]) evaluateAny(v any) (bool, error) {
 	return !ok, nil
 }
 
-func (c NotCondition[T]) MarshalJSON() ([]byte, error) {
+func (c notCondition[T]) MarshalJSON() ([]byte, error) {
 	s, err := marshalConditionAny(c)
 	if err != nil {
 		return nil, err
@@ -571,24 +571,24 @@ func (c NotCondition[T]) MarshalJSON() ([]byte, error) {
 
 // Not returns a condition that represents a logical NOT of a condition.
 func Not[T any](c Condition[T]) Condition[T] {
-	return NotCondition[T]{C: c}
+	return notCondition[T]{C: c}
 }
 
-// DefinedCondition checks if a path is defined (non-zero).
-type DefinedCondition[T any] struct {
-	Path Path
+// definedCondition checks if a path is defined (non-zero).
+type definedCondition[T any] struct {
+	Path deepPath
 }
 
-func (c DefinedCondition[T]) Evaluate(v *T) (bool, error) {
+func (c definedCondition[T]) Evaluate(v *T) (bool, error) {
 	return c.evaluateAny(v)
 }
 
-func (c DefinedCondition[T]) evaluateAny(v any) (bool, error) {
+func (c definedCondition[T]) evaluateAny(v any) (bool, error) {
 	raw := &rawDefinedCondition{Path: c.Path}
 	return raw.evaluateAny(v)
 }
 
-func (c DefinedCondition[T]) MarshalJSON() ([]byte, error) {
+func (c definedCondition[T]) MarshalJSON() ([]byte, error) {
 	s, err := marshalConditionAny(c)
 	if err != nil {
 		return nil, err
@@ -597,25 +597,25 @@ func (c DefinedCondition[T]) MarshalJSON() ([]byte, error) {
 }
 
 // Defined returns a condition that checks if the value at the path is defined.
-func Defined[T any](path string) Condition[T] {
-	return DefinedCondition[T]{Path: Path(path)}
+func Defined[T any](p string) Condition[T] {
+	return definedCondition[T]{Path: deepPath(p)}
 }
 
-// UndefinedCondition checks if a path is undefined (zero value).
-type UndefinedCondition[T any] struct {
-	Path Path
+// undefinedCondition checks if a path is undefined (zero value).
+type undefinedCondition[T any] struct {
+	Path deepPath
 }
 
-func (c UndefinedCondition[T]) Evaluate(v *T) (bool, error) {
+func (c undefinedCondition[T]) Evaluate(v *T) (bool, error) {
 	return c.evaluateAny(v)
 }
 
-func (c UndefinedCondition[T]) evaluateAny(v any) (bool, error) {
+func (c undefinedCondition[T]) evaluateAny(v any) (bool, error) {
 	raw := &rawUndefinedCondition{Path: c.Path}
 	return raw.evaluateAny(v)
 }
 
-func (c UndefinedCondition[T]) MarshalJSON() ([]byte, error) {
+func (c undefinedCondition[T]) MarshalJSON() ([]byte, error) {
 	s, err := marshalConditionAny(c)
 	if err != nil {
 		return nil, err
@@ -624,26 +624,26 @@ func (c UndefinedCondition[T]) MarshalJSON() ([]byte, error) {
 }
 
 // Undefined returns a condition that checks if the value at the path is undefined.
-func Undefined[T any](path string) Condition[T] {
-	return UndefinedCondition[T]{Path: Path(path)}
+func Undefined[T any](p string) Condition[T] {
+	return undefinedCondition[T]{Path: deepPath(p)}
 }
 
-// TypeCondition checks if the value at a path has a specific type.
-type TypeCondition[T any] struct {
-	Path     Path
+// typeCondition checks if the value at a path has a specific type.
+type typeCondition[T any] struct {
+	Path     deepPath
 	TypeName string
 }
 
-func (c TypeCondition[T]) Evaluate(v *T) (bool, error) {
+func (c typeCondition[T]) Evaluate(v *T) (bool, error) {
 	return c.evaluateAny(v)
 }
 
-func (c TypeCondition[T]) evaluateAny(v any) (bool, error) {
+func (c typeCondition[T]) evaluateAny(v any) (bool, error) {
 	raw := &rawTypeCondition{Path: c.Path, TypeName: c.TypeName}
 	return raw.evaluateAny(v)
 }
 
-func (c TypeCondition[T]) MarshalJSON() ([]byte, error) {
+func (c typeCondition[T]) MarshalJSON() ([]byte, error) {
 	s, err := marshalConditionAny(c)
 	if err != nil {
 		return nil, err
@@ -652,28 +652,28 @@ func (c TypeCondition[T]) MarshalJSON() ([]byte, error) {
 }
 
 // Type returns a condition that checks if the value at the path has the given type.
-func Type[T any](path, typeName string) Condition[T] {
-	return TypeCondition[T]{Path: Path(path), TypeName: typeName}
+func Type[T any](p, typeName string) Condition[T] {
+	return typeCondition[T]{Path: deepPath(p), TypeName: typeName}
 }
 
-// StringCondition checks a string value at a path against a pattern.
-type StringCondition[T any] struct {
-	Path       Path
+// stringCondition checks a string value at a path against a pattern.
+type stringCondition[T any] struct {
+	Path       deepPath
 	Val        string
 	Op         string
 	IgnoreCase bool
 }
 
-func (c StringCondition[T]) Evaluate(v *T) (bool, error) {
+func (c stringCondition[T]) Evaluate(v *T) (bool, error) {
 	return c.evaluateAny(v)
 }
 
-func (c StringCondition[T]) evaluateAny(v any) (bool, error) {
+func (c stringCondition[T]) evaluateAny(v any) (bool, error) {
 	raw := &rawStringCondition{Path: c.Path, Val: c.Val, Op: c.Op, IgnoreCase: c.IgnoreCase}
 	return raw.evaluateAny(v)
 }
 
-func (c StringCondition[T]) MarshalJSON() ([]byte, error) {
+func (c stringCondition[T]) MarshalJSON() ([]byte, error) {
 	s, err := marshalConditionAny(c)
 	if err != nil {
 		return nil, err
@@ -682,62 +682,62 @@ func (c StringCondition[T]) MarshalJSON() ([]byte, error) {
 }
 
 // Contains returns a condition that checks if the string value at the path contains the given substring.
-func Contains[T any](path, val string) Condition[T] {
-	return StringCondition[T]{Path: Path(path), Val: val, Op: "contains"}
+func Contains[T any](p, val string) Condition[T] {
+	return stringCondition[T]{Path: deepPath(p), Val: val, Op: "contains"}
 }
 
 // ContainsFold returns a condition that checks if the string value at the path contains the given substring (case-insensitive).
-func ContainsFold[T any](path, val string) Condition[T] {
-	return StringCondition[T]{Path: Path(path), Val: val, Op: "contains", IgnoreCase: true}
+func ContainsFold[T any](p, val string) Condition[T] {
+	return stringCondition[T]{Path: deepPath(p), Val: val, Op: "contains", IgnoreCase: true}
 }
 
 // StartsWith returns a condition that checks if the string value at the path starts with the given prefix.
-func StartsWith[T any](path, val string) Condition[T] {
-	return StringCondition[T]{Path: Path(path), Val: val, Op: "starts"}
+func StartsWith[T any](p, val string) Condition[T] {
+	return stringCondition[T]{Path: deepPath(p), Val: val, Op: "starts"}
 }
 
 // StartsWithFold returns a condition that checks if the string value at the path starts with the given prefix (case-insensitive).
-func StartsWithFold[T any](path, val string) Condition[T] {
-	return StringCondition[T]{Path: Path(path), Val: val, Op: "starts", IgnoreCase: true}
+func StartsWithFold[T any](p, val string) Condition[T] {
+	return stringCondition[T]{Path: deepPath(p), Val: val, Op: "starts", IgnoreCase: true}
 }
 
 // EndsWith returns a condition that checks if the string value at the path ends with the given suffix.
-func EndsWith[T any](path, val string) Condition[T] {
-	return StringCondition[T]{Path: Path(path), Val: val, Op: "ends"}
+func EndsWith[T any](p, val string) Condition[T] {
+	return stringCondition[T]{Path: deepPath(p), Val: val, Op: "ends"}
 }
 
 // EndsWithFold returns a condition that checks if the string value at the path ends with the given suffix (case-insensitive).
-func EndsWithFold[T any](path, val string) Condition[T] {
-	return StringCondition[T]{Path: Path(path), Val: val, Op: "ends", IgnoreCase: true}
+func EndsWithFold[T any](p, val string) Condition[T] {
+	return stringCondition[T]{Path: deepPath(p), Val: val, Op: "ends", IgnoreCase: true}
 }
 
 // Matches returns a condition that checks if the string value at the path matches the given regex pattern.
-func Matches[T any](path, pattern string) Condition[T] {
-	return StringCondition[T]{Path: Path(path), Val: pattern, Op: "matches"}
+func Matches[T any](p, pattern string) Condition[T] {
+	return stringCondition[T]{Path: deepPath(p), Val: pattern, Op: "matches"}
 }
 
 // MatchesFold returns a condition that checks if the string value at the path matches the given regex pattern (case-insensitive).
-func MatchesFold[T any](path, pattern string) Condition[T] {
-	return StringCondition[T]{Path: Path(path), Val: pattern, Op: "matches", IgnoreCase: true}
+func MatchesFold[T any](p, pattern string) Condition[T] {
+	return stringCondition[T]{Path: deepPath(p), Val: pattern, Op: "matches", IgnoreCase: true}
 }
 
-// InCondition checks if the value at a path is one of the given values.
-type InCondition[T any] struct {
-	Path       Path
+// inCondition checks if the value at a path is one of the given values.
+type inCondition[T any] struct {
+	Path       deepPath
 	Values     []any
 	IgnoreCase bool
 }
 
-func (c InCondition[T]) Evaluate(v *T) (bool, error) {
+func (c inCondition[T]) Evaluate(v *T) (bool, error) {
 	return c.evaluateAny(v)
 }
 
-func (c InCondition[T]) evaluateAny(v any) (bool, error) {
+func (c inCondition[T]) evaluateAny(v any) (bool, error) {
 	raw := &rawInCondition{Path: c.Path, Values: c.Values, IgnoreCase: c.IgnoreCase}
 	return raw.evaluateAny(v)
 }
 
-func (c InCondition[T]) MarshalJSON() ([]byte, error) {
+func (c inCondition[T]) MarshalJSON() ([]byte, error) {
 	s, err := marshalConditionAny(c)
 	if err != nil {
 		return nil, err
@@ -746,30 +746,30 @@ func (c InCondition[T]) MarshalJSON() ([]byte, error) {
 }
 
 // In returns a condition that checks if the value at the path is one of the given values.
-func In[T any](path string, values ...any) Condition[T] {
-	return InCondition[T]{Path: Path(path), Values: values}
+func In[T any](p string, values ...any) Condition[T] {
+	return inCondition[T]{Path: deepPath(p), Values: values}
 }
 
 // InFold returns a condition that checks if the value at the path is one of the given values (case-insensitive).
-func InFold[T any](path string, values ...any) Condition[T] {
-	return InCondition[T]{Path: Path(path), Values: values, IgnoreCase: true}
+func InFold[T any](p string, values ...any) Condition[T] {
+	return inCondition[T]{Path: deepPath(p), Values: values, IgnoreCase: true}
 }
 
-// LogCondition logs a message during evaluation.
-type LogCondition[T any] struct {
+// logCondition logs a message during evaluation.
+type logCondition[T any] struct {
 	Message string
 }
 
-func (c LogCondition[T]) Evaluate(v *T) (bool, error) {
+func (c logCondition[T]) Evaluate(v *T) (bool, error) {
 	return c.evaluateAny(v)
 }
 
-func (c LogCondition[T]) evaluateAny(v any) (bool, error) {
+func (c logCondition[T]) evaluateAny(v any) (bool, error) {
 	raw := &rawLogCondition{Message: c.Message}
 	return raw.evaluateAny(v)
 }
 
-func (c LogCondition[T]) MarshalJSON() ([]byte, error) {
+func (c logCondition[T]) MarshalJSON() ([]byte, error) {
 	s, err := marshalConditionAny(c)
 	if err != nil {
 		return nil, err
@@ -779,8 +779,9 @@ func (c LogCondition[T]) MarshalJSON() ([]byte, error) {
 
 // Log returns a condition that logs the given message during evaluation.
 func Log[T any](message string) Condition[T] {
-	return LogCondition[T]{Message: message}
+	return logCondition[T]{Message: message}
 }
+
 
 // typedRawCondition wraps a internalConditionImpl to satisfy Condition[T].
 type typedRawCondition[T any] struct {

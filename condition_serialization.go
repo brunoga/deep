@@ -33,7 +33,7 @@ func marshalConditionAny(c any) (any, error) {
 	}
 
 	typeName := v.Type().Name()
-	if strings.HasPrefix(typeName, "CompareCondition") {
+	if strings.HasPrefix(typeName, "compareCondition") {
 		op := v.FieldByName("Op").String()
 		kind := "compare"
 		if op == "==" {
@@ -51,7 +51,7 @@ func marshalConditionAny(c any) (any, error) {
 			},
 		}, nil
 	}
-	if strings.HasPrefix(typeName, "CompareFieldCondition") {
+	if strings.HasPrefix(typeName, "compareFieldCondition") {
 		op := v.FieldByName("Op").String()
 		kind := "compare_field"
 		if op == "==" {
@@ -69,7 +69,7 @@ func marshalConditionAny(c any) (any, error) {
 			},
 		}, nil
 	}
-	if strings.HasPrefix(typeName, "DefinedCondition") {
+	if strings.HasPrefix(typeName, "definedCondition") {
 		return &condSurrogate{
 			Kind: "defined",
 			Data: map[string]any{
@@ -77,7 +77,7 @@ func marshalConditionAny(c any) (any, error) {
 			},
 		}, nil
 	}
-	if strings.HasPrefix(typeName, "UndefinedCondition") {
+	if strings.HasPrefix(typeName, "undefinedCondition") {
 		return &condSurrogate{
 			Kind: "undefined",
 			Data: map[string]any{
@@ -85,7 +85,7 @@ func marshalConditionAny(c any) (any, error) {
 			},
 		}, nil
 	}
-	if strings.HasPrefix(typeName, "TypeCondition") {
+	if strings.HasPrefix(typeName, "typeCondition") {
 		return &condSurrogate{
 			Kind: "type",
 			Data: map[string]any{
@@ -94,7 +94,7 @@ func marshalConditionAny(c any) (any, error) {
 			},
 		}, nil
 	}
-	if strings.HasPrefix(typeName, "StringCondition") {
+	if strings.HasPrefix(typeName, "stringCondition") {
 		return &condSurrogate{
 			Kind: "string",
 			Data: map[string]any{
@@ -105,7 +105,7 @@ func marshalConditionAny(c any) (any, error) {
 			},
 		}, nil
 	}
-	if strings.HasPrefix(typeName, "InCondition") {
+	if strings.HasPrefix(typeName, "inCondition") {
 		return &condSurrogate{
 			Kind: "in",
 			Data: map[string]any{
@@ -115,7 +115,7 @@ func marshalConditionAny(c any) (any, error) {
 			},
 		}, nil
 	}
-	if strings.HasPrefix(typeName, "LogCondition") {
+	if strings.HasPrefix(typeName, "logCondition") {
 		return &condSurrogate{
 			Kind: "log",
 			Data: map[string]any{
@@ -123,7 +123,7 @@ func marshalConditionAny(c any) (any, error) {
 			},
 		}, nil
 	}
-	if strings.HasPrefix(typeName, "AndCondition") {
+	if strings.HasPrefix(typeName, "andCondition") {
 		condsVal := v.FieldByName("Conditions")
 		conds := make([]any, 0, condsVal.Len())
 		for i := 0; i < condsVal.Len(); i++ {
@@ -138,7 +138,7 @@ func marshalConditionAny(c any) (any, error) {
 			Data: conds,
 		}, nil
 	}
-	if strings.HasPrefix(typeName, "OrCondition") {
+	if strings.HasPrefix(typeName, "orCondition") {
 		condsVal := v.FieldByName("Conditions")
 		conds := make([]any, 0, condsVal.Len())
 		for i := 0; i < condsVal.Len(); i++ {
@@ -153,7 +153,7 @@ func marshalConditionAny(c any) (any, error) {
 			Data: conds,
 		}, nil
 	}
-	if strings.HasPrefix(typeName, "NotCondition") {
+	if strings.HasPrefix(typeName, "notCondition") {
 		sub, err := marshalConditionAny(v.FieldByName("C").Interface())
 		if err != nil {
 			return nil, err
@@ -198,47 +198,47 @@ func convertFromCondSurrogate[T any](s any) (Condition[T], error) {
 	case "equal":
 		d := data.(map[string]any)
 		ic := getBool(d, "ic")
-		return CompareCondition[T]{Path: Path(d["p"].(string)), Val: d["v"], Op: "==", IgnoreCase: ic}, nil
+		return compareCondition[T]{Path: deepPath(d["p"].(string)), Val: d["v"], Op: "==", IgnoreCase: ic}, nil
 	case "not_equal":
 		d := data.(map[string]any)
 		ic := getBool(d, "ic")
-		return CompareCondition[T]{Path: Path(d["p"].(string)), Val: d["v"], Op: "!=", IgnoreCase: ic}, nil
+		return compareCondition[T]{Path: deepPath(d["p"].(string)), Val: d["v"], Op: "!=", IgnoreCase: ic}, nil
 	case "compare":
 		d := data.(map[string]any)
 		ic := getBool(d, "ic")
-		return CompareCondition[T]{Path: Path(d["p"].(string)), Val: d["v"], Op: d["o"].(string), IgnoreCase: ic}, nil
+		return compareCondition[T]{Path: deepPath(d["p"].(string)), Val: d["v"], Op: d["o"].(string), IgnoreCase: ic}, nil
 	case "equal_field":
 		d := data.(map[string]any)
 		ic := getBool(d, "ic")
-		return CompareFieldCondition[T]{Path1: Path(d["p1"].(string)), Path2: Path(d["p2"].(string)), Op: "==", IgnoreCase: ic}, nil
+		return compareFieldCondition[T]{Path1: deepPath(d["p1"].(string)), Path2: deepPath(d["p2"].(string)), Op: "==", IgnoreCase: ic}, nil
 	case "not_equal_field":
 		d := data.(map[string]any)
 		ic := getBool(d, "ic")
-		return CompareFieldCondition[T]{Path1: Path(d["p1"].(string)), Path2: Path(d["p2"].(string)), Op: "!=", IgnoreCase: ic}, nil
+		return compareFieldCondition[T]{Path1: deepPath(d["p1"].(string)), Path2: deepPath(d["p2"].(string)), Op: "!=", IgnoreCase: ic}, nil
 	case "compare_field":
 		d := data.(map[string]any)
 		ic := getBool(d, "ic")
-		return CompareFieldCondition[T]{Path1: Path(d["p1"].(string)), Path2: Path(d["p2"].(string)), Op: d["o"].(string), IgnoreCase: ic}, nil
+		return compareFieldCondition[T]{Path1: deepPath(d["p1"].(string)), Path2: deepPath(d["p2"].(string)), Op: d["o"].(string), IgnoreCase: ic}, nil
 	case "defined":
 		d := data.(map[string]any)
-		return DefinedCondition[T]{Path: Path(d["p"].(string))}, nil
+		return definedCondition[T]{Path: deepPath(d["p"].(string))}, nil
 	case "undefined":
 		d := data.(map[string]any)
-		return UndefinedCondition[T]{Path: Path(d["p"].(string))}, nil
+		return undefinedCondition[T]{Path: deepPath(d["p"].(string))}, nil
 	case "type":
 		d := data.(map[string]any)
-		return TypeCondition[T]{Path: Path(d["p"].(string)), TypeName: d["t"].(string)}, nil
+		return typeCondition[T]{Path: deepPath(d["p"].(string)), TypeName: d["t"].(string)}, nil
 	case "string":
 		d := data.(map[string]any)
 		ic := getBool(d, "ic")
-		return StringCondition[T]{Path: Path(d["p"].(string)), Val: d["v"].(string), Op: d["o"].(string), IgnoreCase: ic}, nil
+		return stringCondition[T]{Path: deepPath(d["p"].(string)), Val: d["v"].(string), Op: d["o"].(string), IgnoreCase: ic}, nil
 	case "in":
 		d := data.(map[string]any)
 		ic := getBool(d, "ic")
-		return InCondition[T]{Path: Path(d["p"].(string)), Values: d["v"].([]any), IgnoreCase: ic}, nil
+		return inCondition[T]{Path: deepPath(d["p"].(string)), Values: d["v"].([]any), IgnoreCase: ic}, nil
 	case "log":
 		d := data.(map[string]any)
-		return LogCondition[T]{Message: d["m"].(string)}, nil
+		return logCondition[T]{Message: d["m"].(string)}, nil
 	case "and":
 		d := data.([]any)
 		conds := make([]Condition[T], 0, len(d))
@@ -249,7 +249,7 @@ func convertFromCondSurrogate[T any](s any) (Condition[T], error) {
 			}
 			conds = append(conds, sub)
 		}
-		return AndCondition[T]{Conditions: conds}, nil
+		return andCondition[T]{Conditions: conds}, nil
 	case "or":
 		d := data.([]any)
 		conds := make([]Condition[T], 0, len(d))
@@ -260,13 +260,13 @@ func convertFromCondSurrogate[T any](s any) (Condition[T], error) {
 			}
 			conds = append(conds, sub)
 		}
-		return OrCondition[T]{Conditions: conds}, nil
+		return orCondition[T]{Conditions: conds}, nil
 	case "not":
 		sub, err := convertFromCondSurrogate[T](data)
 		if err != nil {
 			return nil, err
 		}
-		return NotCondition[T]{C: sub}, nil
+		return notCondition[T]{C: sub}, nil
 	}
 
 	return nil, fmt.Errorf("unknown condition kind: %s", kind)

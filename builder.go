@@ -77,7 +77,7 @@ func (b *Builder[T]) AddCondition(expr string) *Builder[T] {
 }
 
 // lcpParts returns the longest common prefix of the given paths.
-func lcpParts(paths []Path) []pathPart {
+func lcpParts(paths []deepPath) []pathPart {
 	if len(paths) == 0 {
 		return nil
 	}
@@ -222,9 +222,23 @@ func (n *Node) Test(expected any) *Node {
 
 // Copy copies a value from another path to the current node.
 func (n *Node) Copy(from string) *Node {
+	absPath := n.fullPath
+	if absPath == "" {
+		absPath = "/"
+	} else if absPath[0] != '/' {
+		absPath = "/" + absPath
+	}
+
+	absFrom := from
+	if absFrom == "" {
+		absFrom = "/"
+	} else if absFrom[0] != '/' {
+		absFrom = "/" + absFrom
+	}
+
 	p := &copyPatch{
-		from: from,
-		path: n.fullPath,
+		from: absFrom,
+		path: absPath,
 	}
 	if n.current != nil {
 		p.cond, p.ifCond, p.unlessCond = n.current.conditions()
@@ -236,9 +250,23 @@ func (n *Node) Copy(from string) *Node {
 
 // Move moves a value from another path to the current node.
 func (n *Node) Move(from string) *Node {
+	absPath := n.fullPath
+	if absPath == "" {
+		absPath = "/"
+	} else if absPath[0] != '/' {
+		absPath = "/" + absPath
+	}
+
+	absFrom := from
+	if absFrom == "" {
+		absFrom = "/"
+	} else if absFrom[0] != '/' {
+		absFrom = "/" + absFrom
+	}
+
 	p := &movePatch{
-		from: from,
-		path: n.fullPath,
+		from: absFrom,
+		path: absPath,
 	}
 	if n.current != nil {
 		p.cond, p.ifCond, p.unlessCond = n.current.conditions()

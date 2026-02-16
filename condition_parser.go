@@ -237,7 +237,7 @@ func (p *parser) parseFactor() (internalConditionImpl, error) {
 }
 
 func (p *parser) parseComparison() (internalConditionImpl, error) {
-	path := p.curr.val
+	condPath := p.curr.val
 	p.next()
 	opTok := p.curr
 	if opTok.kind < tokEq || opTok.kind > tokLte {
@@ -282,7 +282,7 @@ func (p *parser) parseComparison() (internalConditionImpl, error) {
 	opStr := ops[opTok.kind]
 
 	if isField {
-		return &rawCompareFieldCondition{Path1: Path(path), Path2: Path(fieldPath), Op: opStr}, nil
+		return &rawCompareFieldCondition{Path1: deepPath(condPath), Path2: deepPath(fieldPath), Op: opStr}, nil
 	}
-	return &rawCompareCondition{Path: Path(path), Val: val, Op: opStr}, nil
+	return &rawCompareCondition{Path: deepPath(condPath), Val: val, Op: opStr}, nil
 }

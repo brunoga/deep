@@ -136,7 +136,7 @@ func (p *typedPatch[T]) Apply(v *T) {
 		return
 	}
 	rv := reflect.ValueOf(v).Elem()
-	p.inner.apply(reflect.ValueOf(v), rv)
+	p.inner.apply(reflect.ValueOf(v), rv, "/")
 }
 
 func (p *typedPatch[T]) ApplyChecked(v *T) error {
@@ -155,7 +155,7 @@ func (p *typedPatch[T]) ApplyChecked(v *T) error {
 	}
 
 	rv := reflect.ValueOf(v).Elem()
-	err := p.inner.applyChecked(reflect.ValueOf(v), rv, p.strict)
+	err := p.inner.applyChecked(reflect.ValueOf(v), rv, p.strict, "/")
 	if err != nil {
 		if ae, ok := err.(*ApplyError); ok {
 			return ae

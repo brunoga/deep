@@ -14,10 +14,10 @@ func TestFieldConditionSerialization(t *testing.T) {
 		cond Condition[Data]
 	}{
 		{"EqualField", EqualField[Data]("A", "B")},
-		{"CompareField", CompareFieldCondition[Data]{Path1: "A", Path2: "B", Op: ">"}},
-		{"AndCondition", And(EqualField[Data]("A", "B"), GreaterField[Data]("A", "B"))},
-		{"OrCondition", Or(EqualField[Data]("A", "B"), GreaterField[Data]("A", "B"))},
-		{"NotCondition", Not(EqualField[Data]("A", "B"))},
+		{"CompareField", GreaterField[Data]("A", "B")},
+		{"andCondition", And(EqualField[Data]("A", "B"), GreaterField[Data]("A", "B"))},
+		{"orCondition", Or(EqualField[Data]("A", "B"), GreaterField[Data]("A", "B"))},
+		{"notCondition", Not(EqualField[Data]("A", "B"))},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -75,7 +75,7 @@ func TestPredicatesSerialization(t *testing.T) {
 			if cond2 == nil {
 				t.Fatal("Expected non-nil condition")
 			}
-			// Test Log evaluation during serialization test to cover LogCondition.Evaluate
+			// Test Log evaluation during serialization test to cover logCondition.Evaluate
 			if tt.name == "Log" {
 				cond2.Evaluate(&User{Name: "foo"})
 			}
