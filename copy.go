@@ -9,10 +9,10 @@ import (
 	"github.com/brunoga/deep/v3/internal/unsafe"
 )
 
-// Copier is an interface that types can implement to provide their own
+// copier is an interface that types can implement to provide their own
 // custom deep copy logic. The type T in Copy() (T, error) must be the
 // same concrete type as the receiver that implements this interface.
-type Copier[T any] interface {
+type copier[T any] interface {
 	// Copy returns a deep copy of the receiver.
 	Copy() (T, error)
 }

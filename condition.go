@@ -421,8 +421,8 @@ func parseJSONPointer(path string) []pathPart {
 	return parts
 }
 
-// NormalizePath converts a dot-notation or JSON Pointer path to a standard JSON Pointer.
-func NormalizePath(path string) string {
+// normalizePath converts a dot-notation or JSON Pointer path to a standard JSON Pointer.
+func normalizePath(path string) string {
 	if path == "" || path == "/" {
 		return "/"
 	}
@@ -442,8 +442,8 @@ func NormalizePath(path string) string {
 	return b.String()
 }
 
-// JoinPath joins two JSON Pointer paths with a slash.
-func JoinPath(parent, child string) string {
+// joinPath joins two JSON Pointer paths with a slash.
+func joinPath(parent, child string) string {
 	if parent == "" || parent == "/" {
 		if child == "" || child == "/" {
 			return "/"

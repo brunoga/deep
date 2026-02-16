@@ -760,7 +760,7 @@ func (p *structPatch) apply(root, v reflect.Value, path string) {
 								unsafe.DisableRO(&f)
 							}
 							
-							subPath := JoinPath(path, name)
+							subPath := joinPath(path, name)
 				
 							patch.apply(root, f, subPath)			}
 		}}
@@ -791,7 +791,7 @@ func (p *structPatch) applyChecked(root, v reflect.Value, strict bool, path stri
 			unsafe.DisableRO(&f)
 		}
 
-		subPath := JoinPath(path, name)
+		subPath := joinPath(path, name)
 
 		if err := patch.applyChecked(root, f, strict, subPath); err != nil {
 			errs = append(errs, fmt.Errorf("field %s: %w", name, err))
@@ -802,7 +802,7 @@ func (p *structPatch) applyChecked(root, v reflect.Value, strict bool, path stri
 		processField(name)
 	}
 	if len(errs) > 0 {
-		return &ApplyError{Errors: errs}
+		return &ApplyError{errors: errs}
 	}
 	return nil
 }
@@ -823,7 +823,7 @@ func (p *structPatch) applyResolved(root, v reflect.Value, path string, resolver
 			unsafe.DisableRO(&f)
 		}
 
-		subPath := JoinPath(path, name)
+		subPath := joinPath(path, name)
 
 		if err := patch.applyResolved(root, f, subPath, resolver); err != nil {
 			return fmt.Errorf("field %s: %w", name, err)
@@ -841,7 +841,7 @@ func (p *structPatch) applyResolved(root, v reflect.Value, path string, resolver
 
 func (p *structPatch) dependencies(path string) (reads []string, writes []string) {
 	for name, patch := range p.fields {
-		fieldPath := JoinPath(path, name)
+		fieldPath := joinPath(path, name)
 		
 		r, w := patch.dependencies(fieldPath)
 		reads = append(reads, r...)
@@ -921,7 +921,7 @@ func (p *arrayPatch) apply(root, v reflect.Value, path string) {
 			if !e.CanSet() {
 				unsafe.DisableRO(&e)
 			}
-			fullPath := JoinPath(path, strconv.Itoa(i))
+			fullPath := joinPath(path, strconv.Itoa(i))
 			patch.apply(root, e, fullPath)
 		}
 	}
@@ -944,13 +944,13 @@ func (p *arrayPatch) applyChecked(root, v reflect.Value, strict bool, path strin
 		if !e.CanSet() {
 			unsafe.DisableRO(&e)
 		}
-		fullPath := JoinPath(path, strconv.Itoa(i))
+		fullPath := joinPath(path, strconv.Itoa(i))
 		if err := patch.applyChecked(root, e, strict, fullPath); err != nil {
 			errs = append(errs, fmt.Errorf("index %d: %w", i, err))
 		}
 	}
 	if len(errs) > 0 {
-		return &ApplyError{Errors: errs}
+		return &ApplyError{errors: errs}
 	}
 	return nil
 }
@@ -965,7 +965,7 @@ func (p *arrayPatch) applyResolved(root, v reflect.Value, path string, resolver 
 			unsafe.DisableRO(&e)
 		}
 
-		subPath := JoinPath(path, strconv.Itoa(i))
+		subPath := joinPath(path, strconv.Itoa(i))
 
 		if err := patch.applyResolved(root, e, subPath, resolver); err != nil {
 			return fmt.Errorf("index %d: %w", i, err)
@@ -976,7 +976,7 @@ func (p *arrayPatch) applyResolved(root, v reflect.Value, path string, resolver 
 
 func (p *arrayPatch) dependencies(path string) (reads []string, writes []string) {
 	for i, patch := range p.indices {
-		fullPath := JoinPath(path, strconv.Itoa(i))
+		fullPath := joinPath(path, strconv.Itoa(i))
 		r, w := patch.dependencies(fullPath)
 		reads = append(reads, r...)
 		writes = append(writes, w...)
@@ -1066,7 +1066,7 @@ func (p *mapPatch) apply(root, v reflect.Value, path string) {
 	}
 	for k, patch := range p.modified {
 		keyVal := p.getOriginalKey(k, v.Type().Key(), v)
-		fullPath := JoinPath(path, fmt.Sprintf("%v", k))
+		fullPath := joinPath(path, fmt.Sprintf("%v", k))
 		if cp, ok := patch.(*copyPatch); ok {
 			_ = applyCopyOrMoveInternal(cp.from, fullPath, fullPath, root, reflect.Value{}, false)
 			continue
@@ -1149,7 +1149,7 @@ func (p *mapPatch) applyChecked(root, v reflect.Value, strict bool, path string)
 	}
 	for k, patch := range p.modified {
 		keyVal := p.getOriginalKey(k, v.Type().Key(), v)
-		fullPath := JoinPath(path, fmt.Sprintf("%v", k))
+		fullPath := joinPath(path, fmt.Sprintf("%v", k))
 		if cp, ok := patch.(*copyPatch); ok {
 			if err := applyCopyOrMoveInternal(cp.from, fullPath, fullPath, root, reflect.Value{}, false); err != nil {
 				errs = append(errs, fmt.Errorf("map copy from %s failed: %w", cp.from, err))
@@ -1169,7 +1169,7 @@ func (p *mapPatch) applyChecked(root, v reflect.Value, strict bool, path string)
 		}
 		newElem := reflect.New(val.Type()).Elem()
 		newElem.Set(val)
-		fullPath = JoinPath(path, fmt.Sprintf("%v", k))
+		fullPath = joinPath(path, fmt.Sprintf("%v", k))
 		if err := patch.applyChecked(root, newElem, strict, fullPath); err != nil {
 			errs = append(errs, fmt.Errorf("key %v: %w", k, err))
 		}
@@ -1187,7 +1187,7 @@ func (p *mapPatch) applyChecked(root, v reflect.Value, strict bool, path string)
 		v.SetMapIndex(keyVal, convertValue(val, v.Type().Elem()))
 	}
 	if len(errs) > 0 {
-		return &ApplyError{Errors: errs}
+		return &ApplyError{errors: errs}
 	}
 	return nil
 }
@@ -1204,7 +1204,7 @@ func (p *mapPatch) applyResolved(root, v reflect.Value, path string, resolver Co
 
 	// Removals
 	for k, _ := range p.removed {
-		subPath := JoinPath(path, fmt.Sprintf("%v", k))
+		subPath := joinPath(path, fmt.Sprintf("%v", k))
 
 		if resolver != nil {
 			if !resolver.Resolve(subPath, OpRemove, k, nil, reflect.Value{}) {
@@ -1222,7 +1222,7 @@ func (p *mapPatch) applyResolved(root, v reflect.Value, path string, resolver Co
 			continue // Or error? Let's skip if missing, concurrent delete handling.
 		}
 
-		subPath := JoinPath(path, fmt.Sprintf("%v", k))
+		subPath := joinPath(path, fmt.Sprintf("%v", k))
 
 		newElem := reflect.New(val.Type()).Elem()
 		newElem.Set(val)
@@ -1234,7 +1234,7 @@ func (p *mapPatch) applyResolved(root, v reflect.Value, path string, resolver Co
 
 	// Additions
 	for k, val := range p.added {
-		subPath := JoinPath(path, fmt.Sprintf("%v", k))
+		subPath := joinPath(path, fmt.Sprintf("%v", k))
 
 		if resolver != nil {
 			if !resolver.Resolve(subPath, OpAdd, k, nil, val) {
@@ -1248,16 +1248,16 @@ func (p *mapPatch) applyResolved(root, v reflect.Value, path string, resolver Co
 
 func (p *mapPatch) dependencies(path string) (reads []string, writes []string) {
 	for k, patch := range p.modified {
-		fullPath := JoinPath(path, fmt.Sprintf("%v", k))
+		fullPath := joinPath(path, fmt.Sprintf("%v", k))
 		r, w := patch.dependencies(fullPath)
 		reads = append(reads, r...)
 		writes = append(writes, w...)
 	}
 	for k := range p.added {
-		writes = append(writes, JoinPath(path, fmt.Sprintf("%v", k)))
+		writes = append(writes, joinPath(path, fmt.Sprintf("%v", k)))
 	}
 	for k := range p.removed {
-		writes = append(writes, JoinPath(path, fmt.Sprintf("%v", k)))
+		writes = append(writes, joinPath(path, fmt.Sprintf("%v", k)))
 	}
 	return
 }
@@ -1417,7 +1417,7 @@ func (p *slicePatch) apply(root, v reflect.Value, path string) {
 				elem := reflect.New(v.Type().Elem()).Elem()
 				elem.Set(deepCopyValue(v.Index(curIdx)))
 				if op.Patch != nil {
-					fullPath := JoinPath(path, strconv.Itoa(curIdx))
+					fullPath := joinPath(path, strconv.Itoa(curIdx))
 					op.Patch.apply(root, elem, fullPath)
 				}
 				newSlice = reflect.Append(newSlice, elem)
@@ -1487,7 +1487,7 @@ func (p *slicePatch) applyChecked(root, v reflect.Value, strict bool, path strin
 			elem := reflect.New(v.Type().Elem()).Elem()
 			elem.Set(deepCopyValue(v.Index(curIdx)))
 			if op.Patch != nil {
-				fullPath := JoinPath(path, strconv.Itoa(curIdx))
+				fullPath := joinPath(path, strconv.Itoa(curIdx))
 				if err := op.Patch.applyChecked(root, elem, strict, fullPath); err != nil {
 					errs = append(errs, fmt.Errorf("slice index %d: %w", curIdx, err))
 				}
@@ -1501,7 +1501,7 @@ func (p *slicePatch) applyChecked(root, v reflect.Value, strict bool, path strin
 	}
 	v.Set(newSlice)
 	if len(errs) > 0 {
-		return &ApplyError{Errors: errs}
+		return &ApplyError{errors: errs}
 	}
 	return nil
 }
@@ -1546,7 +1546,7 @@ func (p *slicePatch) applyResolved(root, v reflect.Value, path string, resolver 
 				curIdx = op.Index
 			}
 
-			subPath := JoinPath(path, strconv.Itoa(curIdx))
+			subPath := joinPath(path, strconv.Itoa(curIdx))
 
 			switch op.Kind {
 			case OpAdd:
@@ -1610,7 +1610,7 @@ func (p *slicePatch) applyResolved(root, v reflect.Value, path string, resolver 
 
 	// First, applying Replacements and Removals (tombstoning)
 	for _, op := range p.ops {
-		subPath := JoinPath(path, fmt.Sprintf("%v", op.Key))
+		subPath := joinPath(path, fmt.Sprintf("%v", op.Key))
 
 		switch op.Kind {
 		case OpRemove:
@@ -1637,7 +1637,7 @@ func (p *slicePatch) applyResolved(root, v reflect.Value, path string, resolver 
 
 	for _, op := range p.ops {
 		if op.Kind == OpAdd {
-			subPath := JoinPath(path, fmt.Sprintf("%v", op.Key))
+			subPath := joinPath(path, fmt.Sprintf("%v", op.Key))
 			if resolver.Resolve(subPath, OpAdd, op.Key, op.PrevKey, op.Val) {
 				// Insert into orderedKeys
 				// Find PrevKey index
@@ -1717,7 +1717,7 @@ func (p *slicePatch) dependencies(path string) (reads []string, writes []string)
 	writes = append(writes, path)
 	for _, op := range p.ops {
 		if op.Patch != nil {
-			r, w := op.Patch.dependencies(JoinPath(path, "?"))
+			r, w := op.Patch.dependencies(joinPath(path, "?"))
 			reads = append(reads, r...)
 			writes = append(writes, w...)
 		}

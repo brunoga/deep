@@ -69,7 +69,7 @@ func main() {
 
 		// We can also inspect the individual errors if needed
 		if applyErr, ok := err.(*deep.ApplyError); ok {
-			fmt.Printf("Individual error count: %d\n", len(applyErr.Errors))
+			fmt.Printf("Individual error count: %d\n", len(applyErr.Errors()))
 		}
 	} else {
 		fmt.Println("Patch applied successfully (unexpected!)")

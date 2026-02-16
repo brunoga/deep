@@ -29,7 +29,7 @@ type diffConfig struct {
 // DiffIgnorePath returns an option that tells Diff to ignore changes at the specified path.
 func DiffIgnorePath(path string) DiffOption {
 	return diffOptionFunc(func(c *diffConfig) {
-		c.ignoredPaths[NormalizePath(path)] = true
+		c.ignoredPaths[normalizePath(path)] = true
 	})
 }
 
@@ -430,7 +430,7 @@ func (d *Differ) diffRecursive(a, b reflect.Value, atomic bool, ctx *diffContext
 	}
 
 	if atomic {
-		if ValueEqual(a, b) {
+		if valueEqual(a, b) {
 			return nil, nil
 		}
 		return newValuePatch(deepCopyValue(a), deepCopyValue(b)), nil
@@ -449,9 +449,9 @@ func (d *Differ) diffRecursive(a, b reflect.Value, atomic bool, ctx *diffContext
 
 	if a.Kind() == reflect.Struct || a.Kind() == reflect.Map || a.Kind() == reflect.Slice {
 		if !atomic {
-			// Skip ValueEqual and recurse
+			// Skip valueEqual and recurse
 		} else {
-			if ValueEqual(a, b) {
+			if valueEqual(a, b) {
 				return nil, nil
 			}
 		}
@@ -761,7 +761,7 @@ func (d *Differ) diffMap(a, b reflect.Value, ctx *diffContext) (diffPatch, error
 	}
 
 	for ck, vB := range bByCanonical {
-		currentPath := JoinPath(ctx.buildPath(), fmt.Sprintf("%v", ck))
+		currentPath := joinPath(ctx.buildPath(), fmt.Sprintf("%v", ck))
 		if len(d.config.ignoredPaths) == 0 || !d.config.ignoredPaths[currentPath] {
 			if fromPath, isMove, ok := d.tryDetectMove(vB, currentPath, ctx); ok {
 				if modified == nil {
@@ -832,7 +832,7 @@ func (d *Differ) diffSlice(a, b reflect.Value, ctx *diffContext) (diffPatch, err
 		for prefix < lenA && prefix < lenB {
 			vA := a.Index(prefix)
 			vB := b.Index(prefix)
-			if ValueEqual(vA, vB) {
+			if valueEqual(vA, vB) {
 				prefix++
 			} else {
 				break
@@ -845,7 +845,7 @@ func (d *Differ) diffSlice(a, b reflect.Value, ctx *diffContext) (diffPatch, err
 		for suffix < (lenA-prefix) && suffix < (lenB-prefix) {
 			vA := a.Index(lenA - 1 - suffix)
 			vB := b.Index(lenB - 1 - suffix)
-			if ValueEqual(vA, vB) {
+			if valueEqual(vA, vB) {
 				suffix++
 			} else {
 				break
@@ -872,7 +872,7 @@ func (d *Differ) diffSlice(a, b reflect.Value, ctx *diffContext) (diffPatch, err
 			
 			// Move/Copy Detection
 			val := b.Index(i)
-			currentPath := JoinPath(ctx.buildPath(), strconv.Itoa(i))
+			currentPath := joinPath(ctx.buildPath(), strconv.Itoa(i))
 			if fromPath, isMove, ok := d.tryDetectMove(val, currentPath, ctx); ok {
 				var p diffPatch
 				if isMove {
@@ -911,7 +911,7 @@ func (d *Differ) diffSlice(a, b reflect.Value, ctx *diffContext) (diffPatch, err
 	if midBStart == midBEnd && midAStart < midAEnd {
 		var ops []sliceOp
 		for i := midAEnd - 1; i >= midAStart; i-- {
-			currentPath := JoinPath(ctx.buildPath(), strconv.Itoa(i))
+			currentPath := joinPath(ctx.buildPath(), strconv.Itoa(i))
 			if ctx.movedPaths[currentPath] {
 				continue
 			}
@@ -955,9 +955,9 @@ func (d *Differ) computeSliceEdits(a, b reflect.Value, aStart, aEnd, bStart, bEn
 				k1 = k1.Elem()
 				k2 = k2.Elem()
 			}
-			return ValueEqual(k1.Field(keyField), k2.Field(keyField))
+			return valueEqual(k1.Field(keyField), k2.Field(keyField))
 		}
-		return ValueEqual(v1, v2)
+		return valueEqual(v1, v2)
 	}
 
 	max := n + m
@@ -1014,7 +1014,7 @@ func (d *Differ) backtrackMyers(a, b reflect.Value, aStart, aEnd, bStart, bEnd, 
 		for x > prevX && y > prevY {
 			vA := a.Index(aStart + x - 1)
 			vB := b.Index(bStart + y - 1)
-			if !ValueEqual(vA, vB) {
+			if !valueEqual(vA, vB) {
 				ctx.pathStack = append(ctx.pathStack, fmt.Sprintf("%v", extractKey(vA, keyField)))
 				p, err := d.diffRecursive(vA, vB, false, ctx)
 				ctx.pathStack = ctx.pathStack[:len(ctx.pathStack)-1]
@@ -1036,7 +1036,7 @@ func (d *Differ) backtrackMyers(a, b reflect.Value, aStart, aEnd, bStart, bEnd, 
 		}
 
 		if x > prevX {
-			currentPath := JoinPath(ctx.buildPath(), strconv.Itoa(aStart+x-1))
+			currentPath := joinPath(ctx.buildPath(), strconv.Itoa(aStart+x-1))
 			if !ctx.movedPaths[currentPath] {
 				op := sliceOp{
 					Kind:  OpRemove,
@@ -1055,7 +1055,7 @@ func (d *Differ) backtrackMyers(a, b reflect.Value, aStart, aEnd, bStart, bEnd, 
 			}
 			val := b.Index(bStart + y - 1)
 
-			currentPath := JoinPath(ctx.buildPath(), strconv.Itoa(aStart+x))
+			currentPath := joinPath(ctx.buildPath(), strconv.Itoa(aStart+x))
 			if fromPath, isMove, ok := d.tryDetectMove(val, currentPath, ctx); ok {
 				var p diffPatch
 				if isMove {
@@ -1094,7 +1094,7 @@ func (d *Differ) backtrackMyers(a, b reflect.Value, aStart, aEnd, bStart, bEnd, 
 	for x > 0 && y > 0 {
 		vA := a.Index(aStart + x - 1)
 		vB := b.Index(bStart + y - 1)
-		if !ValueEqual(vA, vB) {
+		if !valueEqual(vA, vB) {
 			ctx.pathStack = append(ctx.pathStack, fmt.Sprintf("%v", extractKey(vA, keyField)))
 			p, err := d.diffRecursive(vA, vB, false, ctx)
 			ctx.pathStack = ctx.pathStack[:len(ctx.pathStack)-1]
