@@ -38,7 +38,7 @@ func applyToBuilder[T any](b *Builder[T], op opInfo) error {
 		parentParts := parts[:len(parts)-1]
 		lastPart := parts[len(parts)-1]
 
-		parentNode, err := b.Root().NavigateParts(parentParts)
+		parentNode, err := b.Root().navigateParts(parentParts)
 		if err == nil && parentNode.typ != nil {
 			kind := parentNode.typ.Kind()
 			if kind == reflect.Map {

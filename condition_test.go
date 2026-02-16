@@ -29,7 +29,7 @@ func TestJSONPointer_Resolve(t *testing.T) {
 		{"/Meta/env", "prod"},
 	}
 	for _, tt := range tests {
-		val, err := Path(tt.pointer).resolve(rv)
+		val, err := deepPath(tt.pointer).resolve(rv)
 		if err != nil {
 			t.Errorf("Resolve(%s) failed: %v", tt.pointer, err)
 			continue
@@ -55,7 +55,7 @@ func TestJSONPointer_SpecialChars(t *testing.T) {
 		{"/foo~0bar", 2},
 	}
 	for _, tt := range tests {
-		val, err := Path(tt.pointer).resolve(rv)
+		val, err := deepPath(tt.pointer).resolve(rv)
 		if err != nil {
 			t.Fatalf("Resolve(%s) failed: %v", tt.pointer, err)
 		}
@@ -65,7 +65,7 @@ func TestJSONPointer_SpecialChars(t *testing.T) {
 	}
 }
 
-func TestJSONPointer_InConditions(t *testing.T) {
+func TestJSONPointer_inConditions(t *testing.T) {
 	type Data struct {
 		A int
 	}
@@ -90,25 +90,25 @@ func TestPath_SetDelete(t *testing.T) {
 	rv := reflect.ValueOf(&d).Elem()
 
 	// Set
-	Path("A").set(rv, reflect.ValueOf(2))
+	deepPath("A").set(rv, reflect.ValueOf(2))
 	if d.A != 2 {
 		t.Errorf("Set A failed: %d", d.A)
 	}
-	Path("M.b").set(rv, reflect.ValueOf(2))
+	deepPath("M.b").set(rv, reflect.ValueOf(2))
 	if d.M["b"] != 2 {
 		t.Errorf("Set M.b failed: %v", d.M)
 	}
-	Path("S[1]").set(rv, reflect.ValueOf(2)) // Append
+	deepPath("S[1]").set(rv, reflect.ValueOf(2)) // Append
 	if len(d.S) != 2 || d.S[1] != 2 {
 		t.Errorf("Set S[1] failed: %v", d.S)
 	}
 
 	// Delete
-	Path("M.a").delete(rv)
+	deepPath("M.a").delete(rv)
 	if _, ok := d.M["a"]; ok {
 		t.Error("Delete M.a failed")
 	}
-	Path("S[0]").delete(rv)
+	deepPath("S[0]").delete(rv)
 	if len(d.S) != 1 || d.S[0] != 2 {
 		t.Errorf("Delete S[0] failed: %v", d.S)
 	}
@@ -120,60 +120,60 @@ func TestPath_Errors_Exhaustive(t *testing.T) {
 	rv := reflect.ValueOf(s)
 
 	// Resolve nil pointer
-	_, err := Path("A").resolve(rv)
+	_, err := deepPath("A").resolve(rv)
 	if err == nil {
 		t.Error("Expected error resolving through nil pointer")
 	}
 
 	// Resolve empty path parent
-	_, _, err = Path("").resolveParent(reflect.ValueOf(1))
+	_, _, err = deepPath("").resolveParent(reflect.ValueOf(1))
 	if err == nil {
 		t.Error("Expected error resolveParent empty")
 	}
 
 	// Navigate invalid index
-	_, _, err = Path("").Navigate(reflect.ValueOf([]int{1}), []pathPart{{index: 5, isIndex: true}})
+	_, _, err = deepPath("").Navigate(reflect.ValueOf([]int{1}), []pathPart{{index: 5, isIndex: true}})
 	if err == nil {
 		t.Error("Expected error index out of bounds")
 	}
 
 	// Navigate invalid map key type
 	m := map[float64]int{1.0: 1}
-	_, _, err = Path("").Navigate(reflect.ValueOf(m), []pathPart{{key: "1"}})
+	_, _, err = deepPath("").Navigate(reflect.ValueOf(m), []pathPart{{key: "1"}})
 	if err == nil {
 		t.Error("Expected error unsupported map key")
 	}
 
 	// Navigate non-struct field
-	_, _, err = Path("").Navigate(reflect.ValueOf(1), []pathPart{{key: "A"}})
+	_, _, err = deepPath("").Navigate(reflect.ValueOf(1), []pathPart{{key: "A"}})
 	if err == nil {
 		t.Error("Expected error non-struct field")
 	}
 
 	// Set/Delete errors
-	Path("A").delete(reflect.ValueOf(1))
+	deepPath("A").delete(reflect.ValueOf(1))
 }
 
 func TestCondition_Errors(t *testing.T) {
 	type Data struct{ A int }
 
 	t.Run("PathResolveErrors", func(t *testing.T) {
-		cond := DefinedCondition[Data]{Path: "Missing.Field"}
+		cond := definedCondition[Data]{Path: "Missing.Field"}
 		ok, _ := cond.Evaluate(&Data{})
 		if ok {
-			t.Error("DefinedCondition should be false for missing path")
+			t.Error("definedCondition should be false for missing path")
 		}
 
-		condU := UndefinedCondition[Data]{Path: "Missing.Field"}
+		condU := undefinedCondition[Data]{Path: "Missing.Field"}
 		ok, _ = condU.Evaluate(&Data{})
 		if !ok {
-			t.Error("UndefinedCondition should be true for missing path")
+			t.Error("undefinedCondition should be true for missing path")
 		}
 
-		condT := TypeCondition[Data]{Path: "Missing.Field", TypeName: "undefined"}
+		condT := typeCondition[Data]{Path: "Missing.Field", TypeName: "undefined"}
 		ok, _ = condT.Evaluate(&Data{})
 		if !ok {
-			t.Error("TypeCondition should be true for missing path if looking for undefined")
+			t.Error("typeCondition should be true for missing path if looking for undefined")
 		}
 	})
 

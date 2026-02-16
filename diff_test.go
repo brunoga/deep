@@ -608,3 +608,130 @@ func TestKeyedSlice_Complex(t *testing.T) {
 		t.Errorf("Unexpected results after apply: %+v", a)
 	}
 }
+
+func TestDiff_MoveDetection(t *testing.T) {
+	type Document struct {
+		Title   string
+		Content string
+	}
+
+	type Workspace struct {
+		Drafts  []Document
+		Archive map[string]Document
+	}
+
+	doc := Document{
+		Title:   "Move Test",
+		Content: "Some content",
+	}
+
+	ws := Workspace{
+		Drafts:  []Document{doc},
+		Archive: make(map[string]Document),
+	}
+
+	target := Workspace{
+		Drafts: []Document{},
+		Archive: map[string]Document{
+			"moved": doc,
+		},
+	}
+
+	t.Run("Disabled", func(t *testing.T) {
+		patch := Diff(ws, target, DiffDetectMoves(false))
+		moveCount := 0
+		patch.Walk(func(path string, op OpKind, old, new any) error {
+			if op == OpMove {
+				moveCount++
+			}
+			return nil
+		})
+		if moveCount != 0 {
+			t.Errorf("Expected 0 moves when disabled, got %d", moveCount)
+		}
+
+		// Verify apply still works (via copy/delete)
+		final, _ := Copy(ws)
+		err := patch.ApplyChecked(&final)
+		if err != nil {
+			t.Fatalf("Apply failed: %v", err)
+		}
+		if len(final.Drafts) != 0 || len(final.Archive) != 1 || final.Archive["moved"].Title != doc.Title {
+			t.Errorf("Final state incorrect: %+v", final)
+		}
+	})
+
+	t.Run("Enabled", func(t *testing.T) {
+		patch := Diff(ws, target, DiffDetectMoves(true))
+		moveCount := 0
+		var movePath string
+		var moveFrom string
+		patch.Walk(func(path string, op OpKind, old, new any) error {
+			if op == OpMove {
+				moveCount++
+				movePath = path
+				moveFrom = old.(string)
+			}
+			return nil
+		})
+		if moveCount != 1 {
+			t.Errorf("Expected 1 move when enabled, got %d", moveCount)
+		}
+		if movePath != "/Archive/moved" || moveFrom != "/Drafts/0" {
+			t.Errorf("Unexpected move: %s from %s", movePath, moveFrom)
+		}
+
+		// Verify apply works
+		final, _ := Copy(ws)
+		err := patch.ApplyChecked(&final)
+		if err != nil {
+			t.Fatalf("Apply failed: %v", err)
+		}
+		if len(final.Drafts) != 0 || len(final.Archive) != 1 || final.Archive["moved"].Title != doc.Title {
+			t.Errorf("Final state incorrect: %+v", final)
+		}
+	})
+
+	t.Run("MapToSlice", func(t *testing.T) {
+		doc := &Document{
+			Title:   "Move Test Ptr",
+			Content: "Some content",
+		}
+		type WorkspacePtr struct {
+			Drafts  []*Document
+			Archive map[string]*Document
+		}
+		ws := WorkspacePtr{
+			Drafts: []*Document{},
+			Archive: map[string]*Document{
+				"d1": doc,
+			},
+		}
+		target := WorkspacePtr{
+			Drafts:  []*Document{doc},
+			Archive: map[string]*Document{},
+		}
+
+		patch := Diff(ws, target, DiffDetectMoves(true))
+		moveCount := 0
+		patch.Walk(func(path string, op OpKind, old, new any) error {
+			if op == OpMove {
+				moveCount++
+			}
+			return nil
+		})
+		if moveCount != 1 {
+			t.Errorf("Expected 1 move, got %d", moveCount)
+		}
+
+		final, _ := Copy(ws)
+		err := patch.ApplyChecked(&final)
+		if err != nil {
+			t.Fatalf("Apply failed: %v", err)
+		}
+		if len(final.Drafts) != 1 || len(final.Archive) != 0 || final.Drafts[0].Title != doc.Title {
+			t.Errorf("Final state incorrect: %+v", final)
+		}
+	})
+}
+

@@ -98,23 +98,27 @@ func Register[T any]() {
 
 // ApplyError represents one or more errors that occurred during patch application.
 type ApplyError struct {
-	Errors []error
+	errors []error
 }
 
 func (e *ApplyError) Error() string {
-	if len(e.Errors) == 1 {
-		return e.Errors[0].Error()
+	if len(e.errors) == 1 {
+		return e.errors[0].Error()
 	}
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("%d errors during apply:\n", len(e.Errors)))
-	for _, err := range e.Errors {
+	b.WriteString(fmt.Sprintf("%d errors during apply:\n", len(e.errors)))
+	for _, err := range e.errors {
 		b.WriteString("- " + err.Error() + "\n")
 	}
 	return b.String()
 }
 
 func (e *ApplyError) Unwrap() []error {
-	return e.Errors
+	return e.errors
+}
+
+func (e *ApplyError) Errors() []error {
+	return e.errors
 }
 
 type typedPatch[T any] struct {
@@ -136,17 +140,17 @@ func (p *typedPatch[T]) Apply(v *T) {
 		return
 	}
 	rv := reflect.ValueOf(v).Elem()
-	p.inner.apply(reflect.ValueOf(v), rv)
+	p.inner.apply(reflect.ValueOf(v), rv, "/")
 }
 
 func (p *typedPatch[T]) ApplyChecked(v *T) error {
 	if p.cond != nil {
 		ok, err := p.cond.Evaluate(v)
 		if err != nil {
-			return &ApplyError{Errors: []error{fmt.Errorf("condition evaluation failed: %w", err)}}
+			return &ApplyError{errors: []error{fmt.Errorf("condition evaluation failed: %w", err)}}
 		}
 		if !ok {
-			return &ApplyError{Errors: []error{fmt.Errorf("condition failed")}}
+			return &ApplyError{errors: []error{fmt.Errorf("condition failed")}}
 		}
 	}
 
@@ -155,12 +159,12 @@ func (p *typedPatch[T]) ApplyChecked(v *T) error {
 	}
 
 	rv := reflect.ValueOf(v).Elem()
-	err := p.inner.applyChecked(reflect.ValueOf(v), rv, p.strict)
+	err := p.inner.applyChecked(reflect.ValueOf(v), rv, p.strict, "/")
 	if err != nil {
 		if ae, ok := err.(*ApplyError); ok {
 			return ae
 		}
-		return &ApplyError{Errors: []error{err}}
+		return &ApplyError{errors: []error{err}}
 	}
 	return nil
 }

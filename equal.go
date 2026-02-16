@@ -22,13 +22,12 @@ var visitedPool = sync.Pool{
 func Equal[T any](a, b T) bool {
 	va := reflect.ValueOf(&a).Elem()
 	vb := reflect.ValueOf(&b).Elem()
-
-	return ValueEqual(va, vb)
+	return valueEqual(va, vb)
 }
 
 // ValueEqual performs a deep equality check between two reflect.Values.
 // It is the internal engine for Equal and respects the same rules.
-func ValueEqual(a, b reflect.Value) bool {
+func valueEqual(a, b reflect.Value) bool {
 	if !a.IsValid() || !b.IsValid() {
 		return a.IsValid() == b.IsValid()
 	}

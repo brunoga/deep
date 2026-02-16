@@ -25,19 +25,19 @@ type internalCondition interface {
 	evaluateAny(v any) (bool, error)
 }
 
-// Path represents a path to a field or element within a structure.
+// path represents a path to a field or element within a structure.
 // Syntax: "Field", "Field.SubField", "Slice[0]", "Map.Key", "Ptr.Field".
 // It also supports JSON Pointers (RFC 6901) like "/Field/SubField".
-type Path string
+type deepPath string
 
 // resolve traverses v using the path and returns the reflect.Value found.
-func (p Path) resolve(v reflect.Value) (reflect.Value, error) {
+func (p deepPath) resolve(v reflect.Value) (reflect.Value, error) {
 	parts := parsePath(string(p))
 	val, _, err := p.Navigate(v, parts)
 	return val, err
 }
 
-func (p Path) resolveParent(v reflect.Value) (reflect.Value, pathPart, error) {
+func (p deepPath) resolveParent(v reflect.Value) (reflect.Value, pathPart, error) {
 	parts := parsePath(string(p))
 	if len(parts) == 0 {
 		return reflect.Value{}, pathPart{}, fmt.Errorf("path is empty")
@@ -49,7 +49,7 @@ func (p Path) resolveParent(v reflect.Value) (reflect.Value, pathPart, error) {
 	return parent, parts[len(parts)-1], nil
 }
 
-func (p Path) Navigate(v reflect.Value, parts []pathPart) (reflect.Value, pathPart, error) {
+func (p deepPath) Navigate(v reflect.Value, parts []pathPart) (reflect.Value, pathPart, error) {
 	current, err := dereference(v)
 	if err != nil {
 		return reflect.Value{}, pathPart{}, err
@@ -120,7 +120,7 @@ func (p Path) Navigate(v reflect.Value, parts []pathPart) (reflect.Value, pathPa
 	return current, pathPart{}, nil
 }
 
-func (p Path) set(v reflect.Value, val reflect.Value) error {
+func (p deepPath) set(v reflect.Value, val reflect.Value) error {
 	parent, lastPart, err := p.resolveParent(v)
 	if err != nil {
 		if string(p) == "" || string(p) == "/" {
@@ -189,7 +189,7 @@ func (p Path) set(v reflect.Value, val reflect.Value) error {
 	}
 }
 
-func (p Path) delete(v reflect.Value) error {
+func (p deepPath) delete(v reflect.Value) error {
 	parent, lastPart, err := p.resolveParent(v)
 	if err != nil {
 		return err
@@ -333,7 +333,7 @@ func (p pathPart) equals(other pathPart) bool {
 	return p.key == other.key
 }
 
-func (p Path) stripParts(prefix []pathPart) Path {
+func (p deepPath) stripParts(prefix []pathPart) deepPath {
 	parts := parsePath(string(p))
 	if len(parts) < len(prefix) {
 		return p
@@ -360,7 +360,7 @@ func (p Path) stripParts(prefix []pathPart) Path {
 			res.WriteString(part.key)
 		}
 	}
-	return Path(res.String())
+	return deepPath(res.String())
 }
 
 func parsePath(path string) []pathPart {
@@ -421,8 +421,8 @@ func parseJSONPointer(path string) []pathPart {
 	return parts
 }
 
-// NormalizePath converts a dot-notation or JSON Pointer path to a standard JSON Pointer.
-func NormalizePath(path string) string {
+// normalizePath converts a dot-notation or JSON Pointer path to a standard JSON Pointer.
+func normalizePath(path string) string {
 	if path == "" || path == "/" {
 		return "/"
 	}
@@ -442,8 +442,8 @@ func NormalizePath(path string) string {
 	return b.String()
 }
 
-// JoinPath joins two JSON Pointer paths with a slash.
-func JoinPath(parent, child string) string {
+// joinPath joins two JSON Pointer paths with a slash.
+func joinPath(parent, child string) string {
 	if parent == "" || parent == "/" {
 		if child == "" || child == "/" {
 			return "/"

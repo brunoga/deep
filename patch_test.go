@@ -201,9 +201,9 @@ func TestPatch_ToJSONPatch_Exhaustive(t *testing.T) {
 func TestPatch_LogExhaustive(t *testing.T) {
 	lp := &logPatch{message: "test"}
 
-	lp.apply(reflect.Value{}, reflect.ValueOf(1))
+	lp.apply(reflect.Value{}, reflect.ValueOf(1), "/path")
 
-	if err := lp.applyChecked(reflect.ValueOf(1), reflect.ValueOf(1), false); err != nil {
+	if err := lp.applyChecked(reflect.ValueOf(1), reflect.ValueOf(1), false, "/path"); err != nil {
 		t.Errorf("logPatch applyChecked failed: %v", err)
 	}
 
