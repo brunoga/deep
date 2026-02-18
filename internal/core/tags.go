@@ -1,43 +1,43 @@
-package deep
+package core
 
 import (
 	"reflect"
 	"strings"
 )
 
-type structTag struct {
-	ignore   bool
-	readOnly bool
-	atomic   bool
-	key      bool
+type StructTag struct {
+	Ignore   bool
+	ReadOnly bool
+	Atomic   bool
+	Key      bool
 }
 
-func parseTag(field reflect.StructField) structTag {
+func ParseTag(field reflect.StructField) StructTag {
 	tag := field.Tag.Get("deep")
 	if tag == "" {
-		return structTag{}
+		return StructTag{}
 	}
 
-	st := structTag{}
+	st := StructTag{}
 	parts := strings.Split(tag, ",")
 	for _, part := range parts {
 		part = strings.TrimSpace(part)
 		switch part {
 		case "-":
-			st.ignore = true
+			st.Ignore = true
 		case "readonly":
-			st.readOnly = true
+			st.ReadOnly = true
 		case "atomic":
-			st.atomic = true
+			st.Atomic = true
 		case "key":
-			st.key = true
+			st.Key = true
 		}
 	}
 
 	return st
 }
 
-func getKeyField(typ reflect.Type) (int, bool) {
+func GetKeyField(typ reflect.Type) (int, bool) {
 	if typ.Kind() == reflect.Pointer {
 		typ = typ.Elem()
 	}
@@ -45,9 +45,9 @@ func getKeyField(typ reflect.Type) (int, bool) {
 		return -1, false
 	}
 
-	info := getTypeInfo(typ)
-	if info.keyFieldIndex != -1 {
-		return info.keyFieldIndex, true
+	info := GetTypeInfo(typ)
+	if info.KeyFieldIndex != -1 {
+		return info.KeyFieldIndex, true
 	}
 
 	return -1, false

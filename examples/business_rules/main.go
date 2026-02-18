@@ -25,7 +25,7 @@ func main() {
 	// But we have a business rule: Status can only be "Active" IF balance > 0.
 
 	// We use the Builder API to construct a conditional patch.
-	builder := deep.NewBuilder[Account]()
+	builder := deep.NewPatchBuilder[Account]()
 
 	// Set the new status
 	statusNode, err := builder.Root().Field("Status")

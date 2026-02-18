@@ -41,7 +41,7 @@ func main() {
 	// 3. Generate Patch
 	// The Differ will index 'ws' and find 'doc' at '/Drafts/0'
 	// When it sees 'doc' at '/Archive/v2-release' in 'target', it emits a Copy.
-	patch := deep.Diff(ws, target, deep.DiffDetectMoves(true))
+	patch := deep.MustDiff(ws, target, deep.DiffDetectMoves(true))
 
 	fmt.Println("--- GENERATED PATCH SUMMARY ---")
 	fmt.Println(patch.Summary())

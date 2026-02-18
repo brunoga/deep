@@ -30,7 +30,7 @@ func main() {
 	}
 
 	// 3. Backend calculates the diff.
-	patch := deep.Diff(stateA, stateB)
+	patch := deep.MustDiff(stateA, stateB)
 
 	// 4. Backend wants to send this patch to a JavaScript frontend.
 	// We use ToJSONPatch() which generates an RFC 6902 compliant list of ops.

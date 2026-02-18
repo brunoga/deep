@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"reflect"
 	"sync"
+
+	"github.com/brunoga/deep/v3/cond"
+	"github.com/brunoga/deep/v3/internal/core"
 )
 
 type patchSurrogate struct {
@@ -14,27 +17,27 @@ type patchSurrogate struct {
 }
 
 func makeSurrogate(kind string, data map[string]any, p diffPatch) (*patchSurrogate, error) {
-	cond, ifCond, unlessCond := p.conditions()
-	c, err := marshalConditionAny(cond)
+	c, ifC, unlessC := p.conditions()
+	cData, err := cond.MarshalConditionAny(c)
 	if err != nil {
 		return nil, err
 	}
-	if c != nil {
-		data["c"] = c
+	if cData != nil {
+		data["c"] = cData
 	}
-	ic, err := marshalConditionAny(ifCond)
+	ifCData, err := cond.MarshalConditionAny(ifC)
 	if err != nil {
 		return nil, err
 	}
-	if ic != nil {
-		data["if"] = ic
+	if ifCData != nil {
+		data["if"] = ifCData
 	}
-	uc, err := marshalConditionAny(unlessCond)
+	unlessCData, err := cond.MarshalConditionAny(unlessC)
 	if err != nil {
 		return nil, err
 	}
-	if uc != nil {
-		data["un"] = uc
+	if unlessCData != nil {
+		data["un"] = unlessCData
 	}
 	return &patchSurrogate{Kind: kind, Data: data}, nil
 }
@@ -59,8 +62,8 @@ func marshalDiffPatch(p diffPatch) (any, error) {
 	switch v := p.(type) {
 	case *valuePatch:
 		return makeSurrogate("value", map[string]any{
-			"o": valueToInterface(v.oldVal),
-			"n": valueToInterface(v.newVal),
+			"o": core.ValueToInterface(v.oldVal),
+			"n": core.ValueToInterface(v.newVal),
 		}, v)
 	case *ptrPatch:
 		elem, err := marshalDiffPatch(v.elemPatch)
@@ -105,11 +108,11 @@ func marshalDiffPatch(p diffPatch) (any, error) {
 	case *mapPatch:
 		added := make([]map[string]any, 0, len(v.added))
 		for k, val := range v.added {
-			added = append(added, map[string]any{"k": k, "v": valueToInterface(val)})
+			added = append(added, map[string]any{"k": k, "v": core.ValueToInterface(val)})
 		}
 		removed := make([]map[string]any, 0, len(v.removed))
 		for k, val := range v.removed {
-			removed = append(removed, map[string]any{"k": k, "v": valueToInterface(val)})
+			removed = append(removed, map[string]any{"k": k, "v": core.ValueToInterface(val)})
 		}
 		modified := make([]map[string]any, 0, len(v.modified))
 		for k, patch := range v.modified {
@@ -139,7 +142,7 @@ func marshalDiffPatch(p diffPatch) (any, error) {
 			ops = append(ops, map[string]any{
 				"k": int(op.Kind),
 				"i": op.Index,
-				"v": valueToInterface(op.Val),
+				"v": core.ValueToInterface(op.Val),
 				"p": p,
 				"y": op.Key,
 				"r": op.PrevKey,
@@ -150,7 +153,7 @@ func marshalDiffPatch(p diffPatch) (any, error) {
 		}, v)
 	case *testPatch:
 		return makeSurrogate("test", map[string]any{
-			"e": valueToInterface(v.expected),
+			"e": core.ValueToInterface(v.expected),
 		}, v)
 	case *copyPatch:
 		return makeSurrogate("copy", map[string]any{
@@ -190,7 +193,16 @@ func unmarshalCondFromMap(d map[string]any, key string) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		return unmarshalCondition[any](jsonData)
+		// We use unmarshalCondition for 'any' since diffPatch stores 'any' (InternalCondition)
+		// But UnmarshalCondition returns Condition[T].
+		// We need InternalCondition.
+		// Condition[T] implements InternalCondition.
+		// So we can use UnmarshalCondition[any] and return it.
+		c, err := cond.UnmarshalCondition[any](jsonData)
+		if err != nil {
+			return nil, err
+		}
+		return c, nil
 	}
 	return nil, nil
 }
@@ -243,8 +255,8 @@ func convertFromSurrogate(s any) (diffPatch, error) {
 	switch kind {
 	case "value":
 		return &valuePatch{
-			oldVal:    interfaceToValue(d["o"]),
-			newVal:    interfaceToValue(d["n"]),
+			oldVal:    core.InterfaceToValue(d["o"]),
+			newVal:    core.InterfaceToValue(d["n"]),
 			basePatch: base,
 		}, nil
 	case "ptr":
@@ -301,11 +313,11 @@ func convertFromSurrogate(s any) (diffPatch, error) {
 			if slice, ok := a.([]any); ok {
 				for _, entry := range slice {
 					e := entry.(map[string]any)
-					added[e["k"]] = interfaceToValue(e["v"])
+					added[e["k"]] = core.InterfaceToValue(e["v"])
 				}
 			} else if slice, ok := a.([]map[string]any); ok {
 				for _, e := range slice {
-					added[e["k"]] = interfaceToValue(e["v"])
+					added[e["k"]] = core.InterfaceToValue(e["v"])
 				}
 			}
 		}
@@ -314,11 +326,11 @@ func convertFromSurrogate(s any) (diffPatch, error) {
 			if slice, ok := r.([]any); ok {
 				for _, entry := range slice {
 					e := entry.(map[string]any)
-					removed[e["k"]] = interfaceToValue(e["v"])
+					removed[e["k"]] = core.InterfaceToValue(e["v"])
 				}
 			} else if slice, ok := r.([]map[string]any); ok {
 				for _, e := range slice {
-					removed[e["k"]] = interfaceToValue(e["v"])
+					removed[e["k"]] = core.InterfaceToValue(e["v"])
 				}
 			}
 		}
@@ -406,7 +418,7 @@ func convertFromSurrogate(s any) (diffPatch, error) {
 			ops = append(ops, sliceOp{
 				Kind:    OpKind(int(kind)),
 				Index:   int(index),
-				Val:     interfaceToValue(o["v"]),
+				Val:     core.InterfaceToValue(o["v"]),
 				Patch:   p,
 				Key:     o["y"],
 				PrevKey: o["r"],
@@ -418,7 +430,7 @@ func convertFromSurrogate(s any) (diffPatch, error) {
 		}, nil
 	case "test":
 		return &testPatch{
-			expected:  interfaceToValue(d["e"]),
+			expected:  core.InterfaceToValue(d["e"]),
 			basePatch: base,
 		}, nil
 	case "copy":

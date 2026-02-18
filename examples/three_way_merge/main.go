@@ -31,7 +31,7 @@ func main() {
 		"auth":    "https://auth.internal",
 		"metrics": "https://metrics.local",
 	}
-	patchA := deep.Diff(base, userA)
+	patchA := deep.MustDiff(base, userA)
 
 	fmt.Println("--- PATCH A (User A) ---")
 	fmt.Println(patchA.Summary())
@@ -50,7 +50,7 @@ func main() {
 			userB.Endpoints[k] = v
 		}
 	}
-	patchB := deep.Diff(base, userB)
+	patchB := deep.MustDiff(base, userB)
 
 	fmt.Println("--- PATCH B (User B) ---")
 	fmt.Println(patchB.Summary())
@@ -64,8 +64,6 @@ func main() {
 		return
 	}
 
-	fmt.Printf("Merged Patch Summary:\n%s\n\n", merged.Summary())
-
 	if len(conflicts) > 0 {
 		fmt.Println("Detected Conflicts (A wins by default):")
 		for _, c := range conflicts {
@@ -73,6 +71,8 @@ func main() {
 		}
 		fmt.Println()
 	}
+
+	fmt.Printf("Merged Patch Summary:\n%s\n\n", merged.Summary())
 
 	// 5. Apply Merged Patch to Base
 	finalState := base

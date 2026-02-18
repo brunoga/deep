@@ -4,26 +4,30 @@ import (
 	"fmt"
 	"reflect"
 	"strconv"
+	"strings"
+
+	"github.com/brunoga/deep/v3/cond"
+	"github.com/brunoga/deep/v3/internal/core"
 )
 
-// Builder allows constructing a Patch[T] manually with on-the-fly type validation.
-type Builder[T any] struct {
+// PatchBuilder allows constructing a Patch[T] manually with on-the-fly type validation.
+type PatchBuilder[T any] struct {
 	typ   reflect.Type
 	patch diffPatch
 	err   error
 }
 
-// NewBuilder returns a new Builder for type T.
-func NewBuilder[T any]() *Builder[T] {
+// NewPatchBuilder returns a new PatchBuilder for type T.
+func NewPatchBuilder[T any]() *PatchBuilder[T] {
 	var t T
 	typ := reflect.TypeOf(t)
-	return &Builder[T]{
+	return &PatchBuilder[T]{
 		typ: typ,
 	}
 }
 
 // Build returns the constructed Patch or an error if any operation was invalid.
-func (b *Builder[T]) Build() (Patch[T], error) {
+func (b *PatchBuilder[T]) Build() (Patch[T], error) {
 	if b.err != nil {
 		return nil, b.err
 	}
@@ -37,7 +41,7 @@ func (b *Builder[T]) Build() (Patch[T], error) {
 }
 
 // Root returns a Node representing the root of the value being patched.
-func (b *Builder[T]) Root() *Node {
+func (b *PatchBuilder[T]) Root() *Node {
 	return &Node{
 		typ: b.typ,
 		update: func(p diffPatch) {
@@ -53,43 +57,38 @@ func (b *Builder[T]) Root() *Node {
 // node in the patch tree based on the paths used in the expression.
 // It finds the longest common prefix of all paths in the expression and
 // navigates to that node before attaching the condition.
-func (b *Builder[T]) AddCondition(expr string) *Builder[T] {
+func (b *PatchBuilder[T]) AddCondition(expr string) *PatchBuilder[T] {
 	if b.err != nil {
 		return b
 	}
-	raw, err := parseRawCondition(expr)
+	c, err := cond.ParseCondition[T](expr)
 	if err != nil {
 		b.err = err
 		return b
 	}
 
-		paths := raw.paths()
+	paths := c.Paths()
+	prefix := lcpParts(paths)
 
-		prefix := lcpParts(paths)
+	node, err := b.Root().Navigate(prefix)
+	if err != nil {
+		b.err = err
+		return b
+	}
 
-		node, err := b.Root().navigateParts(prefix)
-
-		if err != nil {
-
-			b.err = err
-
-			return b
-
-		}
-
-	node.WithCondition(raw.withRelativeParts(prefix))
+	node.WithCondition(c.WithRelativePath(prefix))
 	return b
 }
 
 // lcpParts returns the longest common prefix of the given paths.
-func lcpParts(paths []deepPath) []pathPart {
+func lcpParts(paths []string) string {
 	if len(paths) == 0 {
-		return nil
+		return ""
 	}
 
-	allParts := make([][]pathPart, len(paths))
+	allParts := make([][]core.PathPart, len(paths))
 	for i, p := range paths {
-		allParts[i] = parsePath(string(p))
+		allParts[i] = core.ParsePath(p)
 	}
 
 	common := allParts[0]
@@ -100,23 +99,41 @@ func lcpParts(paths []deepPath) []pathPart {
 		}
 		common = common[:n]
 		for j := 0; j < n; j++ {
-			if !common[j].equals(allParts[i][j]) {
+			if !common[j].Equals(allParts[i][j]) {
 				common = common[:j]
 				break
 			}
 		}
 	}
-	return common
+	
+	// Convert common parts back to string path
+	if len(common) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for i, p := range common {
+		if p.IsIndex {
+			if i == 0 {
+				// Special case
+			}
+			b.WriteByte('/')
+			b.WriteString(strconv.Itoa(p.Index))
+		} else {
+			b.WriteByte('/')
+			b.WriteString(p.Key)
+		}
+	}
+	return b.String()
 }
 
-func (n *Node) navigateParts(parts []pathPart) (*Node, error) {
+func (n *Node) navigateParts(parts []core.PathPart) (*Node, error) {
 	curr := n
 	var err error
 	for _, part := range parts {
-		if part.isIndex {
-			curr, err = curr.Index(part.index)
+		if part.IsIndex {
+			curr, err = curr.Index(part.Index)
 		} else {
-			curr, err = curr.FieldOrMapKey(part.key)
+			curr, err = curr.FieldOrMapKey(part.Key)
 		}
 		if err != nil {
 			return nil, err
@@ -138,14 +155,13 @@ type Node struct {
 	isIdx  bool
 }
 
-// navigate returns a Node for the specified path relative to the current node.
 // Navigate returns a Node for the specified path relative to the current node.
 // It supports both Go-style paths ("Field.Sub") and JSON Pointers ("/Field/Sub").
 func (n *Node) Navigate(path string) (*Node, error) {
 	if path == "" {
 		return n, nil
 	}
-	return n.navigateParts(parsePath(path))
+	return n.navigateParts(core.ParsePath(path))
 }
 
 // Put replaces the value at the current node without requiring the 'old' value.
@@ -153,7 +169,7 @@ func (n *Node) Navigate(path string) (*Node, error) {
 func (n *Node) Put(value any) *Node {
 	vNew := reflect.ValueOf(value)
 	p := &valuePatch{
-		newVal: deepCopyValue(vNew),
+		newVal: core.DeepCopyValue(vNew),
 	}
 	if n.current != nil {
 		p.cond, p.ifCond, p.unlessCond = n.current.conditions()
@@ -166,7 +182,8 @@ func (n *Node) Put(value any) *Node {
 // FieldOrMapKey returns a Node for the specified field or map key.
 func (n *Node) FieldOrMapKey(key string) (*Node, error) {
 	curr := n.Elem()
-	if curr.typ != nil && curr.typ.Kind() == reflect.Map {		keyType := curr.typ.Key()
+	if curr.typ != nil && curr.typ.Kind() == reflect.Map {
+		keyType := curr.typ.Key()
 		var keyVal any
 		if keyType.Kind() == reflect.String {
 			keyVal = key
@@ -177,14 +194,6 @@ func (n *Node) FieldOrMapKey(key string) (*Node, error) {
 			}
 			keyVal = i
 		} else {
-			// If it's a Keyer, we can't easily find the original key from just the string
-			// unless we have an instance of the map or the original keys mapping.
-			// In the context of Merge/Apply, we should have access to original keys.
-			
-			// For now, let's allow MapKey to be called with the string key if the map key
-			// implements Keyer, and we'll handle the resolution during Build/Apply.
-			// Actually, let's try to match by stringifying existing keys if we can.
-			
 			return curr.MapKey(key)
 		}
 		return curr.MapKey(keyVal)
@@ -198,8 +207,8 @@ func (n *Node) Set(old, new any) *Node {
 	vOld := reflect.ValueOf(old)
 	vNew := reflect.ValueOf(new)
 	p := &valuePatch{
-		oldVal: deepCopyValue(vOld),
-		newVal: deepCopyValue(vNew),
+		oldVal: core.DeepCopyValue(vOld),
+		newVal: core.DeepCopyValue(vNew),
 	}
 	if n.current != nil {
 		p.cond, p.ifCond, p.unlessCond = n.current.conditions()
@@ -214,7 +223,7 @@ func (n *Node) Set(old, new any) *Node {
 func (n *Node) Test(expected any) *Node {
 	vExpected := reflect.ValueOf(expected)
 	p := &testPatch{
-		expected: deepCopyValue(vExpected),
+		expected: core.DeepCopyValue(vExpected),
 	}
 	if n.current != nil {
 		p.cond, p.ifCond, p.unlessCond = n.current.conditions()
@@ -322,7 +331,6 @@ func (n *Node) ensurePatch() {
 		case reflect.Array:
 			p = &arrayPatch{indices: make(map[int]diffPatch)}
 		default:
-			// For basic types, valuePatch is usually created by Set().
 			p = &valuePatch{}
 		}
 	}
@@ -459,7 +467,6 @@ func (n *Node) MapKey(key any) (*Node, error) {
 	}
 	vKey := reflect.ValueOf(key)
 	if vKey.Type() != n.typ.Key() {
-		// If it's a string, we might be navigating by canonical key.
 		if _, ok := key.(string); ok {
 			// Special handling for canonical keys during navigation
 		} else {
@@ -523,7 +530,7 @@ func (n *Node) Elem() *Node {
 		typ:      nextTyp,
 		update:   updateFunc,
 		current:  currentPatch,
-		fullPath: n.fullPath, // Elem doesn't add to path in JSON Pointer
+		fullPath: n.fullPath,
 		parent:   n.parent,
 		key:      n.key,
 		index:    n.index,
@@ -559,7 +566,7 @@ func (n *Node) Add(i int, val any) error {
 	sp.ops = append(sp.ops, sliceOp{
 		Kind:  OpAdd,
 		Index: i,
-		Val:   deepCopyValue(v),
+		Val:   core.DeepCopyValue(v),
 	})
 	return nil
 }
@@ -594,14 +601,13 @@ func (n *Node) Delete(keyOrIndex any, oldVal any) error {
 		sp.ops = append(sp.ops, sliceOp{
 			Kind:  OpRemove,
 			Index: i,
-			Val:   deepCopyValue(vOld),
+			Val:   core.DeepCopyValue(vOld),
 		})
 		return nil
 	}
 	if n.typ.Kind() == reflect.Map {
 		vKey := reflect.ValueOf(keyOrIndex)
 		if vKey.Type() != n.typ.Key() {
-			// Try to convert if it's a simple string representation
 			if s, ok := keyOrIndex.(string); ok {
 				if n.typ.Key().Kind() == reflect.String {
 					vKey = reflect.ValueOf(s)
@@ -637,7 +643,7 @@ func (n *Node) Delete(keyOrIndex any, oldVal any) error {
 			n.update(mp)
 			n.current = mp
 		}
-		mp.removed[keyOrIndex] = deepCopyValue(vOld)
+		mp.removed[keyOrIndex] = core.DeepCopyValue(vOld)
 		return nil
 	}
 	return fmt.Errorf("Delete only supported on slices and maps, got %v", n.typ)
@@ -650,7 +656,6 @@ func (n *Node) AddMapEntry(key, val any) error {
 	}
 	vKey := reflect.ValueOf(key)
 	if vKey.Type() != n.typ.Key() {
-		// Try to convert if it's a simple string representation
 		if s, ok := key.(string); ok {
 			if n.typ.Key().Kind() == reflect.String {
 				vKey = reflect.ValueOf(s)
@@ -686,7 +691,7 @@ func (n *Node) AddMapEntry(key, val any) error {
 		n.update(mp)
 		n.current = mp
 	}
-	mp.added[key] = deepCopyValue(vVal)
+	mp.added[key] = core.DeepCopyValue(vVal)
 	return nil
 }
 
@@ -698,8 +703,5 @@ func (n *Node) Remove(oldVal any) error {
 	if n.isIdx {
 		return n.parent.Delete(n.index, oldVal)
 	}
-	// For maps, we need the actual key. Node.key is currently a string.
-	// If the map key is a string, it works. If not, this is a limitation.
-	// In the context of Merge, Walk gives us the actual key if it's not a slice index.
 	return n.parent.Delete(n.key, oldVal)
 }

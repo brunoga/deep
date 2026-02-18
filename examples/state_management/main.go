@@ -33,14 +33,14 @@ func main() {
 	doc.Content = "Goodbye World"
 
 	// Record the change in history
-	history = append(history, deep.Diff(original, doc))
+	history = append(history, deep.MustDiff(original, doc))
 
 	// 4. User makes another edit: Add metadata.
 	fmt.Println("Action 2: Add metadata")
 	original = deep.MustCopy(doc)
 	doc.Metadata["tags"] = "go,library"
 
-	history = append(history, deep.Diff(original, doc))
+	history = append(history, deep.MustDiff(original, doc))
 
 	fmt.Printf("\nCurrent State: %+v\n", doc)
 

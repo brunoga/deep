@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+
+	"github.com/brunoga/deep/v3/cond"
 )
 
 // OpKind represents the type of operation in a patch.
@@ -66,7 +68,7 @@ type Patch[T any] interface {
 	Walk(fn func(path string, op OpKind, old, new any) error) error
 
 	// WithCondition returns a new Patch with the given global condition attached.
-	WithCondition(c Condition[T]) Patch[T]
+	WithCondition(c cond.Condition[T]) Patch[T]
 
 	// WithStrict returns a new Patch with the strict consistency check enabled or disabled.
 	WithStrict(strict bool) Patch[T]
@@ -79,10 +81,6 @@ type Patch[T any] interface {
 
 	// Summary returns a human-readable summary of the changes in the patch.
 	Summary() string
-
-	// Release returns the patch and its internal structures to the pool.
-	// The patch must not be used after calling this.
-	Release()
 }
 
 // NewPatch returns a new, empty patch for type T.
@@ -123,7 +121,7 @@ func (e *ApplyError) Errors() []error {
 
 type typedPatch[T any] struct {
 	inner  diffPatch
-	cond   Condition[T]
+	cond   cond.Condition[T]
 	strict bool
 }
 
@@ -195,7 +193,7 @@ func (p *typedPatch[T]) Walk(fn func(path string, op OpKind, old, new any) error
 	})
 }
 
-func (p *typedPatch[T]) WithCondition(c Condition[T]) Patch[T] {
+func (p *typedPatch[T]) WithCondition(c cond.Condition[T]) Patch[T] {
 	return &typedPatch[T]{
 		inner:  p.inner,
 		cond:   c,
@@ -237,13 +235,6 @@ func (p *typedPatch[T]) Summary() string {
 	return p.inner.summary("/")
 }
 
-func (p *typedPatch[T]) Release() {
-	if p.inner != nil {
-		p.inner.release()
-		p.inner = nil
-	}
-}
-
 func (p *typedPatch[T]) String() string {
 	if p.inner == nil {
 		return "<nil>"
@@ -256,13 +247,13 @@ func (p *typedPatch[T]) MarshalJSON() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	cond, err := marshalCondition(p.cond)
+	c, err := cond.MarshalCondition(p.cond)
 	if err != nil {
 		return nil, err
 	}
 	return json.Marshal(map[string]any{
 		"inner":  inner,
-		"cond":   cond,
+		"cond":   c,
 		"strict": p.strict,
 	})
 }
@@ -280,11 +271,11 @@ func (p *typedPatch[T]) UnmarshalJSON(data []byte) error {
 		p.inner = inner
 	}
 	if condData, ok := m["cond"]; ok && len(condData) > 0 && string(condData) != "null" {
-		cond, err := unmarshalCondition[T](condData)
+		c, err := cond.UnmarshalCondition[T](condData)
 		if err != nil {
 			return err
 		}
-		p.cond = cond
+		p.cond = c
 	}
 	if strictData, ok := m["strict"]; ok {
 		json.Unmarshal(strictData, &p.strict)
@@ -297,14 +288,14 @@ func (p *typedPatch[T]) GobEncode() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	cond, err := marshalCondition(p.cond)
+	c, err := cond.MarshalCondition(p.cond)
 	if err != nil {
 		return nil, err
 	}
 	// Note: We use json-like map for consistency with surrogates
 	return json.Marshal(map[string]any{
 		"inner":  inner,
-		"cond":   cond,
+		"cond":   c,
 		"strict": p.strict,
 	})
 }
@@ -322,11 +313,11 @@ func (p *typedPatch[T]) GobDecode(data []byte) error {
 		p.inner = inner
 	}
 	if condData, ok := m["cond"]; ok && condData != nil {
-		cond, err := convertFromCondSurrogate[T](condData)
+		c, err := cond.ConvertFromCondSurrogate[T](condData)
 		if err != nil {
 			return err
 		}
-		p.cond = cond
+		p.cond = c
 	}
 	if strict, ok := m["strict"].(bool); ok {
 		p.strict = strict

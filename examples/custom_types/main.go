@@ -32,13 +32,13 @@ func main() {
 			return nil, nil
 		}
 		// Return an atomic replacement patch
-		builder := deep.NewBuilder[time.Time]()
+		builder := deep.NewPatchBuilder[time.Time]()
 		builder.Root().Set(a, b)
 		return builder.Build()
 	})
 
 	fmt.Println("--- COMPARING WITH CUSTOM TYPE REGISTRY ---")
-	patch := deep.DiffTyped(d, base, target)
+	patch := deep.MustDiffUsing(d, base, target)
 
 	fmt.Println("Patch Summary:")
 	fmt.Println(patch.Summary())

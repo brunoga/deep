@@ -44,7 +44,7 @@ func main() {
 
 	// 4. BROADCAST: Instead of sending the WHOLE GameWorld (which could be large),
 	// we only send the Patch.
-	patch := deep.Diff(previousState, serverState)
+	patch := deep.MustDiff(previousState, serverState)
 
 	// Network transport (simulated).
 	wireData, err := json.Marshal(patch)

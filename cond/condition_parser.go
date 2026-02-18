@@ -1,9 +1,11 @@
-package deep
+package cond
 
 import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/brunoga/deep/v3/internal/core"
 )
 
 // ParseCondition parses a string expression into a Condition[T] tree.
@@ -12,10 +14,10 @@ func ParseCondition[T any](expr string) (Condition[T], error) {
 	if err != nil {
 		return nil, err
 	}
-	return &typedRawCondition[T]{raw: raw}, nil
+	return &typedCondition[T]{inner: raw}, nil
 }
 
-func parseRawCondition(expr string) (internalConditionImpl, error) {
+func parseRawCondition(expr string) (InternalCondition, error) {
 	p := &parser{lexer: newLexer(expr)}
 	p.next()
 	cond, err := p.parseExpr()
@@ -174,11 +176,11 @@ func (p *parser) next() {
 	p.curr = p.lexer.next()
 }
 
-func (p *parser) parseExpr() (internalConditionImpl, error) {
+func (p *parser) parseExpr() (InternalCondition, error) {
 	return p.parseOr()
 }
 
-func (p *parser) parseOr() (internalConditionImpl, error) {
+func (p *parser) parseOr() (InternalCondition, error) {
 	left, err := p.parseAnd()
 	if err != nil {
 		return nil, err
@@ -189,12 +191,12 @@ func (p *parser) parseOr() (internalConditionImpl, error) {
 		if err != nil {
 			return nil, err
 		}
-		left = &rawOrCondition{Conditions: []internalConditionImpl{left, right}}
+		left = &rawOrCondition{Conditions: []InternalCondition{left, right}}
 	}
 	return left, nil
 }
 
-func (p *parser) parseAnd() (internalConditionImpl, error) {
+func (p *parser) parseAnd() (InternalCondition, error) {
 	left, err := p.parseFactor()
 	if err != nil {
 		return nil, err
@@ -205,12 +207,12 @@ func (p *parser) parseAnd() (internalConditionImpl, error) {
 		if err != nil {
 			return nil, err
 		}
-		left = &rawAndCondition{Conditions: []internalConditionImpl{left, right}}
+		left = &rawAndCondition{Conditions: []InternalCondition{left, right}}
 	}
 	return left, nil
 }
 
-func (p *parser) parseFactor() (internalConditionImpl, error) {
+func (p *parser) parseFactor() (InternalCondition, error) {
 	switch p.curr.kind {
 	case tokNot:
 		p.next()
@@ -236,7 +238,7 @@ func (p *parser) parseFactor() (internalConditionImpl, error) {
 	return nil, fmt.Errorf("unexpected token: %v", p.curr.val)
 }
 
-func (p *parser) parseComparison() (internalConditionImpl, error) {
+func (p *parser) parseComparison() (InternalCondition, error) {
 	condPath := p.curr.val
 	p.next()
 	opTok := p.curr
@@ -282,7 +284,7 @@ func (p *parser) parseComparison() (internalConditionImpl, error) {
 	opStr := ops[opTok.kind]
 
 	if isField {
-		return &rawCompareFieldCondition{Path1: deepPath(condPath), Path2: deepPath(fieldPath), Op: opStr}, nil
+		return &rawCompareFieldCondition{Path1: core.DeepPath(condPath), Path2: core.DeepPath(fieldPath), Op: opStr}, nil
 	}
-	return &rawCompareCondition{Path: deepPath(condPath), Val: val, Op: opStr}, nil
+	return &rawCompareCondition{Path: core.DeepPath(condPath), Val: val, Op: opStr}, nil
 }

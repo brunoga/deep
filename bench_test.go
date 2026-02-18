@@ -19,7 +19,7 @@ func BenchmarkDiff_Slice_Large(b *testing.B) {
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				Diff(s1, s2)
+				MustDiff(s1, s2)
 			}
 		})
 	}
@@ -37,7 +37,7 @@ func BenchmarkDiff_Slice_Append(b *testing.B) {
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				Diff(s1, s2)
+				MustDiff(s1, s2)
 			}
 		})
 	}
@@ -95,7 +95,7 @@ func BenchmarkDiff_Struct(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		Diff(s1, s2)
+		MustDiff(s1, s2)
 	}
 }
 
@@ -129,9 +129,6 @@ func BenchmarkDiff_LargeNested(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		patch := Diff(tree1, tree2)
-		if patch != nil {
-			patch.Release()
-		}
+		MustDiff(tree1, tree2)
 	}
 }
