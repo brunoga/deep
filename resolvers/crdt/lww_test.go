@@ -20,9 +20,15 @@ func TestLWWResolver(t *testing.T) {
 		OpTime:     hlc.HLC{WallTime: 101, Logical: 0, NodeID: "B"},
 	}
 
+	proposed := reflect.ValueOf("new")
+
 	// Newer op should be accepted
-	if !resolver.Resolve("f1", deep.OpReplace, nil, nil, reflect.Value{}) {
+	resolved, ok := resolver.Resolve("f1", deep.OpReplace, nil, nil, reflect.Value{}, proposed)
+	if !ok {
 		t.Error("Should accept newer operation")
+	}
+	if resolved.Interface() != "new" {
+		t.Error("Resolved value mismatch")
 	}
 	if clocks["f1"].WallTime != 101 {
 		t.Error("Clock should have been updated")
@@ -30,7 +36,8 @@ func TestLWWResolver(t *testing.T) {
 
 	// Older op should be rejected
 	resolver.OpTime = hlc.HLC{WallTime: 99, Logical: 0, NodeID: "C"}
-	if resolver.Resolve("f1", deep.OpReplace, nil, nil, reflect.Value{}) {
+	_, ok = resolver.Resolve("f1", deep.OpReplace, nil, nil, reflect.Value{}, proposed)
+	if ok {
 		t.Error("Should reject older operation")
 	}
 }
@@ -44,12 +51,19 @@ func TestStateResolver(t *testing.T) {
 		RemoteClocks: remoteClocks,
 	}
 
-	if !resolver.Resolve("f1", deep.OpReplace, nil, nil, reflect.Value{}) {
+	proposed := reflect.ValueOf("remote")
+
+	resolved, ok := resolver.Resolve("f1", deep.OpReplace, nil, nil, reflect.Value{}, proposed)
+	if !ok {
 		t.Error("Remote should win (newer)")
+	}
+	if resolved.Interface() != "remote" {
+		t.Error("Resolved value mismatch")
 	}
 
 	resolver.RemoteClocks["f1"] = hlc.HLC{WallTime: 99, Logical: 0, NodeID: "B"}
-	if resolver.Resolve("f1", deep.OpReplace, nil, nil, reflect.Value{}) {
+	_, ok = resolver.Resolve("f1", deep.OpReplace, nil, nil, reflect.Value{}, proposed)
+	if ok {
 		t.Error("Local should win (remote is older)")
 	}
 }

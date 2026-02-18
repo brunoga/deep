@@ -76,8 +76,8 @@ func TestPatch_ApplyResolved(t *testing.T) {
 	target := Config{Value: 10}
 
 	// Resolver that rejects everything
-	err := patch.ApplyResolved(&target, ConflictResolverFunc(func(path string, op OpKind, old, new any, v reflect.Value) bool {
-		return false
+	err := patch.ApplyResolved(&target, ConflictResolverFunc(func(path string, op OpKind, key, prevKey any, current, proposed reflect.Value) (reflect.Value, bool) {
+		return reflect.Value{}, false
 	}))
 	if err != nil {
 		t.Fatalf("ApplyResolved failed: %v", err)
@@ -88,8 +88,8 @@ func TestPatch_ApplyResolved(t *testing.T) {
 	}
 
 	// Resolver that accepts everything
-	err = patch.ApplyResolved(&target, ConflictResolverFunc(func(path string, op OpKind, old, new any, v reflect.Value) bool {
-		return true
+	err = patch.ApplyResolved(&target, ConflictResolverFunc(func(path string, op OpKind, key, prevKey any, current, proposed reflect.Value) (reflect.Value, bool) {
+		return proposed, true
 	}))
 	if err != nil {
 		t.Fatalf("ApplyResolved failed: %v", err)
@@ -100,10 +100,10 @@ func TestPatch_ApplyResolved(t *testing.T) {
 	}
 }
 
-type ConflictResolverFunc func(path string, op OpKind, old, new any, v reflect.Value) bool
+type ConflictResolverFunc func(path string, op OpKind, key, prevKey any, current, proposed reflect.Value) (reflect.Value, bool)
 
-func (f ConflictResolverFunc) Resolve(path string, op OpKind, old, new any, v reflect.Value) bool {
-	return f(path, op, old, new, v)
+func (f ConflictResolverFunc) Resolve(path string, op OpKind, key, prevKey any, current, proposed reflect.Value) (reflect.Value, bool) {
+	return f(path, op, key, prevKey, current, proposed)
 }
 
 func TestPatch_ConditionsExhaustive(t *testing.T) {

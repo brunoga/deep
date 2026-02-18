@@ -7,8 +7,6 @@ import (
 	"github.com/brunoga/deep/v3/crdt/hlc"
 )
 
-// ... (skipping LWWResolver.Resolve change since I'll do it separately or just replace the whole file if easier)
-
 // LWWResolver implements deep.ConflictResolver using Last-Write-Wins logic
 // for a single operation or delta with a fixed timestamp.
 type LWWResolver struct {
@@ -17,7 +15,7 @@ type LWWResolver struct {
 	OpTime     hlc.HLC
 }
 
-func (r *LWWResolver) Resolve(path string, op deep.OpKind, key, prevKey any, val reflect.Value) bool {
+func (r *LWWResolver) Resolve(path string, op deep.OpKind, key, prevKey any, current, proposed reflect.Value) (reflect.Value, bool) {
 	lClock := r.Clocks[path]
 	lTomb, hasLT := r.Tombstones[path]
 	lTime := lClock
@@ -25,10 +23,8 @@ func (r *LWWResolver) Resolve(path string, op deep.OpKind, key, prevKey any, val
 		lTime = lTomb
 	}
 
-	// fmt.Printf("LWW Resolve %s: opTime=%v, lTime=%v\n", path, r.OpTime, lTime)
-
 	if !r.OpTime.After(lTime) {
-		return false
+		return reflect.Value{}, false
 	}
 
 	// Accepted. Update clocks for this path.
@@ -38,7 +34,7 @@ func (r *LWWResolver) Resolve(path string, op deep.OpKind, key, prevKey any, val
 		r.Clocks[path] = r.OpTime
 	}
 
-	return true
+	return proposed, true
 }
 
 // StateResolver implements deep.ConflictResolver for merging two full CRDT states.
@@ -50,7 +46,7 @@ type StateResolver struct {
 	RemoteTombstones map[string]hlc.HLC
 }
 
-func (r *StateResolver) Resolve(path string, op deep.OpKind, key, prevKey any, val reflect.Value) bool {
+func (r *StateResolver) Resolve(path string, op deep.OpKind, key, prevKey any, current, proposed reflect.Value) (reflect.Value, bool) {
 	// Local Time
 	lClock := r.LocalClocks[path]
 	lTomb, hasLT := r.LocalTombstones[path]
@@ -63,12 +59,15 @@ func (r *StateResolver) Resolve(path string, op deep.OpKind, key, prevKey any, v
 	rClock, hasR := r.RemoteClocks[path]
 	rTomb, hasRT := r.RemoteTombstones[path]
 	if !hasR && !hasRT {
-		return false
+		return reflect.Value{}, false
 	}
 	rTime := rClock
 	if hasRT && rTomb.After(rTime) {
 		rTime = rTomb
 	}
 
-	return rTime.After(lTime)
+	if rTime.After(lTime) {
+		return proposed, true
+	}
+	return reflect.Value{}, false
 }
