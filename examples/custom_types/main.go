@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 	"time"
-	"github.com/brunoga/deep/v3"
+	"github.com/brunoga/deep/v4"
 )
 
 type Audit struct {

@@ -3,7 +3,7 @@ package deep
 import (
 	"fmt"
 
-	"github.com/brunoga/deep/v3/internal/core"
+	"github.com/brunoga/deep/v4/internal/core"
 )
 
 // applyToBuilder recursively applies an operation to a PatchBuilder.

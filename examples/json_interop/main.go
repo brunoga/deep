@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/brunoga/deep/v3"
+	"github.com/brunoga/deep/v4"
 )
 
 // UIState represents something typically shared between a Go backend and a JS frontend.

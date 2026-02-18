@@ -1,7 +1,7 @@
 package deep
 
 import (
-	"github.com/brunoga/deep/v3/internal/core"
+	"github.com/brunoga/deep/v4/internal/core"
 )
 
 // Copier is an interface that types can implement to provide their own

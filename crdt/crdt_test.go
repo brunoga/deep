@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/brunoga/deep/v3"
+	"github.com/brunoga/deep/v4"
 )
 
 type TestUser struct {

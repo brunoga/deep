@@ -7,7 +7,7 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/brunoga/deep/v3/cond"
+	"github.com/brunoga/deep/v4/cond"
 )
 
 // OpKind represents the type of operation in a patch.

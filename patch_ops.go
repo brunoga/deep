@@ -7,9 +7,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/brunoga/deep/v3/cond"
-	"github.com/brunoga/deep/v3/internal/core"
-	"github.com/brunoga/deep/v3/internal/unsafe"
+	"github.com/brunoga/deep/v4/cond"
+	"github.com/brunoga/deep/v4/internal/core"
+	"github.com/brunoga/deep/v4/internal/unsafe"
 )
 
 var ErrConditionSkipped = fmt.Errorf("condition skipped")

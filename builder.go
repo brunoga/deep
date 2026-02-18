@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/brunoga/deep/v3/cond"
-	"github.com/brunoga/deep/v3/internal/core"
+	"github.com/brunoga/deep/v4/cond"
+	"github.com/brunoga/deep/v4/internal/core"
 )
 
 // PatchBuilder allows constructing a Patch[T] manually with on-the-fly type validation.
@@ -472,7 +472,7 @@ func (b *PatchBuilder[T]) Elem() *PatchBuilder[T] {
 	if b.state.err != nil || b.typ == nil || (b.typ.Kind() != reflect.Pointer && b.typ.Kind() != reflect.Interface) {
 		return b
 	}
-	updateFunc := b.update
+	var updateFunc func(diffPatch)
 	var currentPatch diffPatch
 	if b.typ.Kind() == reflect.Pointer {
 		pp, ok := b.current.(*ptrPatch)

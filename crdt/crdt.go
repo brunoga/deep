@@ -6,10 +6,10 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/brunoga/deep/v3"
-	"github.com/brunoga/deep/v3/cond"
-	"github.com/brunoga/deep/v3/crdt/hlc"
-	crdtresolver "github.com/brunoga/deep/v3/resolvers/crdt"
+	"github.com/brunoga/deep/v4"
+	"github.com/brunoga/deep/v4/cond"
+	"github.com/brunoga/deep/v4/crdt/hlc"
+	crdtresolver "github.com/brunoga/deep/v4/resolvers/crdt"
 )
 
 func init() {

@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/brunoga/deep/v3/internal/core"
+	"github.com/brunoga/deep/v4/internal/core"
 )
 
 // dependencyNode represents a node in the dependency graph.

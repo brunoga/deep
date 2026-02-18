@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/brunoga/deep/v3"
+	"github.com/brunoga/deep/v4"
 )
 
 // Account represents a financial account.

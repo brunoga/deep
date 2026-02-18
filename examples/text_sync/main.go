@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/brunoga/deep/v3/crdt"
+	"github.com/brunoga/deep/v4/crdt"
 )
 
 // Document represents a text document using the specialized CRDT Text type.
