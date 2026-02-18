@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/brunoga/deep/v3/crdt"
+	"github.com/brunoga/deep/v4/crdt"
 )
 
 type Config struct {

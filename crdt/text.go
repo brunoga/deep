@@ -4,7 +4,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/brunoga/deep/v3/crdt/hlc"
+	"github.com/brunoga/deep/v4/crdt/hlc"
 )
 
 // TextRun represents a contiguous run of characters with a unique starting ID.

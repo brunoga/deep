@@ -7,8 +7,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/brunoga/deep/v3/internal/core"
-	"github.com/brunoga/deep/v3/internal/unsafe"
+	"github.com/brunoga/deep/v4/internal/core"
+	"github.com/brunoga/deep/v4/internal/unsafe"
 )
 
 // DiffOption allows configuring the behavior of the Diff function.

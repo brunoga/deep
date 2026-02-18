@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/brunoga/deep/v3/internal/core"
+	"github.com/brunoga/deep/v4/internal/core"
 )
 
 func TestPatch_NumericConversion(t *testing.T) {

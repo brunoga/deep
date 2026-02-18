@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"github.com/brunoga/deep/v3"
+	"github.com/brunoga/deep/v4"
 )
 
 type UserProfile struct {

@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 
-	"github.com/brunoga/deep/v3"
+	"github.com/brunoga/deep/v4"
 )
 
 // Resource is the data we want to manage over the network.

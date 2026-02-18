@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/brunoga/deep/v3/internal/core"
+	"github.com/brunoga/deep/v4/internal/core"
 )
 
 // ParseCondition parses a string expression into a Condition[T] tree.

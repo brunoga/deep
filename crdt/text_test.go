@@ -4,7 +4,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/brunoga/deep/v3/crdt/hlc"
+	"github.com/brunoga/deep/v4/crdt/hlc"
 )
 
 func TestText_Insert(t *testing.T) {

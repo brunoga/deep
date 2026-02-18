@@ -7,8 +7,8 @@ import (
 	"reflect"
 	"sync"
 
-	"github.com/brunoga/deep/v3/cond"
-	"github.com/brunoga/deep/v3/internal/core"
+	"github.com/brunoga/deep/v4/cond"
+	"github.com/brunoga/deep/v4/internal/core"
 )
 
 type patchSurrogate struct {

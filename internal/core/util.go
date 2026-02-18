@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"reflect"
 
-	"github.com/brunoga/deep/v3/internal/unsafe"
+	"github.com/brunoga/deep/v4/internal/unsafe"
 )
 
 func ConvertValue(v reflect.Value, targetType reflect.Type) reflect.Value {

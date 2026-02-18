@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/brunoga/deep/v3/internal/core"
+	"github.com/brunoga/deep/v4/internal/core"
 )
 
 // Conflict represents a merge conflict where two patches modify the same path

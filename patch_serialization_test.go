@@ -7,7 +7,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/brunoga/deep/v3/cond"
+	"github.com/brunoga/deep/v4/cond"
 )
 
 func TestPatchJSONSerialization(t *testing.T) {

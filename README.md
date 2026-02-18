@@ -2,12 +2,12 @@
 
 `deep` is a high-performance, reflection-based engine for manipulating complex Go data structures. It provides recursive deep copying, semantic equality checks, and structural diffing to produce optimized patches.
 
-V3 is designed for high-throughput applications, featuring a zero-allocation diffing engine and tag-aware operations.
+V4 focuses on API ergonomics with a fluent patch builder and advanced conflict resolution for distributed systems.
 
 ## Installation
 
 ```bash
-go get github.com/brunoga/deep/v3
+go get github.com/brunoga/deep/v4
 ```
 
 ---
@@ -42,7 +42,7 @@ if deep.Equal(objA, objB) {
 
 ```go
 // Generate patch
-patch := deep.Diff(oldState, newState)
+patch, err := deep.Diff(oldState, newState)
 
 // Inspect changes
 fmt.Println(patch.Summary()) 
@@ -59,11 +59,29 @@ err := patch.ApplyChecked(&oldState)
 
 ## Advanced Capabilities
 
-### Conflict Resolution & CRDTs
-**Justification:** In distributed systems, state often diverges. `deep` provides first-class support for state convergence using Hybrid Logical Clocks (HLC).
+### Fluent Patch Builder
+V4 introduces a fluent API for manual patch construction, allowing for intuitive navigation and modification of data structures without manual path management.
 
-*   **LWW Resolver**: Automatic "Last-Write-Wins" resolution at the field level.
-*   **Example**: [CRDT Synchronization](./examples/crdt_sync/main.go)
+```go
+builder := deep.NewPatchBuilder[MyStruct]()
+builder.Field("Profile").Field("Age").Set(30, 31)
+builder.Field("Tags").Add(0, "new-tag")
+patch, err := builder.Build()
+```
+
+### Advanced Conflict Resolution
+For distributed systems and CRDTs, `deep` allows you to intercept and resolve conflicts dynamically. The resolver has access to both the **current** value at the target path and the **proposed** value.
+
+```go
+type MyResolver struct{}
+
+func (r *MyResolver) Resolve(path string, op deep.OpKind, key, prevKey any, current, proposed reflect.Value) (reflect.Value, bool) {
+    // Custom logic: e.g., semantic 3-way merge or timestamp-based LWW
+    return proposed, true 
+}
+
+err := patch.ApplyResolved(&state, &MyResolver{})
+```
 
 ### Struct Tag Control
 Fine-grained control over library behavior:
@@ -76,34 +94,33 @@ Fine-grained control over library behavior:
 
 ## Performance Optimization
 
-v3.0 is built for performance-critical hot paths:
-*   **Zero-Allocation Engine**: Uses `sync.Pool` for internal transient structures.
+Built for performance-critical hot paths:
+*   **Zero-Allocation Engine**: Uses `sync.Pool` for internal transient structures during diffing.
+*   **Reflection Cache**: Global cache for type metadata to eliminate repetitive lookups.
 *   **Lazy Allocation**: Maps and slices in patches are only allocated if changes are found.
-*   **Manual Release**: Use `patch.Release()` to return patch resources to the pool.
 
 ---
 
 ## Version History
 
-### v1.0.0: The Foundation
-*   Initial recursive **Deep Copy** implementation.
-*   Basic **Deep Diff** producing Add/Remove/Replace operations.
-*   Support for standard Go types (Slices, Maps, Structs, Pointers).
+### v4.0.0: Ergonomics & Context (Current)
+*   **Fluent Patch Builder**: Merged `Node` into `PatchBuilder` for a cleaner, chainable API.
+*   **Context-Aware Resolution**: `ConflictResolver` now receives both `current` and `proposed` values and can return a merged result.
+*   **Strict JSON Pointers**: Removed dot-notation support in favor of strict RFC 6901 compliance.
+*   **Simplified Registry**: Global `RegisterCustom*` functions for easier extension.
 
-### v2.0.0: Synchronization & Standards
-*   **JSON Pointer (RFC 6901)**: Standardized all path navigation.
-*   **Keyed Slice Alignment**: Integrated identity-based matching into Myers' Diff.
-*   **Human-Readable Summaries**: Added `Patch.Summary()` for audit logging.
-*   **HLC & CRDT**: Introduced Hybrid Logical Clocks and LWW conflict resolution.
-*   **Multi-Error Reporting**: `ApplyChecked` reports all validation failures at once.
-
-### v3.0.0: High-Performance Engine (Current)
-*   **Zero-Allocation Engine**: Comprehensive refactor to use object pooling and path stacks.
+### v3.0.0: High-Performance Engine
+*   **Zero-Allocation Engine**: Refactored to use object pooling.
 *   **`deep.Equal[T]`**: High-performance, tag-aware replacement for `reflect.DeepEqual`.
 *   **Move & Copy Detection**: Semantic detection of relocated values during `Diff`.
-*   **Custom Type Registry**: Support for registering specialized diffing logic for external types.
-*   **Pointer Identity Optimization**: Massive speedup via immediate short-circuiting for identical pointers.
-*   **Memory Efficiency**: Up to 80% reduction in memory overhead for large structural comparisons.
+
+### v2.0.0: Synchronization & Standards
+*   **JSON Pointer (RFC 6901)**: Standardized path navigation.
+*   **Keyed Slice Alignment**: Integrated identity-based matching into Myers' Diff.
+*   **HLC & CRDT**: Introduced Hybrid Logical Clocks and LWW conflict resolution.
+
+### v1.0.0: The Foundation
+*   Initial recursive **Deep Copy** and **Deep Diff** implementation.
 
 ---
 

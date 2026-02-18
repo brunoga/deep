@@ -3,8 +3,8 @@ package crdt
 import (
 	"reflect"
 
-	"github.com/brunoga/deep/v3"
-	"github.com/brunoga/deep/v3/crdt/hlc"
+	"github.com/brunoga/deep/v4"
+	"github.com/brunoga/deep/v4/crdt/hlc"
 )
 
 // LWWResolver implements deep.ConflictResolver using Last-Write-Wins logic

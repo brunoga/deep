@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/brunoga/deep/v3/internal/unsafe"
+	"github.com/brunoga/deep/v4/internal/unsafe"
 )
 
 // EqualOption allows configuring the behavior of the Equal function.
