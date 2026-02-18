@@ -11,73 +11,718 @@ import (
 )
 
 // PatchBuilder allows constructing a Patch[T] manually with on-the-fly type validation.
+// It acts as a cursor within the value's structure, allowing for fluent navigation
+// and modification.
 type PatchBuilder[T any] struct {
-	typ   reflect.Type
+	state *builderState[T]
+
+	typ      reflect.Type
+	update   func(diffPatch)
+	current  diffPatch
+	fullPath string
+
+	parent *PatchBuilder[T]
+	key    string
+	index  int
+	isIdx  bool
+}
+
+type builderState[T any] struct {
 	patch diffPatch
 	err   error
 }
 
-// NewPatchBuilder returns a new PatchBuilder for type T.
+// NewPatchBuilder returns a new PatchBuilder for type T, pointing at the root.
 func NewPatchBuilder[T any]() *PatchBuilder[T] {
 	var t T
 	typ := reflect.TypeOf(t)
-	return &PatchBuilder[T]{
-		typ: typ,
+	b := &PatchBuilder[T]{
+		state: &builderState[T]{},
+		typ:   typ,
 	}
+	b.update = func(p diffPatch) {
+		b.state.patch = p
+	}
+	return b
 }
 
 // Build returns the constructed Patch or an error if any operation was invalid.
 func (b *PatchBuilder[T]) Build() (Patch[T], error) {
-	if b.err != nil {
-		return nil, b.err
+	if b.state.err != nil {
+		return nil, b.state.err
 	}
-	if b.patch == nil {
+	if b.state.patch == nil {
 		return nil, nil
 	}
 	return &typedPatch[T]{
-		inner:  b.patch,
+		inner:  b.state.patch,
 		strict: true,
 	}, nil
-}
-
-// Root returns a Node representing the root of the value being patched.
-func (b *PatchBuilder[T]) Root() *Node {
-	return &Node{
-		typ: b.typ,
-		update: func(p diffPatch) {
-			b.patch = p
-		},
-		current:  b.patch,
-		fullPath: "",
-		parent:   nil,
-	}
 }
 
 // AddCondition parses a string expression and attaches it to the appropriate
 // node in the patch tree based on the paths used in the expression.
 // It finds the longest common prefix of all paths in the expression and
 // navigates to that node before attaching the condition.
+// The expression is evaluated relative to the current node.
 func (b *PatchBuilder[T]) AddCondition(expr string) *PatchBuilder[T] {
-	if b.err != nil {
+	if b.state.err != nil {
 		return b
 	}
 	c, err := cond.ParseCondition[T](expr)
 	if err != nil {
-		b.err = err
+		b.state.err = err
 		return b
 	}
 
 	paths := c.Paths()
 	prefix := lcpParts(paths)
 
-	node, err := b.Root().Navigate(prefix)
-	if err != nil {
-		b.err = err
+	node := b.Navigate(prefix)
+	if b.state.err != nil {
 		return b
 	}
 
 	node.WithCondition(c.WithRelativePath(prefix))
 	return b
+}
+
+// Navigate returns a new PatchBuilder for the specified path relative to the current node.
+// It supports JSON Pointers ("/Field/Sub").
+func (b *PatchBuilder[T]) Navigate(path string) *PatchBuilder[T] {
+	if b.state.err != nil || path == "" {
+		return b
+	}
+	return b.navigateParts(core.ParsePath(path))
+}
+
+func (b *PatchBuilder[T]) navigateParts(parts []core.PathPart) *PatchBuilder[T] {
+	curr := b
+	for _, part := range parts {
+		if part.IsIndex {
+			curr = curr.Index(part.Index)
+		} else {
+			curr = curr.FieldOrMapKey(part.Key)
+		}
+		if b.state.err != nil {
+			return b
+		}
+	}
+	return curr
+}
+
+// Put replaces the value at the current node without requiring the 'old' value.
+// Strict consistency checks for this specific value will be disabled.
+func (b *PatchBuilder[T]) Put(value any) *PatchBuilder[T] {
+	if b.state.err != nil {
+		return b
+	}
+	vNew := reflect.ValueOf(value)
+	p := &valuePatch{
+		newVal: core.DeepCopyValue(vNew),
+	}
+	if b.current != nil {
+		p.cond, p.ifCond, p.unlessCond = b.current.conditions()
+	}
+	b.update(p)
+	b.current = p
+	return b
+}
+
+// Set replaces the value at the current node. It requires the 'old' value
+// to enable patch reversibility and strict application checking.
+func (b *PatchBuilder[T]) Set(old, new any) *PatchBuilder[T] {
+	if b.state.err != nil {
+		return b
+	}
+	vOld := reflect.ValueOf(old)
+	vNew := reflect.ValueOf(new)
+	p := &valuePatch{
+		oldVal: core.DeepCopyValue(vOld),
+		newVal: core.DeepCopyValue(vNew),
+	}
+	if b.current != nil {
+		p.cond, p.ifCond, p.unlessCond = b.current.conditions()
+	}
+	b.update(p)
+	b.current = p
+	return b
+}
+
+// Test adds a test operation to the current node. The patch application
+// will fail if the value at this node does not match the expected value.
+func (b *PatchBuilder[T]) Test(expected any) *PatchBuilder[T] {
+	if b.state.err != nil {
+		return b
+	}
+	vExpected := reflect.ValueOf(expected)
+	p := &testPatch{
+		expected: core.DeepCopyValue(vExpected),
+	}
+	if b.current != nil {
+		p.cond, p.ifCond, p.unlessCond = b.current.conditions()
+	}
+	b.update(p)
+	b.current = p
+	return b
+}
+
+// Copy copies a value from another path to the current node.
+func (b *PatchBuilder[T]) Copy(from string) *PatchBuilder[T] {
+	if b.state.err != nil {
+		return b
+	}
+	absPath := b.fullPath
+	if absPath == "" {
+		absPath = "/"
+	} else if absPath[0] != '/' {
+		absPath = "/" + absPath
+	}
+
+	absFrom := from
+	if absFrom == "" {
+		absFrom = "/"
+	} else if absFrom[0] != '/' {
+		absFrom = "/" + absFrom
+	}
+
+	p := &copyPatch{
+		from: absFrom,
+		path: absPath,
+	}
+	if b.current != nil {
+		p.cond, p.ifCond, p.unlessCond = b.current.conditions()
+	}
+	b.update(p)
+	b.current = p
+	return b
+}
+
+// Move moves a value from another path to the current node.
+func (b *PatchBuilder[T]) Move(from string) *PatchBuilder[T] {
+	if b.state.err != nil {
+		return b
+	}
+	absPath := b.fullPath
+	if absPath == "" {
+		absPath = "/"
+	} else if absPath[0] != '/' {
+		absPath = "/" + absPath
+	}
+
+	absFrom := from
+	if absFrom == "" {
+		absFrom = "/"
+	} else if absFrom[0] != '/' {
+		absFrom = "/" + absFrom
+	}
+
+	p := &movePatch{
+		from: absFrom,
+		path: absPath,
+	}
+	if b.current != nil {
+		p.cond, p.ifCond, p.unlessCond = b.current.conditions()
+	}
+	b.update(p)
+	b.current = p
+	return b
+}
+
+// Log adds a log operation to the current node. It prints a message
+// and the current value at the node during patch application.
+func (b *PatchBuilder[T]) Log(message string) *PatchBuilder[T] {
+	if b.state.err != nil {
+		return b
+	}
+	p := &logPatch{
+		message: message,
+	}
+	if b.current != nil {
+		p.cond, p.ifCond, p.unlessCond = b.current.conditions()
+	}
+	b.update(p)
+	b.current = p
+	return b
+}
+
+func (b *PatchBuilder[T]) ensurePatch() {
+	if b.current != nil {
+		return
+	}
+	var p diffPatch
+	if b.typ == nil {
+		p = &valuePatch{}
+	} else {
+		switch b.typ.Kind() {
+		case reflect.Struct:
+			p = &structPatch{fields: make(map[string]diffPatch)}
+		case reflect.Slice:
+			p = &slicePatch{}
+		case reflect.Map:
+			p = &mapPatch{
+				added:        make(map[any]reflect.Value),
+				removed:      make(map[any]reflect.Value),
+				modified:     make(map[any]diffPatch),
+				originalKeys: make(map[any]any),
+				keyType:      b.typ.Key(),
+			}
+		case reflect.Pointer:
+			p = &ptrPatch{}
+		case reflect.Interface:
+			p = &interfacePatch{}
+		case reflect.Array:
+			p = &arrayPatch{indices: make(map[int]diffPatch)}
+		default:
+			p = &valuePatch{}
+		}
+	}
+	b.current = p
+	b.update(p)
+}
+
+// WithCondition attaches a local condition to the current node.
+// This condition is evaluated against the value at this node during ApplyChecked.
+func (b *PatchBuilder[T]) WithCondition(c any) *PatchBuilder[T] {
+	if b.state.err != nil {
+		return b
+	}
+	b.ensurePatch()
+	if b.current != nil {
+		b.current.setCondition(c)
+	}
+	return b
+}
+
+// If attaches an 'if' condition to the current node. If the condition
+// evaluates to false, the operation at this node is skipped.
+func (b *PatchBuilder[T]) If(c any) *PatchBuilder[T] {
+	if b.state.err != nil {
+		return b
+	}
+	b.ensurePatch()
+	if b.current != nil {
+		b.current.setIfCondition(c)
+	}
+	return b
+}
+
+// Unless attaches an 'unless' condition to the current node. If the condition
+// evaluates to true, the operation at this node is skipped.
+func (b *PatchBuilder[T]) Unless(c any) *PatchBuilder[T] {
+	if b.state.err != nil {
+		return b
+	}
+	b.ensurePatch()
+	if b.current != nil {
+		b.current.setUnlessCondition(c)
+	}
+	return b
+}
+
+// Field returns a new PatchBuilder for the specified struct field. It automatically
+// descends into pointers and interfaces if necessary.
+func (b *PatchBuilder[T]) Field(name string) *PatchBuilder[T] {
+	if b.state.err != nil {
+		return b
+	}
+	curr := b.Elem()
+	if curr.typ.Kind() != reflect.Struct {
+		b.state.err = fmt.Errorf("not a struct: %v", curr.typ)
+		return b
+	}
+	field, ok := curr.typ.FieldByName(name)
+	if !ok {
+		b.state.err = fmt.Errorf("field not found: %s", name)
+		return b
+	}
+	sp, ok := curr.current.(*structPatch)
+	if !ok {
+		sp = &structPatch{fields: make(map[string]diffPatch)}
+		curr.update(sp)
+		curr.current = sp
+	}
+	return &PatchBuilder[T]{
+		state: b.state,
+		typ:   field.Type,
+		update: func(p diffPatch) {
+			sp.fields[name] = p
+		},
+		current:  sp.fields[name],
+		fullPath: curr.fullPath + "/" + name,
+		parent:   curr,
+		key:      name,
+	}
+}
+
+// Index returns a new PatchBuilder for the specified array or slice index.
+func (b *PatchBuilder[T]) Index(i int) *PatchBuilder[T] {
+	if b.state.err != nil {
+		return b
+	}
+	curr := b.Elem()
+	kind := curr.typ.Kind()
+	if kind != reflect.Slice && kind != reflect.Array {
+		b.state.err = fmt.Errorf("not a slice or array: %v", curr.typ)
+		return b
+	}
+	if kind == reflect.Array && (i < 0 || i >= curr.typ.Len()) {
+		b.state.err = fmt.Errorf("index out of bounds: %d", i)
+		return b
+	}
+	if kind == reflect.Array {
+		ap, ok := curr.current.(*arrayPatch)
+		if !ok {
+			ap = &arrayPatch{indices: make(map[int]diffPatch)}
+			curr.update(ap)
+			curr.current = ap
+		}
+		return &PatchBuilder[T]{
+			state: b.state,
+			typ:   curr.typ.Elem(),
+			update: func(p diffPatch) {
+				ap.indices[i] = p
+			},
+			current:  ap.indices[i],
+			fullPath: curr.fullPath + "/" + strconv.Itoa(i),
+			parent:   curr,
+			index:    i,
+			isIdx:    true,
+		}
+	}
+	sp, ok := curr.current.(*slicePatch)
+	if !ok {
+		sp = &slicePatch{}
+		curr.update(sp)
+		curr.current = sp
+	}
+	var modOp *sliceOp
+	for j := range sp.ops {
+		if sp.ops[j].Index == i && sp.ops[j].Kind == OpReplace {
+			modOp = &sp.ops[j]
+			break
+		}
+	}
+	if modOp == nil {
+		sp.ops = append(sp.ops, sliceOp{
+			Kind:  OpReplace,
+			Index: i,
+		})
+		modOp = &sp.ops[len(sp.ops)-1]
+	}
+	return &PatchBuilder[T]{
+		state: b.state,
+		typ:   curr.typ.Elem(),
+		update: func(p diffPatch) {
+			modOp.Patch = p
+		},
+		current:  modOp.Patch,
+		fullPath: curr.fullPath + "/" + strconv.Itoa(i),
+		parent:   curr,
+		index:    i,
+		isIdx:    true,
+	}
+}
+
+// MapKey returns a new PatchBuilder for the specified map key.
+func (b *PatchBuilder[T]) MapKey(key any) *PatchBuilder[T] {
+	if b.state.err != nil {
+		return b
+	}
+	curr := b.Elem()
+	if curr.typ.Kind() != reflect.Map {
+		b.state.err = fmt.Errorf("not a map: %v", curr.typ)
+		return b
+	}
+	vKey := reflect.ValueOf(key)
+	if vKey.Type() != curr.typ.Key() {
+		if _, ok := key.(string); ok {
+			// Special handling for canonical keys during navigation
+		} else {
+			b.state.err = fmt.Errorf("invalid key type: expected %v, got %v", curr.typ.Key(), vKey.Type())
+			return b
+		}
+	}
+	mp, ok := curr.current.(*mapPatch)
+	if !ok {
+		mp = &mapPatch{
+			added:    make(map[any]reflect.Value),
+			removed:  make(map[any]reflect.Value),
+			modified: make(map[any]diffPatch),
+			keyType:  curr.typ.Key(),
+		}
+		curr.update(mp)
+		curr.current = mp
+	}
+	return &PatchBuilder[T]{
+		state: b.state,
+		typ:   curr.typ.Elem(),
+		update: func(p diffPatch) {
+			mp.modified[key] = p
+		},
+		current:  mp.modified[key],
+		fullPath: curr.fullPath + "/" + fmt.Sprintf("%v", key),
+		parent:   curr,
+		key:      fmt.Sprintf("%v", key),
+	}
+}
+
+// Elem returns a new PatchBuilder for the element type of a pointer or interface.
+func (b *PatchBuilder[T]) Elem() *PatchBuilder[T] {
+	if b.state.err != nil || b.typ == nil || (b.typ.Kind() != reflect.Pointer && b.typ.Kind() != reflect.Interface) {
+		return b
+	}
+	updateFunc := b.update
+	var currentPatch diffPatch
+	if b.typ.Kind() == reflect.Pointer {
+		pp, ok := b.current.(*ptrPatch)
+		if !ok {
+			pp = &ptrPatch{}
+			b.update(pp)
+			b.current = pp
+		}
+		updateFunc = func(p diffPatch) { pp.elemPatch = p }
+		currentPatch = pp.elemPatch
+	} else {
+		ip, ok := b.current.(*interfacePatch)
+		if !ok {
+			ip = &interfacePatch{}
+			b.update(ip)
+			b.current = ip
+		}
+		updateFunc = func(p diffPatch) { ip.elemPatch = p }
+		currentPatch = ip.elemPatch
+	}
+	var nextTyp reflect.Type
+	if b.typ.Kind() == reflect.Pointer {
+		nextTyp = b.typ.Elem()
+	}
+	return &PatchBuilder[T]{
+		state:    b.state,
+		typ:      nextTyp,
+		update:   updateFunc,
+		current:  currentPatch,
+		fullPath: b.fullPath,
+		parent:   b.parent,
+		key:      b.key,
+		index:    b.index,
+		isIdx:    b.isIdx,
+	}
+}
+
+// Add appends an addition operation to a slice or map node.
+func (b *PatchBuilder[T]) Add(keyOrIndex, val any) *PatchBuilder[T] {
+	if b.state.err != nil {
+		return b
+	}
+	if b.typ.Kind() == reflect.Slice {
+		i, ok := keyOrIndex.(int)
+		if !ok {
+			b.state.err = fmt.Errorf("index must be int for slices")
+			return b
+		}
+		var v reflect.Value
+		if rv, ok := val.(reflect.Value); ok {
+			v = rv
+		} else {
+			v = reflect.ValueOf(val)
+		}
+
+		if !v.IsValid() {
+			v = reflect.Zero(b.typ.Elem())
+		}
+
+		if v.Type() != b.typ.Elem() {
+			b.state.err = fmt.Errorf("invalid value type: expected %v, got %v", b.typ.Elem(), v.Type())
+			return b
+		}
+		sp, ok := b.current.(*slicePatch)
+		if !ok {
+			sp = &slicePatch{}
+			b.update(sp)
+			b.current = sp
+		}
+		sp.ops = append(sp.ops, sliceOp{
+			Kind:  OpAdd,
+			Index: i,
+			Val:   core.DeepCopyValue(v),
+		})
+		return b
+	}
+	if b.typ.Kind() == reflect.Map {
+		vKey := reflect.ValueOf(keyOrIndex)
+		if vKey.Type() != b.typ.Key() {
+			if s, ok := keyOrIndex.(string); ok {
+				if b.typ.Key().Kind() == reflect.String {
+					vKey = reflect.ValueOf(s)
+				}
+			}
+			if vKey.Type() != b.typ.Key() {
+				b.state.err = fmt.Errorf("invalid key type: expected %v, got %v", b.typ.Key(), vKey.Type())
+				return b
+			}
+		}
+		var vVal reflect.Value
+		if rv, ok := val.(reflect.Value); ok {
+			vVal = rv
+		} else {
+			vVal = reflect.ValueOf(val)
+		}
+
+		if !vVal.IsValid() {
+			vVal = reflect.Zero(b.typ.Elem())
+		}
+
+		if vVal.Type() != b.typ.Elem() {
+			b.state.err = fmt.Errorf("invalid value type: expected %v, got %v", b.typ.Elem(), vVal.Type())
+			return b
+		}
+		mp, ok := b.current.(*mapPatch)
+		if !ok {
+			mp = &mapPatch{
+				added:        make(map[any]reflect.Value),
+				removed:      make(map[any]reflect.Value),
+				modified:     make(map[any]diffPatch),
+				originalKeys: make(map[any]any),
+				keyType:      b.typ.Key(),
+			}
+			b.update(mp)
+			b.current = mp
+		}
+		mp.added[keyOrIndex] = core.DeepCopyValue(vVal)
+		return b
+	}
+	b.state.err = fmt.Errorf("Add only supported on slices and maps, got %v", b.typ.Kind())
+	return b
+}
+
+// Delete appends a deletion operation to a slice or map node.
+func (b *PatchBuilder[T]) Delete(keyOrIndex any, oldVal any) *PatchBuilder[T] {
+	if b.state.err != nil {
+		return b
+	}
+	if b.typ.Kind() == reflect.Slice {
+		i, ok := keyOrIndex.(int)
+		if !ok {
+			b.state.err = fmt.Errorf("index must be int for slices")
+			return b
+		}
+		var vOld reflect.Value
+		if rv, ok := oldVal.(reflect.Value); ok {
+			vOld = rv
+		} else {
+			vOld = reflect.ValueOf(oldVal)
+		}
+
+		if !vOld.IsValid() {
+			vOld = reflect.Zero(b.typ.Elem())
+		}
+
+		if vOld.Type() != b.typ.Elem() {
+			b.state.err = fmt.Errorf("invalid old value type: expected %v, got %v", b.typ.Elem(), vOld.Type())
+			return b
+		}
+		sp, ok := b.current.(*slicePatch)
+		if !ok {
+			sp = &slicePatch{}
+			b.update(sp)
+			b.current = sp
+		}
+		sp.ops = append(sp.ops, sliceOp{
+			Kind:  OpRemove,
+			Index: i,
+			Val:   core.DeepCopyValue(vOld),
+		})
+		return b
+	}
+	if b.typ.Kind() == reflect.Map {
+		vKey := reflect.ValueOf(keyOrIndex)
+		if vKey.Type() != b.typ.Key() {
+			if s, ok := keyOrIndex.(string); ok {
+				if b.typ.Key().Kind() == reflect.String {
+					vKey = reflect.ValueOf(s)
+				}
+			}
+			if vKey.Type() != b.typ.Key() {
+				b.state.err = fmt.Errorf("invalid key type: expected %v, got %v", b.typ.Key(), vKey.Type())
+				return b
+			}
+		}
+		var vOld reflect.Value
+		if rv, ok := oldVal.(reflect.Value); ok {
+			vOld = rv
+		} else {
+			vOld = reflect.ValueOf(oldVal)
+		}
+
+		if !vOld.IsValid() {
+			vOld = reflect.Zero(b.typ.Elem())
+		}
+
+		if vOld.Type() != b.typ.Elem() {
+			b.state.err = fmt.Errorf("invalid old value type: expected %v, got %v", b.typ.Elem(), vOld.Type())
+			return b
+		}
+		mp, ok := b.current.(*mapPatch)
+		if !ok {
+			mp = &mapPatch{
+				added:        make(map[any]reflect.Value),
+				removed:      make(map[any]reflect.Value),
+				modified:     make(map[any]diffPatch),
+				originalKeys: make(map[any]any),
+				keyType:      b.typ.Key(),
+			}
+			b.update(mp)
+			b.current = mp
+		}
+		mp.removed[keyOrIndex] = core.DeepCopyValue(vOld)
+		return b
+	}
+	b.state.err = fmt.Errorf("Delete only supported on slices and maps, got %v", b.typ)
+	return b
+}
+
+// Remove removes the current node from its parent.
+func (b *PatchBuilder[T]) Remove(oldVal any) *PatchBuilder[T] {
+	if b.state.err != nil {
+		return b
+	}
+	if b.parent == nil {
+		b.state.err = fmt.Errorf("cannot remove root node")
+		return b
+	}
+	if b.isIdx {
+		b.parent.Delete(b.index, oldVal)
+	} else {
+		b.parent.Delete(b.key, oldVal)
+	}
+	return b
+}
+
+// FieldOrMapKey returns a new PatchBuilder for the specified field or map key.
+func (b *PatchBuilder[T]) FieldOrMapKey(key string) *PatchBuilder[T] {
+	if b.state.err != nil {
+		return b
+	}
+	curr := b.Elem()
+	if curr.typ != nil && curr.typ.Kind() == reflect.Map {
+		keyType := curr.typ.Key()
+		var keyVal any
+		if keyType.Kind() == reflect.String {
+			keyVal = key
+		} else if keyType.Kind() == reflect.Int {
+			i, err := strconv.Atoi(key)
+			if err != nil {
+				b.state.err = fmt.Errorf("invalid int key for map: %s", key)
+				return b
+			}
+			keyVal = i
+		} else {
+			return curr.MapKey(key)
+		}
+		return curr.MapKey(keyVal)
+	}
+	return curr.Field(key)
 }
 
 // lcpParts returns the longest common prefix of the given paths.
@@ -124,583 +769,4 @@ func lcpParts(paths []string) string {
 		}
 	}
 	return b.String()
-}
-
-func (n *Node) navigateParts(parts []core.PathPart) (*Node, error) {
-	curr := n
-	var err error
-	for _, part := range parts {
-		if part.IsIndex {
-			curr, err = curr.Index(part.Index)
-		} else {
-			curr, err = curr.FieldOrMapKey(part.Key)
-		}
-		if err != nil {
-			return nil, err
-		}
-	}
-	return curr, nil
-}
-
-// Node represents a specific location within a value's structure.
-type Node struct {
-	typ      reflect.Type
-	update   func(diffPatch)
-	current  diffPatch
-	fullPath string
-
-	parent *Node
-	key    string
-	index  int
-	isIdx  bool
-}
-
-// Navigate returns a Node for the specified path relative to the current node.
-// It supports JSON Pointers ("/Field/Sub").
-func (n *Node) Navigate(path string) (*Node, error) {
-	if path == "" {
-		return n, nil
-	}
-	return n.navigateParts(core.ParsePath(path))
-}
-
-// Put replaces the value at the current node without requiring the 'old' value.
-// Strict consistency checks for this specific value will be disabled.
-func (n *Node) Put(value any) *Node {
-	vNew := reflect.ValueOf(value)
-	p := &valuePatch{
-		newVal: core.DeepCopyValue(vNew),
-	}
-	if n.current != nil {
-		p.cond, p.ifCond, p.unlessCond = n.current.conditions()
-	}
-	n.update(p)
-	n.current = p
-	return n
-}
-
-// FieldOrMapKey returns a Node for the specified field or map key.
-func (n *Node) FieldOrMapKey(key string) (*Node, error) {
-	curr := n.Elem()
-	if curr.typ != nil && curr.typ.Kind() == reflect.Map {
-		keyType := curr.typ.Key()
-		var keyVal any
-		if keyType.Kind() == reflect.String {
-			keyVal = key
-		} else if keyType.Kind() == reflect.Int {
-			i, err := strconv.Atoi(key)
-			if err != nil {
-				return nil, fmt.Errorf("invalid int key for map: %s", key)
-			}
-			keyVal = i
-		} else {
-			return curr.MapKey(key)
-		}
-		return curr.MapKey(keyVal)
-	}
-	return curr.Field(key)
-}
-
-// Set replaces the value at the current node. It requires the 'old' value
-// to enable patch reversibility and strict application checking.
-func (n *Node) Set(old, new any) *Node {
-	vOld := reflect.ValueOf(old)
-	vNew := reflect.ValueOf(new)
-	p := &valuePatch{
-		oldVal: core.DeepCopyValue(vOld),
-		newVal: core.DeepCopyValue(vNew),
-	}
-	if n.current != nil {
-		p.cond, p.ifCond, p.unlessCond = n.current.conditions()
-	}
-	n.update(p)
-	n.current = p
-	return n
-}
-
-// Test adds a test operation to the current node. The patch application
-// will fail if the value at this node does not match the expected value.
-func (n *Node) Test(expected any) *Node {
-	vExpected := reflect.ValueOf(expected)
-	p := &testPatch{
-		expected: core.DeepCopyValue(vExpected),
-	}
-	if n.current != nil {
-		p.cond, p.ifCond, p.unlessCond = n.current.conditions()
-	}
-	n.update(p)
-	n.current = p
-	return n
-}
-
-// Copy copies a value from another path to the current node.
-func (n *Node) Copy(from string) *Node {
-	absPath := n.fullPath
-	if absPath == "" {
-		absPath = "/"
-	} else if absPath[0] != '/' {
-		absPath = "/" + absPath
-	}
-
-	absFrom := from
-	if absFrom == "" {
-		absFrom = "/"
-	} else if absFrom[0] != '/' {
-		absFrom = "/" + absFrom
-	}
-
-	p := &copyPatch{
-		from: absFrom,
-		path: absPath,
-	}
-	if n.current != nil {
-		p.cond, p.ifCond, p.unlessCond = n.current.conditions()
-	}
-	n.update(p)
-	n.current = p
-	return n
-}
-
-// Move moves a value from another path to the current node.
-func (n *Node) Move(from string) *Node {
-	absPath := n.fullPath
-	if absPath == "" {
-		absPath = "/"
-	} else if absPath[0] != '/' {
-		absPath = "/" + absPath
-	}
-
-	absFrom := from
-	if absFrom == "" {
-		absFrom = "/"
-	} else if absFrom[0] != '/' {
-		absFrom = "/" + absFrom
-	}
-
-	p := &movePatch{
-		from: absFrom,
-		path: absPath,
-	}
-	if n.current != nil {
-		p.cond, p.ifCond, p.unlessCond = n.current.conditions()
-	}
-	n.update(p)
-	n.current = p
-	return n
-}
-
-// Log adds a log operation to the current node. It prints a message
-// and the current value at the node during patch application.
-func (n *Node) Log(message string) *Node {
-	p := &logPatch{
-		message: message,
-	}
-	if n.current != nil {
-		p.cond, p.ifCond, p.unlessCond = n.current.conditions()
-	}
-	n.update(p)
-	n.current = p
-	return n
-}
-
-func (n *Node) ensurePatch() {
-	if n.current != nil {
-		return
-	}
-	var p diffPatch
-	if n.typ == nil {
-		p = &valuePatch{}
-	} else {
-		switch n.typ.Kind() {
-		case reflect.Struct:
-			p = &structPatch{fields: make(map[string]diffPatch)}
-		case reflect.Slice:
-			p = &slicePatch{}
-		case reflect.Map:
-			p = &mapPatch{
-				added:        make(map[any]reflect.Value),
-				removed:      make(map[any]reflect.Value),
-				modified:     make(map[any]diffPatch),
-				originalKeys: make(map[any]any),
-				keyType:      n.typ.Key(),
-			}
-		case reflect.Pointer:
-			p = &ptrPatch{}
-		case reflect.Interface:
-			p = &interfacePatch{}
-		case reflect.Array:
-			p = &arrayPatch{indices: make(map[int]diffPatch)}
-		default:
-			p = &valuePatch{}
-		}
-	}
-	n.current = p
-	n.update(p)
-}
-
-// WithCondition attaches a local condition to the current node.
-// This condition is evaluated against the value at this node during ApplyChecked.
-func (n *Node) WithCondition(c any) *Node {
-	n.ensurePatch()
-	if n.current != nil {
-		n.current.setCondition(c)
-	}
-	return n
-}
-
-// If attaches an 'if' condition to the current node. If the condition
-// evaluates to false, the operation at this node is skipped.
-func (n *Node) If(c any) *Node {
-	n.ensurePatch()
-	if n.current != nil {
-		n.current.setIfCondition(c)
-	}
-	return n
-}
-
-// Unless attaches an 'unless' condition to the current node. If the condition
-// evaluates to true, the operation at this node is skipped.
-func (n *Node) Unless(c any) *Node {
-	n.ensurePatch()
-	if n.current != nil {
-		n.current.setUnlessCondition(c)
-	}
-	return n
-}
-
-// Field returns a Node for the specified struct field. It automatically descends
-// into pointers and interfaces if necessary.
-func (n *Node) Field(name string) (*Node, error) {
-	n = n.Elem()
-	if n.typ.Kind() != reflect.Struct {
-		return nil, fmt.Errorf("not a struct: %v", n.typ)
-	}
-	field, ok := n.typ.FieldByName(name)
-	if !ok {
-		return nil, fmt.Errorf("field not found: %s", name)
-	}
-	sp, ok := n.current.(*structPatch)
-	if !ok {
-		sp = &structPatch{fields: make(map[string]diffPatch)}
-		n.update(sp)
-		n.current = sp
-	}
-	return &Node{
-		typ: field.Type,
-		update: func(p diffPatch) {
-			sp.fields[name] = p
-		},
-		current:  sp.fields[name],
-		fullPath: n.fullPath + "/" + name,
-		parent:   n,
-		key:      name,
-	}, nil
-}
-
-// Index returns a Node for the specified array or slice index.
-func (n *Node) Index(i int) (*Node, error) {
-	n = n.Elem()
-	kind := n.typ.Kind()
-	if kind != reflect.Slice && kind != reflect.Array {
-		return nil, fmt.Errorf("not a slice or array: %v", n.typ)
-	}
-	if kind == reflect.Array && (i < 0 || i >= n.typ.Len()) {
-		return nil, fmt.Errorf("index out of bounds: %d", i)
-	}
-	if kind == reflect.Array {
-		ap, ok := n.current.(*arrayPatch)
-		if !ok {
-			ap = &arrayPatch{indices: make(map[int]diffPatch)}
-			n.update(ap)
-			n.current = ap
-		}
-		return &Node{
-			typ: n.typ.Elem(),
-			update: func(p diffPatch) {
-				ap.indices[i] = p
-			},
-			current:  ap.indices[i],
-			fullPath: n.fullPath + "/" + strconv.Itoa(i),
-			parent:   n,
-			index:    i,
-			isIdx:    true,
-		}, nil
-	}
-	sp, ok := n.current.(*slicePatch)
-	if !ok {
-		sp = &slicePatch{}
-		n.update(sp)
-		n.current = sp
-	}
-	var modOp *sliceOp
-	for j := range sp.ops {
-		if sp.ops[j].Index == i && sp.ops[j].Kind == OpReplace {
-			modOp = &sp.ops[j]
-			break
-		}
-	}
-	if modOp == nil {
-		sp.ops = append(sp.ops, sliceOp{
-			Kind:  OpReplace,
-			Index: i,
-		})
-		modOp = &sp.ops[len(sp.ops)-1]
-	}
-	return &Node{
-		typ: n.typ.Elem(),
-		update: func(p diffPatch) {
-			modOp.Patch = p
-		},
-		current:  modOp.Patch,
-		fullPath: n.fullPath + "/" + strconv.Itoa(i),
-		parent:   n,
-		index:    i,
-		isIdx:    true,
-	}, nil
-}
-
-// MapKey returns a Node for the specified map key.
-func (n *Node) MapKey(key any) (*Node, error) {
-	n = n.Elem()
-	if n.typ.Kind() != reflect.Map {
-		return nil, fmt.Errorf("not a map: %v", n.typ)
-	}
-	vKey := reflect.ValueOf(key)
-	if vKey.Type() != n.typ.Key() {
-		if _, ok := key.(string); ok {
-			// Special handling for canonical keys during navigation
-		} else {
-			return nil, fmt.Errorf("invalid key type: expected %v, got %v", n.typ.Key(), vKey.Type())
-		}
-	}
-	mp, ok := n.current.(*mapPatch)
-	if !ok {
-		mp = &mapPatch{
-			added:    make(map[any]reflect.Value),
-			removed:  make(map[any]reflect.Value),
-			modified: make(map[any]diffPatch),
-			keyType:  n.typ.Key(),
-		}
-		n.update(mp)
-		n.current = mp
-	}
-	return &Node{
-		typ: n.typ.Elem(),
-		update: func(p diffPatch) {
-			mp.modified[key] = p
-		},
-		current:  mp.modified[key],
-		fullPath: n.fullPath + "/" + fmt.Sprintf("%v", key),
-		parent:   n,
-		key:      fmt.Sprintf("%v", key),
-	}, nil
-}
-
-// Elem returns a Node for the element type of a pointer or interface.
-func (n *Node) Elem() *Node {
-	if n.typ == nil || (n.typ.Kind() != reflect.Pointer && n.typ.Kind() != reflect.Interface) {
-		return n
-	}
-	updateFunc := n.update
-	var currentPatch diffPatch
-	if n.typ.Kind() == reflect.Pointer {
-		pp, ok := n.current.(*ptrPatch)
-		if !ok {
-			pp = &ptrPatch{}
-			n.update(pp)
-			n.current = pp
-		}
-		updateFunc = func(p diffPatch) { pp.elemPatch = p }
-		currentPatch = pp.elemPatch
-	} else {
-		ip, ok := n.current.(*interfacePatch)
-		if !ok {
-			ip = &interfacePatch{}
-			n.update(ip)
-			n.current = ip
-		}
-		updateFunc = func(p diffPatch) { ip.elemPatch = p }
-		currentPatch = ip.elemPatch
-	}
-	var nextTyp reflect.Type
-	if n.typ.Kind() == reflect.Pointer {
-		nextTyp = n.typ.Elem()
-	}
-	return &Node{
-		typ:      nextTyp,
-		update:   updateFunc,
-		current:  currentPatch,
-		fullPath: n.fullPath,
-		parent:   n.parent,
-		key:      n.key,
-		index:    n.index,
-		isIdx:    n.isIdx,
-	}
-}
-
-// Add appends an addition operation to a slice or map node.
-func (n *Node) Add(keyOrIndex, val any) error {
-	if n.typ.Kind() == reflect.Slice {
-		i, ok := keyOrIndex.(int)
-		if !ok {
-			return fmt.Errorf("index must be int for slices")
-		}
-		var v reflect.Value
-		if rv, ok := val.(reflect.Value); ok {
-			v = rv
-		} else {
-			v = reflect.ValueOf(val)
-		}
-
-		if !v.IsValid() {
-			v = reflect.Zero(n.typ.Elem())
-		}
-
-		if v.Type() != n.typ.Elem() {
-			return fmt.Errorf("invalid value type: expected %v, got %v", n.typ.Elem(), v.Type())
-		}
-		sp, ok := n.current.(*slicePatch)
-		if !ok {
-			sp = &slicePatch{}
-			n.update(sp)
-			n.current = sp
-		}
-		sp.ops = append(sp.ops, sliceOp{
-			Kind:  OpAdd,
-			Index: i,
-			Val:   core.DeepCopyValue(v),
-		})
-		return nil
-	}
-	if n.typ.Kind() == reflect.Map {
-		vKey := reflect.ValueOf(keyOrIndex)
-		if vKey.Type() != n.typ.Key() {
-			if s, ok := keyOrIndex.(string); ok {
-				if n.typ.Key().Kind() == reflect.String {
-					vKey = reflect.ValueOf(s)
-				}
-			}
-			if vKey.Type() != n.typ.Key() {
-				return fmt.Errorf("invalid key type: expected %v, got %v", n.typ.Key(), vKey.Type())
-			}
-		}
-		var vVal reflect.Value
-		if rv, ok := val.(reflect.Value); ok {
-			vVal = rv
-		} else {
-			vVal = reflect.ValueOf(val)
-		}
-
-		if !vVal.IsValid() {
-			vVal = reflect.Zero(n.typ.Elem())
-		}
-
-		if vVal.Type() != n.typ.Elem() {
-			return fmt.Errorf("invalid value type: expected %v, got %v", n.typ.Elem(), vVal.Type())
-		}
-		mp, ok := n.current.(*mapPatch)
-		if !ok {
-			mp = &mapPatch{
-				added:        make(map[any]reflect.Value),
-				removed:      make(map[any]reflect.Value),
-				modified:     make(map[any]diffPatch),
-				originalKeys: make(map[any]any),
-				keyType:      n.typ.Key(),
-			}
-			n.update(mp)
-			n.current = mp
-		}
-		mp.added[keyOrIndex] = core.DeepCopyValue(vVal)
-		return nil
-	}
-	return fmt.Errorf("Add only supported on slices and maps, got %v", n.typ.Kind())
-}
-
-// Delete appends a deletion operation to a slice or map node.
-func (n *Node) Delete(keyOrIndex any, oldVal any) error {
-	if n.typ.Kind() == reflect.Slice {
-		i, ok := keyOrIndex.(int)
-		if !ok {
-			return fmt.Errorf("index must be int for slices")
-		}
-		var vOld reflect.Value
-		if rv, ok := oldVal.(reflect.Value); ok {
-			vOld = rv
-		} else {
-			vOld = reflect.ValueOf(oldVal)
-		}
-
-		if !vOld.IsValid() {
-			vOld = reflect.Zero(n.typ.Elem())
-		}
-
-		if vOld.Type() != n.typ.Elem() {
-			return fmt.Errorf("invalid old value type: expected %v, got %v", n.typ.Elem(), vOld.Type())
-		}
-		sp, ok := n.current.(*slicePatch)
-		if !ok {
-			sp = &slicePatch{}
-			n.update(sp)
-			n.current = sp
-		}
-		sp.ops = append(sp.ops, sliceOp{
-			Kind:  OpRemove,
-			Index: i,
-			Val:   core.DeepCopyValue(vOld),
-		})
-		return nil
-	}
-	if n.typ.Kind() == reflect.Map {
-		vKey := reflect.ValueOf(keyOrIndex)
-		if vKey.Type() != n.typ.Key() {
-			if s, ok := keyOrIndex.(string); ok {
-				if n.typ.Key().Kind() == reflect.String {
-					vKey = reflect.ValueOf(s)
-				}
-			}
-			if vKey.Type() != n.typ.Key() {
-				return fmt.Errorf("invalid key type: expected %v, got %v", n.typ.Key(), vKey.Type())
-			}
-		}
-		var vOld reflect.Value
-		if rv, ok := oldVal.(reflect.Value); ok {
-			vOld = rv
-		} else {
-			vOld = reflect.ValueOf(oldVal)
-		}
-
-		if !vOld.IsValid() {
-			vOld = reflect.Zero(n.typ.Elem())
-		}
-
-		if vOld.Type() != n.typ.Elem() {
-			return fmt.Errorf("invalid old value type: expected %v, got %v", n.typ.Elem(), vOld.Type())
-		}
-		mp, ok := n.current.(*mapPatch)
-		if !ok {
-			mp = &mapPatch{
-				added:        make(map[any]reflect.Value),
-				removed:      make(map[any]reflect.Value),
-				modified:     make(map[any]diffPatch),
-				originalKeys: make(map[any]any),
-				keyType:      n.typ.Key(),
-			}
-			n.update(mp)
-			n.current = mp
-		}
-		mp.removed[keyOrIndex] = core.DeepCopyValue(vOld)
-		return nil
-	}
-	return fmt.Errorf("Delete only supported on slices and maps, got %v", n.typ)
-}
-
-// Remove removes the current node from its parent.
-func (n *Node) Remove(oldVal any) error {
-	if n.parent == nil {
-		return fmt.Errorf("cannot remove root node")
-	}
-	if n.isIdx {
-		return n.parent.Delete(n.index, oldVal)
-	}
-	return n.parent.Delete(n.key, oldVal)
 }

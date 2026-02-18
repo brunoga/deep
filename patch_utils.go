@@ -16,83 +16,51 @@ func applyToBuilder[T any](b *PatchBuilder[T], op OpInfo) error {
 
 	switch op.Kind {
 	case OpReplace:
-		node, err := b.Root().Navigate(op.Path)
-		if err != nil {
-			return fmt.Errorf("failed to navigate to %s: %w", op.Path, err)
-		}
-		node.Put(op.Val)
+		b.Navigate(op.Path).Put(op.Val)
 
 	case OpAdd:
-		// Navigate to parent to call Add
 		parentPath, lastPart, err := core.DeepPath(op.Path).ResolveParentPath()
 		if err != nil {
 			return fmt.Errorf("invalid path for Add %s: %w", op.Path, err)
 		}
 
-		node, err := b.Root().Navigate(string(parentPath))
-		if err != nil {
-			return fmt.Errorf("failed to navigate to parent %s: %w", parentPath, err)
-		}
-
+		node := b.Navigate(string(parentPath))
 		if lastPart.IsIndex {
-			err = node.Add(lastPart.Index, op.Val)
+			node.Add(lastPart.Index, op.Val)
 		} else {
-			err = node.Add(lastPart.Key, op.Val)
-		}
-		if err != nil {
-			return fmt.Errorf("failed to apply Add at %s: %w", op.Path, err)
+			node.Add(lastPart.Key, op.Val)
 		}
 
 	case OpRemove:
-		// Navigate to parent to call Delete
 		parentPath, lastPart, err := core.DeepPath(op.Path).ResolveParentPath()
 		if err != nil {
 			return fmt.Errorf("invalid path for Remove %s: %w", op.Path, err)
 		}
 
-		node, err := b.Root().Navigate(string(parentPath))
-		if err != nil {
-			return fmt.Errorf("failed to navigate to parent %s: %w", parentPath, err)
-		}
-
+		node := b.Navigate(string(parentPath))
 		if lastPart.IsIndex {
-			err = node.Delete(lastPart.Index, op.Val)
+			node.Delete(lastPart.Index, op.Val)
 		} else {
-			err = node.Delete(lastPart.Key, op.Val)
-		}
-		if err != nil {
-			return fmt.Errorf("failed to apply Remove at %s: %w", op.Path, err)
+			node.Delete(lastPart.Key, op.Val)
 		}
 
 	case OpMove:
-		node, err := b.Root().Navigate(op.Path)
-		if err != nil {
-			return fmt.Errorf("failed to navigate to %s: %w", op.Path, err)
-		}
-		node.Move(op.From)
+		b.Navigate(op.Path).Move(op.From)
 
 	case OpCopy:
-		node, err := b.Root().Navigate(op.Path)
-		if err != nil {
-			return fmt.Errorf("failed to navigate to %s: %w", op.Path, err)
-		}
-		node.Copy(op.From)
+		b.Navigate(op.Path).Copy(op.From)
 
 	case OpTest:
-		node, err := b.Root().Navigate(op.Path)
-		if err != nil {
-			return fmt.Errorf("failed to navigate to %s: %w", op.Path, err)
-		}
-		node.Test(op.Val)
+		b.Navigate(op.Path).Test(op.Val)
 
 	case OpLog:
-		node, err := b.Root().Navigate(op.Path)
-		if err != nil {
-			return fmt.Errorf("failed to navigate to %s: %w", op.Path, err)
-		}
 		if msg, ok := op.Val.(string); ok {
-			node.Log(msg)
+			b.Navigate(op.Path).Log(msg)
 		}
+	}
+
+	if b.state.err != nil {
+		return b.state.err
 	}
 	return nil
 }

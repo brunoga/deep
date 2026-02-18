@@ -28,12 +28,7 @@ func main() {
 	builder := deep.NewPatchBuilder[Account]()
 
 	// Set the new status
-	statusNode, err := builder.Root().Field("Status")
-	if err != nil {
-		fmt.Printf("Error navigating to Status: %v\n", err)
-		return
-	}
-	statusNode.Set("Pending", "Active")
+	builder.Field("Status").Set("Pending", "Active")
 
 	// Attach a condition: ONLY apply this field update if Balance > 0.
 	builder.AddCondition("Balance > 0.0")

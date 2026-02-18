@@ -117,26 +117,16 @@ func TestPatch_ConditionsExhaustive(t *testing.T) {
 		Arr [1]InnerC
 	}
 	builder := NewPatchBuilder[DataC]()
-	root := builder.Root()
 
 	c := cond.Eq[DataC]("A", 1)
 
-	root.If(c).Unless(c).Test(DataC{A: 1})
+	builder.If(c).Unless(c).Test(DataC{A: 1})
 
-	nodeP, _ := root.Field("P")
-	nodeP.If(c).Unless(c)
-
-	nodeI, _ := root.Field("I")
-	nodeI.If(c).Unless(c)
-
-	nodeM, _ := root.Field("M")
-	nodeM.If(c).Unless(c)
-
-	nodeS, _ := root.Field("S")
-	nodeS.If(c).Unless(c)
-
-	nodeArr, _ := root.Field("Arr")
-	nodeArr.If(c).Unless(c)
+	builder.Field("P").If(c).Unless(c)
+	builder.Field("I").If(c).Unless(c)
+	builder.Field("M").If(c).Unless(c)
+	builder.Field("S").If(c).Unless(c)
+	builder.Field("Arr").If(c).Unless(c)
 
 	patch, _ := builder.Build()
 	if patch == nil {
@@ -177,24 +167,11 @@ func TestPatch_ToJSONPatch_Exhaustive(t *testing.T) {
 	}
 
 	builder := NewPatchBuilder[Data]()
-	root := builder.Root()
 
-	nodeP, _ := root.Field("P")
-	nodePV, _ := nodeP.Elem().Field("V")
-	nodePV.Set(1, 2)
-
-	nodeI, _ := root.Field("I")
-	nodeI.Elem().Set(1, 2)
-
-	nodeA, _ := root.Field("A")
-	nodeAI, _ := nodeA.Index(0)
-	nodeAIV, _ := nodeAI.Field("V")
-	nodeAIV.Set(1, 2)
-
-	nodeM, _ := root.Field("M")
-	nodeMK, _ := nodeM.MapKey("k")
-	nodeMKV, _ := nodeMK.Field("V")
-	nodeMKV.Set(1, 2)
+	builder.Field("P").Elem().Field("V").Set(1, 2)
+	builder.Field("I").Elem().Set(1, 2)
+	builder.Field("A").Index(0).Field("V").Set(1, 2)
+	builder.Field("M").MapKey("k").Field("V").Set(1, 2)
 
 	patch, _ := builder.Build()
 	patch.ToJSONPatch()
@@ -385,18 +362,10 @@ type customTestStruct struct {
 	V int
 }
 
-func (c customTestStruct) MustDiff(other customTestStruct) (Patch[customTestStruct], error) {
-	b := NewPatchBuilder[customTestStruct]()
-	node, _ := b.Root().Field("V")
-	node.Set(c.V, other.V)
-	return b.Build()
-}
-
 func TestCustomDiffPatch_ToJSONPatch(t *testing.T) {
-	b := NewPatchBuilder[customTestStruct]()
-	node, _ := b.Root().Field("V")
-	node.Set(1, 2)
-	patch, _ := b.Build()
+	builder := NewPatchBuilder[customTestStruct]()
+	builder.Field("V").Set(1, 2)
+	patch, _ := builder.Build()
 
 	// Manually wrap it in customDiffPatch
 	custom := &customDiffPatch{
