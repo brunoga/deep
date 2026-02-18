@@ -39,9 +39,7 @@ func (p DeepPath) ResolveParentPath() (DeepPath, PathPart, error) {
 		if part.IsIndex {
 			b.WriteString(strconv.Itoa(part.Index))
 		} else {
-			key := strings.ReplaceAll(part.Key, "~", "~0")
-			key = strings.ReplaceAll(key, "/", "~1")
-			b.WriteString(key)
+			b.WriteString(EscapeKey(part.Key))
 		}
 	}
 	return DeepPath(b.String()), last, nil
@@ -360,9 +358,7 @@ func (p DeepPath) StripParts(prefix []PathPart) DeepPath {
 		if part.IsIndex {
 			res.WriteString(strconv.Itoa(part.Index))
 		} else {
-			key := strings.ReplaceAll(part.Key, "~", "~0")
-			key = strings.ReplaceAll(key, "/", "~1")
-			res.WriteString(key)
+			res.WriteString(EscapeKey(part.Key))
 		}
 	}
 	return DeepPath(res.String())
@@ -418,13 +414,16 @@ func NormalizePath(path string) string {
 		if p.IsIndex {
 			b.WriteString(strconv.Itoa(p.Index))
 		} else {
-			// Escape JSON Pointer tokens
-			key := strings.ReplaceAll(p.Key, "~", "~0")
-			key = strings.ReplaceAll(key, "/", "~1")
-			b.WriteString(key)
+			b.WriteString(EscapeKey(p.Key))
 		}
 	}
 	return b.String()
+}
+
+func EscapeKey(key string) string {
+	key = strings.ReplaceAll(key, "~", "~0")
+	key = strings.ReplaceAll(key, "/", "~1")
+	return key
 }
 
 // JoinPath joins two JSON Pointer paths with a slash.

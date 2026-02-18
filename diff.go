@@ -107,7 +107,7 @@ func (ctx *diffContext) buildPath() string {
 		if i > 0 {
 			b.WriteByte('/')
 		}
-		b.WriteString(s)
+		b.WriteString(core.EscapeKey(s))
 	}
 	return b.String()
 }
@@ -780,7 +780,8 @@ func (d *Differ) diffMap(a, b reflect.Value, ctx *diffContext) (diffPatch, error
 	}
 
 	for ck, vB := range bByCanonical {
-		currentPath := core.JoinPath(ctx.buildPath(), fmt.Sprintf("%v", ck))
+		// Escape the key before joining
+		currentPath := core.JoinPath(ctx.buildPath(), core.EscapeKey(fmt.Sprintf("%v", ck)))
 		if len(d.config.ignoredPaths) == 0 || !d.config.ignoredPaths[currentPath] {
 			if fromPath, isMove, ok := d.tryDetectMove(vB, currentPath, ctx); ok {
 				if modified == nil {
