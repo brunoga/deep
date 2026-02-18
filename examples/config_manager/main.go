@@ -74,8 +74,8 @@ func (m *ConfigManager) Update(newConfig SystemConfig) error {
 	// Rule A: Timeout must not exceed 60 seconds.
 	// Rule B: Port must be in the "safe" range ( > 1024).
 	builder := deep.NewPatchBuilder[SystemConfig]()
-	builder.AddCondition("Server.Timeout <= 60")
-	builder.AddCondition("Server.Port > 1024")
+	builder.AddCondition("/Server/Timeout <= 60")
+	builder.AddCondition("/Server/Port > 1024")
 
 	validationRules, err := builder.Build()
 	if err != nil {

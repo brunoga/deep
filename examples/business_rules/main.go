@@ -31,7 +31,7 @@ func main() {
 	builder.Field("Status").Set("Pending", "Active")
 
 	// Attach a condition: ONLY apply this field update if Balance > 0.
-	builder.AddCondition("Balance > 0.0")
+	builder.AddCondition("/Balance > 0.0")
 
 	patch, err := builder.Build()
 	if err != nil {
@@ -52,7 +52,12 @@ func main() {
 	}
 
 	// 4. Now let's update the balance and try again.
-	acc.Balance = 100.0
+	// Reset to initial for clean demonstration (since ApplyChecked is not atomic across fields)
+	acc = Account{
+		ID:      "ACC-123",
+		Balance: 100.0,
+		Status:  "Pending",
+	}
 	fmt.Printf("\nUpdated Account Balance: %+v\n", acc)
 	fmt.Println("Attempting activation with 100.0 balance...")
 
