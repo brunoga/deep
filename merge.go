@@ -12,8 +12,8 @@ import (
 // with different values or cause structural inconsistencies (tree conflicts).
 type Conflict struct {
 	Path  string
-	OpA   opInfo
-	OpB   opInfo
+	OpA   OpInfo
+	OpB   OpInfo
 	Base  any
 }
 
@@ -29,7 +29,7 @@ func Merge[T any](patches ...Patch[T]) (Patch[T], []Conflict, error) {
 	}
 
 	// 1. Flatten
-	opsByPath := make(map[string]opInfo)
+	opsByPath := make(map[string]OpInfo)
 	var conflicts []Conflict
 	var orderedPaths []string
 
@@ -38,7 +38,7 @@ func Merge[T any](patches ...Patch[T]) (Patch[T], []Conflict, error) {
 
 	for i, p := range patches {
 		err := p.Walk(func(path string, kind OpKind, oldVal, newVal any) error {
-			op := opInfo{
+			op := OpInfo{
 				Kind: kind,
 				Path: path,
 				Val:  newVal,
@@ -55,7 +55,7 @@ func Merge[T any](patches ...Patch[T]) (Patch[T], []Conflict, error) {
 				if strings.HasPrefix(path, removed+"/") {
 					conflicts = append(conflicts, Conflict{
 						Path: path,
-						OpA:  opInfo{Kind: OpRemove, Path: removed},
+						OpA:  OpInfo{Kind: OpRemove, Path: removed},
 						OpB:  op,
 					})
 				}

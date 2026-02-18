@@ -156,7 +156,7 @@ type Node struct {
 }
 
 // Navigate returns a Node for the specified path relative to the current node.
-// It supports both Go-style paths ("Field.Sub") and JSON Pointers ("/Field/Sub").
+// It supports JSON Pointers ("/Field/Sub").
 func (n *Node) Navigate(path string) (*Node, error) {
 	if path == "" {
 		return n, nil
@@ -538,37 +538,82 @@ func (n *Node) Elem() *Node {
 	}
 }
 
-// Add appends an addition operation to a slice node.
-func (n *Node) Add(i int, val any) error {
-	if n.typ.Kind() != reflect.Slice {
-		return fmt.Errorf("Add only supported on slices, got %v", n.typ)
-	}
-	var v reflect.Value
-	if rv, ok := val.(reflect.Value); ok {
-		v = rv
-	} else {
-		v = reflect.ValueOf(val)
-	}
+// Add appends an addition operation to a slice or map node.
+func (n *Node) Add(keyOrIndex, val any) error {
+	if n.typ.Kind() == reflect.Slice {
+		i, ok := keyOrIndex.(int)
+		if !ok {
+			return fmt.Errorf("index must be int for slices")
+		}
+		var v reflect.Value
+		if rv, ok := val.(reflect.Value); ok {
+			v = rv
+		} else {
+			v = reflect.ValueOf(val)
+		}
 
-	if !v.IsValid() {
-		v = reflect.Zero(n.typ.Elem())
-	}
+		if !v.IsValid() {
+			v = reflect.Zero(n.typ.Elem())
+		}
 
-	if v.Type() != n.typ.Elem() {
-		return fmt.Errorf("invalid value type: expected %v, got %v", n.typ.Elem(), v.Type())
+		if v.Type() != n.typ.Elem() {
+			return fmt.Errorf("invalid value type: expected %v, got %v", n.typ.Elem(), v.Type())
+		}
+		sp, ok := n.current.(*slicePatch)
+		if !ok {
+			sp = &slicePatch{}
+			n.update(sp)
+			n.current = sp
+		}
+		sp.ops = append(sp.ops, sliceOp{
+			Kind:  OpAdd,
+			Index: i,
+			Val:   core.DeepCopyValue(v),
+		})
+		return nil
 	}
-	sp, ok := n.current.(*slicePatch)
-	if !ok {
-		sp = &slicePatch{}
-		n.update(sp)
-		n.current = sp
+	if n.typ.Kind() == reflect.Map {
+		vKey := reflect.ValueOf(keyOrIndex)
+		if vKey.Type() != n.typ.Key() {
+			if s, ok := keyOrIndex.(string); ok {
+				if n.typ.Key().Kind() == reflect.String {
+					vKey = reflect.ValueOf(s)
+				}
+			}
+			if vKey.Type() != n.typ.Key() {
+				return fmt.Errorf("invalid key type: expected %v, got %v", n.typ.Key(), vKey.Type())
+			}
+		}
+		var vVal reflect.Value
+		if rv, ok := val.(reflect.Value); ok {
+			vVal = rv
+		} else {
+			vVal = reflect.ValueOf(val)
+		}
+
+		if !vVal.IsValid() {
+			vVal = reflect.Zero(n.typ.Elem())
+		}
+
+		if vVal.Type() != n.typ.Elem() {
+			return fmt.Errorf("invalid value type: expected %v, got %v", n.typ.Elem(), vVal.Type())
+		}
+		mp, ok := n.current.(*mapPatch)
+		if !ok {
+			mp = &mapPatch{
+				added:        make(map[any]reflect.Value),
+				removed:      make(map[any]reflect.Value),
+				modified:     make(map[any]diffPatch),
+				originalKeys: make(map[any]any),
+				keyType:      n.typ.Key(),
+			}
+			n.update(mp)
+			n.current = mp
+		}
+		mp.added[keyOrIndex] = core.DeepCopyValue(vVal)
+		return nil
 	}
-	sp.ops = append(sp.ops, sliceOp{
-		Kind:  OpAdd,
-		Index: i,
-		Val:   core.DeepCopyValue(v),
-	})
-	return nil
+	return fmt.Errorf("Add only supported on slices and maps, got %v", n.typ.Kind())
 }
 
 // Delete appends a deletion operation to a slice or map node.
@@ -647,52 +692,6 @@ func (n *Node) Delete(keyOrIndex any, oldVal any) error {
 		return nil
 	}
 	return fmt.Errorf("Delete only supported on slices and maps, got %v", n.typ)
-}
-
-// AddMapEntry adds a new entry to a map node.
-func (n *Node) AddMapEntry(key, val any) error {
-	if n.typ.Kind() != reflect.Map {
-		return fmt.Errorf("AddMapEntry only supported on maps, got %v", n.typ)
-	}
-	vKey := reflect.ValueOf(key)
-	if vKey.Type() != n.typ.Key() {
-		if s, ok := key.(string); ok {
-			if n.typ.Key().Kind() == reflect.String {
-				vKey = reflect.ValueOf(s)
-			}
-		}
-		if vKey.Type() != n.typ.Key() {
-			return fmt.Errorf("invalid key type: expected %v, got %v", n.typ.Key(), vKey.Type())
-		}
-	}
-	var vVal reflect.Value
-	if rv, ok := val.(reflect.Value); ok {
-		vVal = rv
-	} else {
-		vVal = reflect.ValueOf(val)
-	}
-
-	if !vVal.IsValid() {
-		vVal = reflect.Zero(n.typ.Elem())
-	}
-
-	if vVal.Type() != n.typ.Elem() {
-		return fmt.Errorf("invalid value type: expected %v, got %v", n.typ.Elem(), vVal.Type())
-	}
-	mp, ok := n.current.(*mapPatch)
-	if !ok {
-		mp = &mapPatch{
-			added:        make(map[any]reflect.Value),
-			removed:      make(map[any]reflect.Value),
-			modified:     make(map[any]diffPatch),
-			originalKeys: make(map[any]any),
-			keyType:      n.typ.Key(),
-		}
-		n.update(mp)
-		n.current = mp
-	}
-	mp.added[key] = core.DeepCopyValue(vVal)
-	return nil
 }
 
 // Remove removes the current node from its parent.

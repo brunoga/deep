@@ -8,7 +8,7 @@ import (
 
 // applyToBuilder recursively applies an operation to a PatchBuilder.
 // This is used by patch.Reverse and patch.Merge to construct new patches.
-func applyToBuilder[T any](b *PatchBuilder[T], op opInfo) error {
+func applyToBuilder[T any](b *PatchBuilder[T], op OpInfo) error {
 	// Apply conditions if present.
 	if op.Conditions != nil {
 		// Placeholder for condition re-attachment
@@ -23,7 +23,7 @@ func applyToBuilder[T any](b *PatchBuilder[T], op opInfo) error {
 		node.Put(op.Val)
 
 	case OpAdd:
-		// Navigate to parent to call Add/AddMapEntry
+		// Navigate to parent to call Add
 		parentPath, lastPart, err := core.DeepPath(op.Path).ResolveParentPath()
 		if err != nil {
 			return fmt.Errorf("invalid path for Add %s: %w", op.Path, err)
@@ -37,7 +37,7 @@ func applyToBuilder[T any](b *PatchBuilder[T], op opInfo) error {
 		if lastPart.IsIndex {
 			err = node.Add(lastPart.Index, op.Val)
 		} else {
-			err = node.AddMapEntry(lastPart.Key, op.Val)
+			err = node.Add(lastPart.Key, op.Val)
 		}
 		if err != nil {
 			return fmt.Errorf("failed to apply Add at %s: %w", op.Path, err)
@@ -97,8 +97,8 @@ func applyToBuilder[T any](b *PatchBuilder[T], op opInfo) error {
 	return nil
 }
 
-// opInfo represents a flattened operation from a patch.
-type opInfo struct {
+// OpInfo represents a flattened operation from a patch.
+type OpInfo struct {
 	Kind       OpKind
 	Path       string
 	From       string // For Move/Copy

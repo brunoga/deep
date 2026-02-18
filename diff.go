@@ -117,13 +117,12 @@ var (
 	mu            sync.RWMutex
 )
 
-// RegisterCustomDiff registers a custom diff function for a specific type.
-func RegisterCustomDiff[T any](d *Differ, fn func(a, b T) (Patch[T], error)) {
-	if d == nil {
-		mu.Lock()
-		d = defaultDiffer
-		mu.Unlock()
-	}
+// RegisterCustomDiff registers a custom diff function for a specific type globally.
+func RegisterCustomDiff[T any](fn func(a, b T) (Patch[T], error)) {
+	mu.Lock()
+	d := defaultDiffer
+	mu.Unlock()
+	
 	var t T
 	typ := reflect.TypeOf(t)
 	d.customDiffs[typ] = func(a, b reflect.Value, ctx *diffContext) (diffPatch, error) {

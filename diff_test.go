@@ -494,8 +494,7 @@ func TestRegisterCustomDiff(t *testing.T) {
 		Val string
 	}
 
-	d := NewDiffer()
-	RegisterCustomDiff(d, func(a, b Custom) (Patch[Custom], error) {
+	RegisterCustomDiff(func(a, b Custom) (Patch[Custom], error) {
 		if a.Val == b.Val {
 			return nil, nil
 		}
@@ -508,7 +507,7 @@ func TestRegisterCustomDiff(t *testing.T) {
 	c1 := Custom{Val: "old"}
 	c2 := Custom{Val: "new"}
 
-	patch := MustDiffUsing(d, c1, c2)
+	patch := MustDiff(c1, c2)
 	if patch == nil {
 		t.Fatal("Expected patch")
 	}
