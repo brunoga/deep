@@ -13,12 +13,8 @@ func TestBuilder_Basic(t *testing.T) {
 		B string
 	}
 	b := NewPatchBuilder[S]()
-	root := b.Root()
-	node, err := root.Field("A")
-	if err != nil {
-		t.Fatalf("Field A failed: %v", err)
-	}
-	node.Set(1, 2)
+	b.Field("A").Set(1, 2)
+	
 	patch, err := b.Build()
 	if err != nil {
 		t.Fatalf("Build failed: %v", err)
@@ -38,18 +34,18 @@ func TestBuilder_Validation(t *testing.T) {
 		A int
 	}
 	b := NewPatchBuilder[S]()
-	root := b.Root()
-	_, err := root.Field("NonExistent")
+	b.Field("NonExistent")
+	_, err := b.Build()
 	if err == nil {
 		t.Error("Expected error for non-existent field")
 	}
-	node, err := root.Field("A")
-	if err != nil {
-		t.Fatalf("Field A failed: %v", err)
-	}
-	node.Set("string", 2)
 
-	err = node.Add(0, 1)
+	b2 := NewPatchBuilder[S]()
+	b2.Field("A").Set("string", 2)
+	// Set currently doesn't check type compatibility of 'old' value at build time,
+	// but let's check Add which does.
+	b2.Field("A").Add(0, 1)
+	_, err = b2.Build()
 	if err == nil {
 		t.Error("Expected error for Add on non-slice node")
 	}
@@ -63,24 +59,8 @@ func TestBuilder_Nested(t *testing.T) {
 		Kids []Child
 	}
 	b := NewPatchBuilder[Parent]()
-	root := b.Root()
-	kidsNode, err := root.Field("Kids")
-	if err != nil {
-		t.Fatalf("Field Kids failed: %v", err)
-	}
-	err = kidsNode.Add(0, Child{Name: "NewKid"})
-	if err != nil {
-		t.Fatalf("Add failed: %v", err)
-	}
-	kid0, err := kidsNode.Index(0)
-	if err != nil {
-		t.Fatalf("Index failed: %v", err)
-	}
-	nameNode, err := kid0.Field("Name")
-	if err != nil {
-		t.Fatalf("Field Name failed: %v", err)
-	}
-	nameNode.Set("Old", "Modified")
+	b.Field("Kids").Add(0, Child{Name: "NewKid"})
+	b.Field("Kids").Index(0).Field("Name").Set("Old", "Modified")
 
 	patch, err := b.Build()
 	if err != nil {
@@ -103,20 +83,8 @@ func TestBuilder_Nested(t *testing.T) {
 
 func TestBuilder_Map(t *testing.T) {
 	b := NewPatchBuilder[map[string]int]()
-	root := b.Root()
-	err := root.Add("new", 100)
-	if err != nil {
-		t.Fatalf("Add failed: %v", err)
-	}
-	err = root.Delete("old", 50)
-	if err != nil {
-		t.Fatalf("Delete failed: %v", err)
-	}
-	keyNode, err := root.MapKey("mod")
-	if err != nil {
-		t.Fatalf("MapKey failed: %v", err)
-	}
-	keyNode.Set(10, 20)
+	b.Add("new", 100).Delete("old", 50)
+	b.MapKey("mod").Set(10, 20)
 
 	patch, err := b.Build()
 	if err != nil {
@@ -143,14 +111,8 @@ func TestBuilder_Elem(t *testing.T) {
 	p := &s // Pointer to struct
 
 	b := NewPatchBuilder[*S]()
-	root := b.Root()
-
 	// Drill down through pointer
-	node, err := root.Elem().Field("Val")
-	if err != nil {
-		t.Fatalf("Elem/Field failed: %v", err)
-	}
-	node.Set(10, 20)
+	b.Elem().Field("Val").Set(10, 20)
 
 	patch, err := b.Build()
 	if err != nil {
@@ -171,14 +133,8 @@ func TestBuilder_Array(t *testing.T) {
 	a := Arr{1, 2, 3}
 
 	b := NewPatchBuilder[Arr]()
-	root := b.Root()
-
 	// Modify index 1
-	node, err := root.Index(1)
-	if err != nil {
-		t.Fatalf("Index(1) failed: %v", err)
-	}
-	node.Set(2, 20)
+	b.Index(1).Set(2, 20)
 
 	patch, err := b.Build()
 	if err != nil {
@@ -197,29 +153,29 @@ func TestBuilder_Array(t *testing.T) {
 func TestBuilder_ErrorPaths(t *testing.T) {
 	// Delete on non-container
 	b1 := NewPatchBuilder[int]()
-	err := b1.Root().Delete(0, 0)
-	if err == nil {
+	b1.Delete(0, 0)
+	if _, err := b1.Build(); err == nil {
 		t.Error("Expected error for Delete on int")
 	}
 
 	// Delete with wrong index type for slice
 	b2 := NewPatchBuilder[[]int]()
-	err = b2.Root().Delete("string_key", 0)
-	if err == nil {
+	b2.Delete("string_key", 0)
+	if _, err := b2.Build(); err == nil {
 		t.Error("Expected error for non-int delete on slice")
 	}
 
 	// Add on non-slice
 	b3 := NewPatchBuilder[map[string]int]()
-	err = b3.Root().Add(0, 1)
-	if err == nil {
+	b3.Add(0, 1)
+	if _, err := b3.Build(); err == nil {
 		t.Error("Expected error for Add on map")
 	}
 
-	// Add on non-map (wait, this error case needs update)
+	// Add on non-map (with string key)
 	b4 := NewPatchBuilder[[]int]()
-	err = b4.Root().Add("k", 1)
-	if err == nil {
+	b4.Add("k", 1)
+	if _, err := b4.Build(); err == nil {
 		t.Error("Expected error for string Add on slice")
 	}
 }
@@ -230,10 +186,7 @@ func TestBuilder_Exhaustive(t *testing.T) {
 		type P struct{ S *S }
 
 		b := NewPatchBuilder[P]()
-		sNode, _ := b.Root().Field("S")
-		sNode.Elem().Field("V")
-		vNode, _ := sNode.Elem().Field("V")
-		vNode.Set(nil, 10)
+		b.Field("S").Elem().Field("V").Set(nil, 10)
 
 		p, _ := b.Build()
 		var target P
@@ -245,7 +198,7 @@ func TestBuilder_Exhaustive(t *testing.T) {
 
 	t.Run("MapKeyCreation", func(t *testing.T) {
 		b := NewPatchBuilder[map[string]int]()
-		b.Root().Add("a", 1)
+		b.Add("a", 1)
 
 		p, _ := b.Build()
 		var m map[string]int
@@ -266,50 +219,37 @@ func TestBuilder_Exhaustive(t *testing.T) {
 	t.Run("NavigationErrors", func(t *testing.T) {
 		type S struct{ A int }
 		b := NewPatchBuilder[S]()
-		_, err := b.Root().Navigate("/NonExistent")
-		if err == nil {
+		b.Navigate("/NonExistent")
+		if _, err := b.Build(); err == nil {
 			t.Error("Expected error for non-existent field navigation")
 		}
 
 		type M struct{ Data map[int]int }
 		b2 := NewPatchBuilder[M]()
-		_, err = b2.Root().Navigate("/Data/not_an_int")
-		if err == nil {
+		b2.Navigate("/Data/not_an_int")
+		if _, err := b2.Build(); err == nil {
 			t.Error("Expected error for invalid map key type navigation")
-		}
-
-		_, err = b2.Root().Navigate("/Data/0") // Index on map (valid key path if key is 0)
-		// But map key is int. "0" -> 0. Valid.
-		// Wait, if map key is int, "0" parses to 0.
-		// So this might succeed if map exists?
-		// But "not_an_int" failed.
-		
-		// Let's use invalid structure navigation
-		_, err = b2.Root().Navigate("/Data/0/Invalid")
-		if err == nil {
-			// Should fail because map value is int, cannot navigate into int.
 		}
 	})
 
 	t.Run("DeleteMore", func(t *testing.T) {
 		b := NewPatchBuilder[map[int]string]()
-		err := b.Root().Delete(1, "old")
-		if err != nil {
+		b.Delete(1, "old")
+		if _, err := b.Build(); err != nil {
 			t.Errorf("Delete on map failed: %v", err)
 		}
 
 		type S struct{ A int }
 		b2 := NewPatchBuilder[S]()
-		err = b2.Root().Delete("A", 1)
-		if err == nil {
+		b2.Delete("A", 1)
+		if _, err := b2.Build(); err == nil {
 			t.Error("Expected error for Delete on struct")
 		}
 	})
 
 	t.Run("ElemEdgeCases", func(t *testing.T) {
 		b := NewPatchBuilder[**int]()
-		node := b.Root().Elem().Elem()
-		node.Set(1, 2)
+		b.Elem().Elem().Set(1, 2)
 
 		p, _ := b.Build()
 		v := 1
@@ -321,10 +261,9 @@ func TestBuilder_Exhaustive(t *testing.T) {
 		}
 
 		b2 := NewPatchBuilder[int]()
-		root2 := b2.Root()
-		node2 := root2.Elem()
-		if node2 != root2 {
-			t.Error("Elem on non-pointer should return self")
+		b2.Elem()
+		if _, err := b2.Build(); err != nil {
+			t.Errorf("Elem on non-pointer should not error: %v", err)
 		}
 	})
 
@@ -332,21 +271,20 @@ func TestBuilder_Exhaustive(t *testing.T) {
 		cond := cond.Eq[int]("", 1)
 
 		b1 := NewPatchBuilder[*int]()
-		b1.Root().WithCondition(cond)
+		b1.WithCondition(cond)
 
 		b2 := NewPatchBuilder[[]int]()
-		b2.Root().WithCondition(cond)
+		b2.WithCondition(cond)
 
 		b3 := NewPatchBuilder[map[string]int]()
-		b3.Root().WithCondition(cond)
+		b3.WithCondition(cond)
 
 		b4 := NewPatchBuilder[[1]int]()
-		b4.Root().WithCondition(cond)
+		b4.WithCondition(cond)
 
 		type IfaceStruct struct{ I any }
 		b5 := NewPatchBuilder[IfaceStruct]()
-		node5, _ := b5.Root().Field("I")
-		node5.WithCondition(cond)
+		b5.Field("I").WithCondition(cond)
 
 		_, err := b1.Build()
 		if err != nil {
@@ -495,10 +433,8 @@ func TestBuilder_SoftConditions(t *testing.T) {
 	u := User{Name: "Alice", Age: 30}
 
 	builder := NewPatchBuilder[User]()
-	nodeName, _ := builder.Root().Field("Name")
-	nodeName.If(cond.Eq[User]("/Age", 20)).Set("Alice", "Bob")
-	nodeAge, _ := builder.Root().Field("Age")
-	nodeAge.If(cond.Eq[User]("/Name", "Alice")).Set(30, 31)
+	builder.Field("Name").If(cond.Eq[User]("/Age", 20)).Set("Alice", "Bob")
+	builder.Field("Age").If(cond.Eq[User]("/Name", "Alice")).Set(30, 31)
 
 	patch, _ := builder.Build()
 
@@ -520,8 +456,7 @@ func TestBuilder_Unless(t *testing.T) {
 	}
 	u := User{Name: "Alice"}
 	builder := NewPatchBuilder[User]()
-	node, _ := builder.Root().Field("Name")
-	node.Unless(cond.Eq[User]("/Name", "Alice")).Set("Alice", "Bob")
+	builder.Field("Name").Unless(cond.Eq[User]("/Name", "Alice")).Set("Alice", "Bob")
 	patch, _ := builder.Build()
 
 	err := patch.ApplyChecked(&u)
@@ -541,10 +476,8 @@ func TestBuilder_AtomicTest(t *testing.T) {
 	u := User{Name: "Alice", Age: 30}
 
 	builder := NewPatchBuilder[User]()
-	nodeName, _ := builder.Root().Field("Name")
-	nodeName.Test("Alice")
-	nodeAge, _ := builder.Root().Field("Age")
-	nodeAge.Set(30, 31)
+	builder.Field("Name").Test("Alice")
+	builder.Field("Age").Set(30, 31)
 	patch, _ := builder.Build()
 
 	if err := patch.ApplyChecked(&u); err != nil {
@@ -569,8 +502,7 @@ func TestBuilder_Copy(t *testing.T) {
 	u := User{Name: "Alice", AltName: ""}
 
 	builder := NewPatchBuilder[User]()
-	nodeAlt, _ := builder.Root().Field("AltName")
-	nodeAlt.Copy("/Name")
+	builder.Field("AltName").Copy("/Name")
 
 	patch, _ := builder.Build()
 
@@ -591,8 +523,7 @@ func TestBuilder_Move(t *testing.T) {
 	u := User{Name: "Alice", AltName: ""}
 
 	builder := NewPatchBuilder[User]()
-	nodeAlt, _ := builder.Root().Field("AltName")
-	nodeAlt.Move("/Name")
+	builder.Field("AltName").Move("/Name")
 
 	patch, _ := builder.Build()
 
@@ -623,8 +554,7 @@ func TestBuilder_MoveReverse(t *testing.T) {
 	u := User{Name: "Alice", AltName: ""}
 
 	builder := NewPatchBuilder[User]()
-	nodeAlt, _ := builder.Root().Field("AltName")
-	nodeAlt.Move("/Name")
+	builder.Field("AltName").Move("/Name")
 
 	patch, _ := builder.Build()
 
@@ -655,8 +585,7 @@ func TestBuilder_AddConditionJSONPointer(t *testing.T) {
 
 	builder := NewPatchBuilder[User]()
 	builder.AddCondition("/Name == 'Alice'")
-	nodeAge, _ := builder.Root().Field("Age")
-	nodeAge.Set(30, 31)
+	builder.Field("Age").Set(30, 31)
 
 	patch, _ := builder.Build()
 
@@ -677,14 +606,14 @@ func TestBuilder_AddConditionJSONPointer(t *testing.T) {
 
 func TestBuilder_DeleteExhaustive(t *testing.T) {
 	b1 := NewPatchBuilder[map[string]int]()
-	b1.Root().Delete("a", 1)
+	b1.Delete("a", 1)
 
 	b2 := NewPatchBuilder[[]int]()
-	b2.Root().Delete(0, 1)
+	b2.Delete(0, 1)
 
 	b3 := NewPatchBuilder[int]()
-	err := b3.Root().Delete("a", 1)
-	if err == nil {
+	b3.Delete("a", 1)
+	if _, err := b3.Build(); err == nil {
 		t.Error("Expected error deleting from non-container")
 	}
 }
@@ -701,7 +630,7 @@ func TestBuilder_AddCondition_CornerCases(t *testing.T) {
 
 	b2 := NewPatchBuilder[Data]()
 	b2.AddCondition("INVALID")
-	if b2.err == nil {
+	if _, err := b2.Build(); err == nil {
 		t.Error("Expected error for invalid condition")
 	}
 }
@@ -713,8 +642,7 @@ func TestBuilder_Log(t *testing.T) {
 	u := User{Name: "Alice"}
 
 	builder := NewPatchBuilder[User]()
-	node, _ := builder.Root().Field("Name")
-	node.Log("Checking user name")
+	builder.Field("Name").Log("Checking user name")
 
 	patch, _ := builder.Build()
 
@@ -735,23 +663,12 @@ func TestBuilder_Put(t *testing.T) {
 		Data map[string]int
 	}
 	b := NewPatchBuilder[State]()
-	node, _ := b.Root().Navigate("/Data")
-	node.Put(map[string]int{"a": 1})
+	b.Navigate("/Data").Put(map[string]int{"a": 1})
 	p, _ := b.Build()
 
 	s := State{Data: make(map[string]int)}
 	p.Apply(&s)
 	if s.Data["a"] != 1 {
 		t.Errorf("expected 1, got %d", s.Data["a"])
-	}
-}
-
-func TestPatch_ToJSONPatch_ReadOnly(t *testing.T) {
-	patch := MustDiff(1, 2)
-	ro := &readOnlyPatch{inner: patch.(patchUnwrapper).unwrap()}
-
-	json := ro.toJSONPatch("/")
-	if json != nil {
-		t.Errorf("expected nil for readOnly toJSONPatch")
 	}
 }

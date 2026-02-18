@@ -55,7 +55,7 @@ func TestRegisterCustomDiff_Example(t *testing.T) {
 		}
 		// Return atomic patch replacing entire struct
 		bld := NewPatchBuilder[CustomRegistered]()
-		bld.Root().Set(a, b)
+		bld.Set(a, b)
 		return bld.Build()
 	})
 

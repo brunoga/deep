@@ -29,7 +29,7 @@ func main() {
 		}
 		// Return an atomic replacement patch
 		builder := deep.NewPatchBuilder[time.Time]()
-		builder.Root().Set(a, b)
+		builder.Set(a, b)
 		return builder.Build()
 	})
 

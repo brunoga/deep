@@ -24,31 +24,15 @@ func main() {
 	// 2. Propose a patch with multiple "strict" expectations that are wrong.
 	// We'll use the Builder to create a patch that expects different values than what's there.
 	builder := deep.NewPatchBuilder[UserProfile]()
-	root := builder.Root()
 
 	// Error 1: Wrong current age expectation
-	ageNode, err := root.Field("Age")
-	if err != nil {
-		fmt.Printf("Error navigating to Age: %v\n", err)
-		return
-	}
-	ageNode.Set(25, 31) // Expects 25, but it's actually 30
+	builder.Field("Age").Set(25, 31) // Expects 25, but it's actually 30
 
 	// Error 2: Wrong current email expectation
-	emailNode, err := root.Field("Email")
-	if err != nil {
-		fmt.Printf("Error navigating to Email: %v\n", err)
-		return
-	}
-	emailNode.Set("wrong@example.com", "new@example.com")
+	builder.Field("Email").Set("wrong@example.com", "new@example.com")
 
 	// Error 3: Add a condition that will also fail
-	usernameNode, err := root.Field("Username")
-	if err != nil {
-		fmt.Printf("Error navigating to Username: %v\n", err)
-		return
-	}
-	usernameNode.Put("bob")
+	builder.Field("Username").Put("bob")
 	// This condition will fail because Username is currently "alice"
 	// We use builder.AddCondition which automatically finds the right node
 	builder.AddCondition("Username == 'admin'")

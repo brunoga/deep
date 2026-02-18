@@ -499,8 +499,7 @@ func TestRegisterCustomDiff(t *testing.T) {
 			return nil, nil
 		}
 		builder := NewPatchBuilder[Custom]()
-		node, _ := builder.Root().Field("Val")
-		node.Put("CUSTOM:" + b.Val)
+		builder.Field("Val").Put("CUSTOM:" + b.Val)
 		return builder.Build()
 	})
 

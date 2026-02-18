@@ -170,10 +170,7 @@ func TestPatch_SerializationExhaustive(t *testing.T) {
 	Register[Data]()
 
 	builder := NewPatchBuilder[Data]()
-	root := builder.Root()
-	nodeC, _ := root.Field("C")
-	nodeCI, _ := nodeC.Index(0)
-	nodeCI.Set(1, 10)
+	builder.Field("C").Index(0).Set(1, 10)
 
 	patch, _ := builder.Build()
 
@@ -196,7 +193,7 @@ func TestPatch_Serialization_Conditions(t *testing.T) {
 	type Data struct{ A int }
 	builder := NewPatchBuilder[Data]()
 	c := cond.Eq[Data]("A", 1)
-	builder.Root().If(c).Unless(c).Test(Data{A: 1})
+	builder.If(c).Unless(c).Test(Data{A: 1})
 	patch, _ := builder.Build()
 
 	// Coverage for marshalDiffPatch branches
