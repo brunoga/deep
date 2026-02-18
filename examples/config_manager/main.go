@@ -64,7 +64,7 @@ func (m *ConfigManager) Update(newConfig SystemConfig) error {
 	newConfig.Version = m.live.Version + 1
 
 	// 2. Generate the patch.
-	patch := deep.Diff(*m.live, newConfig)
+	patch := deep.MustDiff(*m.live, newConfig)
 	if patch == nil {
 		return fmt.Errorf("no changes detected")
 	}
@@ -73,7 +73,7 @@ func (m *ConfigManager) Update(newConfig SystemConfig) error {
 	// In a real app, these might be loaded from a policy engine.
 	// Rule A: Timeout must not exceed 60 seconds.
 	// Rule B: Port must be in the "safe" range ( > 1024).
-	builder := deep.NewBuilder[SystemConfig]()
+	builder := deep.NewPatchBuilder[SystemConfig]()
 	builder.AddCondition("Server.Timeout <= 60")
 	builder.AddCondition("Server.Port > 1024")
 

@@ -77,7 +77,7 @@ func main() {
 	updatedCopy.Value = 250
 
 	// Generate a patch representing those changes.
-	patch := deep.Diff(clientLocalCopy, updatedCopy)
+	patch := deep.MustDiff(clientLocalCopy, updatedCopy)
 
 	// Serialize the patch to JSON for transmission.
 	patchJSON, err := json.Marshal(patch)

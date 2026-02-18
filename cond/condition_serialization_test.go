@@ -1,4 +1,4 @@
-package deep
+package cond
 
 import (
 	"encoding/json"
@@ -25,7 +25,7 @@ func TestFieldConditionSerialization(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Marshal failed: %v", err)
 			}
-			cond2, err := unmarshalCondition[Data](data)
+			cond2, err := UnmarshalCondition[Data](data)
 			if err != nil {
 				t.Fatalf("Unmarshal failed: %v", err)
 			}
@@ -68,7 +68,7 @@ func TestPredicatesSerialization(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Marshal failed: %v", err)
 			}
-			cond2, err := unmarshalCondition[User](data)
+			cond2, err := UnmarshalCondition[User](data)
 			if err != nil {
 				t.Fatalf("Unmarshal failed: %v", err)
 			}

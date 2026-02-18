@@ -23,7 +23,7 @@ func main() {
 
 	// 2. Propose a patch with multiple "strict" expectations that are wrong.
 	// We'll use the Builder to create a patch that expects different values than what's there.
-	builder := deep.NewBuilder[UserProfile]()
+	builder := deep.NewPatchBuilder[UserProfile]()
 	root := builder.Root()
 
 	// Error 1: Wrong current age expectation

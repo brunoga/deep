@@ -41,21 +41,25 @@ func TestCRDT_CreateDelta(t *testing.T) {
 	node := NewCRDT(TestUser{ID: 1, Name: "Old"}, "node1")
 
 	// Manually create a patch using deep.Diff
-	patch := deep.Diff(node.Value, TestUser{ID: 1, Name: "New"})
+	patch := deep.MustDiff(node.View(), TestUser{ID: 1, Name: "New"})
 
 	// Use the new helper to wrap it into a Delta and update local state
 	delta := node.CreateDelta(patch)
 
-	if node.Value.Name != "New" {
-		t.Errorf("expected New, got %s", node.Value.Name)
+	if node.View().Name != "New" {
+		t.Errorf("expected New, got %s", node.View().Name)
 	}
 
 	if delta.Timestamp.Logical != 0 {
 		t.Errorf("expected logical clock 0, got %d", delta.Timestamp.Logical)
 	}
 
-	if clock, ok := node.Clocks["/Name"]; !ok || clock != delta.Timestamp {
-		t.Errorf("metadata clock not updated correctly")
+	// We cannot access internal clocks/tombstones directly anymore.
+	// But we can check if the Delta has the correct metadata updates implicitly via ApplyDelta to another node.
+	node2 := NewCRDT(TestUser{ID: 1, Name: "Old"}, "node2")
+	node2.ApplyDelta(delta)
+	if node2.View().Name != "New" {
+		t.Error("CreateDelta produced invalid delta")
 	}
 }
 
@@ -122,15 +126,19 @@ func TestCRDT_JSON(t *testing.T) {
 		t.Fatalf("UnmarshalJSON failed: %v", err)
 	}
 
-	if newNode.NodeID != node.NodeID {
-		t.Errorf("expected NodeID %s, got %s", node.NodeID, newNode.NodeID)
+	if newNode.NodeID() != node.NodeID() {
+		t.Errorf("expected NodeID %s, got %s", node.NodeID(), newNode.NodeID())
 	}
 
-	if newNode.Value.Name != "Modified" {
-		t.Errorf("expected Name Modified, got %s", newNode.Value.Name)
+	if newNode.View().Name != "Modified" {
+		t.Errorf("expected Name Modified, got %s", newNode.View().Name)
 	}
-
-	if clock, ok := newNode.Clocks["/Name"]; !ok || clock != node.Clocks["/Name"] {
-		t.Errorf("clocks not correctly restored")
+	
+	// Ensure clocks are restored by doing a merge
+	// If clocks are missing, merge might fail to converge correctly or assume old data
+	node2 := NewCRDT(TestUser{ID: 1, Name: "Initial"}, "node2")
+	node2.Merge(newNode)
+	if node2.View().Name != "Modified" {
+		t.Error("Merge with unmarshalled node failed")
 	}
 }

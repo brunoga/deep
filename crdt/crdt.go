@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/brunoga/deep/v3"
+	"github.com/brunoga/deep/v3/cond"
 	"github.com/brunoga/deep/v3/crdt/hlc"
 	crdtresolver "github.com/brunoga/deep/v3/resolvers/crdt"
 )
@@ -147,22 +148,21 @@ func (p *textPatch) Walk(fn func(path string, op deep.OpKind, old, new any) erro
 	return fn("", deep.OpReplace, nil, p.Runs)
 }
 
-func (p *textPatch) WithCondition(c deep.Condition[Text]) deep.Patch[Text] { return p }
+func (p *textPatch) WithCondition(c cond.Condition[Text]) deep.Patch[Text] { return p }
 func (p *textPatch) WithStrict(strict bool) deep.Patch[Text]             { return p }
 func (p *textPatch) Reverse() deep.Patch[Text]                           { return p }
 func (p *textPatch) ToJSONPatch() ([]byte, error)                        { return nil, nil }
 func (p *textPatch) Summary() string                                     { return "Text update" }
-func (p *textPatch) Release()                                            {}
 func (p *textPatch) String() string                                      { return "TextPatch" }
 
 // CRDT represents a Conflict-free Replicated Data Type wrapper around type T.
 type CRDT[T any] struct {
 	mu         sync.RWMutex
-	Value      T
-	Clocks     map[string]hlc.HLC
-	Tombstones map[string]hlc.HLC
-	NodeID     string
-	Clock      *hlc.Clock
+	value      T
+	clocks     map[string]hlc.HLC
+	tombstones map[string]hlc.HLC
+	nodeID     string
+	clock      *hlc.Clock
 }
 
 // Delta represents a set of changes with a causal timestamp.
@@ -193,23 +193,30 @@ func (d *Delta[T]) UnmarshalJSON(data []byte) error {
 // NewCRDT creates a new CRDT wrapper.
 func NewCRDT[T any](initial T, nodeID string) *CRDT[T] {
 	return &CRDT[T]{
-		Value:      initial,
-		Clocks:     make(map[string]hlc.HLC),
-		Tombstones: make(map[string]hlc.HLC),
-		NodeID:     nodeID,
-		Clock:      hlc.NewClock(nodeID),
+		value:      initial,
+		clocks:     make(map[string]hlc.HLC),
+		tombstones: make(map[string]hlc.HLC),
+		nodeID:     nodeID,
+		clock:      hlc.NewClock(nodeID),
 	}
+}
+
+// NodeID returns the unique identifier for this CRDT instance.
+func (c *CRDT[T]) NodeID() string {
+	return c.nodeID
+}
+
+// Clock returns the internal hybrid logical clock.
+func (c *CRDT[T]) Clock() *hlc.Clock {
+	return c.clock
 }
 
 // View returns a deep copy of the current value.
 func (c *CRDT[T]) View() T {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	copied, err := deep.Copy(c.Value)
+	copied, err := deep.Copy(c.value)
 	if err != nil {
-		// Since View returns T, and Copy failed (which should be rare/impossible 
-		// for valid T), we return the internal value directly or panic.
-		// For robustness, returning zero value on error is safer than direct access.
 		var zero T
 		return zero
 	}
@@ -221,21 +228,21 @@ func (c *CRDT[T]) Edit(fn func(*T)) Delta[T] {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	workingCopy, err := deep.Copy(c.Value)
+	workingCopy, err := deep.Copy(c.value)
 	if err != nil {
 		return Delta[T]{}
 	}
 	fn(&workingCopy)
 
-	patch := deep.Diff(c.Value, workingCopy)
-	if patch == nil {
+	patch, err := deep.Diff(c.value, workingCopy)
+	if err != nil || patch == nil {
 		return Delta[T]{}
 	}
 
-	now := c.Clock.Now()
+	now := c.clock.Now()
 	c.updateMetadataLocked(patch, now)
 
-	c.Value = workingCopy
+	c.value = workingCopy
 
 	return Delta[T]{
 		Patch:     patch,
@@ -254,10 +261,10 @@ func (c *CRDT[T]) CreateDelta(patch deep.Patch[T]) Delta[T] {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	now := c.Clock.Now()
+	now := c.clock.Now()
 	c.updateMetadataLocked(patch, now)
 
-	patch.Apply(&c.Value)
+	patch.Apply(&c.value)
 
 	return Delta[T]{
 		Patch:     patch,
@@ -268,16 +275,13 @@ func (c *CRDT[T]) CreateDelta(patch deep.Patch[T]) Delta[T] {
 func (c *CRDT[T]) updateMetadataLocked(patch deep.Patch[T], ts hlc.HLC) {
 	err := patch.Walk(func(path string, op deep.OpKind, old, new any) error {
 		if op == deep.OpRemove {
-			c.Tombstones[path] = ts
+			c.tombstones[path] = ts
 		} else {
-			c.Clocks[path] = ts
+			c.clocks[path] = ts
 		}
 		return nil
 	})
 	if err != nil {
-		// In CRDT, metadata update failing is critical.
-		// However, our Walk callback never returns error.
-		// We'll panic if Walk fails as it indicates an internal state corruption.
 		panic(fmt.Errorf("crdt metadata update failed: %w", err))
 	}
 }
@@ -291,15 +295,15 @@ func (c *CRDT[T]) ApplyDelta(delta Delta[T]) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.Clock.Update(delta.Timestamp)
+	c.clock.Update(delta.Timestamp)
 
 	resolver := &crdtresolver.LWWResolver{
-		Clocks:     c.Clocks,
-		Tombstones: c.Tombstones,
+		Clocks:     c.clocks,
+		Tombstones: c.tombstones,
 		OpTime:     delta.Timestamp,
 	}
 
-	if err := delta.Patch.ApplyResolved(&c.Value, resolver); err != nil {
+	if err := delta.Patch.ApplyResolved(&c.value, resolver); err != nil {
 		return false
 	}
 
@@ -312,37 +316,37 @@ func (c *CRDT[T]) Merge(other *CRDT[T]) bool {
 	defer c.mu.Unlock()
 
 	// Update local clock
-	for _, h := range other.Clocks {
-		c.Clock.Update(h)
+	for _, h := range other.clocks {
+		c.clock.Update(h)
 	}
-	for _, h := range other.Tombstones {
-		c.Clock.Update(h)
+	for _, h := range other.tombstones {
+		c.clock.Update(h)
 	}
 
-	patch := deep.Diff(c.Value, other.Value)
-	if patch == nil {
+	patch, err := deep.Diff(c.value, other.value)
+	if err != nil || patch == nil {
 		c.mergeMeta(other)
 		return false
 	}
 
 	// State-based Resolver
-	if _, ok := any(c.Value).(*Text); ok {
+	if _, ok := any(c.value).(*Text); ok {
 		// Special case for Text
-		v := any(c.Value).(Text)
-		otherV := any(other.Value).(Text)
-		c.Value = any(mergeTextRuns(v, otherV)).(T)
+		v := any(c.value).(Text)
+		otherV := any(other.value).(Text)
+		c.value = any(mergeTextRuns(v, otherV)).(T)
 		c.mergeMeta(other)
 		return true
 	}
 
 	resolver := &crdtresolver.StateResolver{
-		LocalClocks:      c.Clocks,
-		LocalTombstones:  c.Tombstones,
-		RemoteClocks:     other.Clocks,
-		RemoteTombstones: other.Tombstones,
+		LocalClocks:      c.clocks,
+		LocalTombstones:  c.tombstones,
+		RemoteClocks:     other.clocks,
+		RemoteTombstones: other.tombstones,
 	}
 
-	if err := patch.ApplyResolved(&c.Value, resolver); err != nil {
+	if err := patch.ApplyResolved(&c.value, resolver); err != nil {
 		return false
 	}
 
@@ -352,14 +356,14 @@ func (c *CRDT[T]) Merge(other *CRDT[T]) bool {
 
 
 func (c *CRDT[T]) mergeMeta(other *CRDT[T]) {
-	for k, v := range other.Clocks {
-		if existing, ok := c.Clocks[k]; !ok || v.After(existing) {
-			c.Clocks[k] = v
+	for k, v := range other.clocks {
+		if existing, ok := c.clocks[k]; !ok || v.After(existing) {
+			c.clocks[k] = v
 		}
 	}
-	for k, v := range other.Tombstones {
-		if existing, ok := c.Tombstones[k]; !ok || v.After(existing) {
-			c.Tombstones[k] = v
+	for k, v := range other.tombstones {
+		if existing, ok := c.tombstones[k]; !ok || v.After(existing) {
+			c.tombstones[k] = v
 		}
 	}
 }
@@ -368,11 +372,11 @@ func (c *CRDT[T]) MarshalJSON() ([]byte, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return json.Marshal(map[string]any{
-		"value":      c.Value,
-		"clocks":     c.Clocks,
-		"tombstones": c.Tombstones,
-		"nodeID":     c.NodeID,
-		"latest":     c.Clock.Latest,
+		"value":      c.value,
+		"clocks":     c.clocks,
+		"tombstones": c.tombstones,
+		"nodeID":     c.nodeID,
+		"latest":     c.clock.Latest,
 	})
 }
 
@@ -387,11 +391,11 @@ func (c *CRDT[T]) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &m); err != nil {
 		return err
 	}
-	c.Value = m.Value
-	c.Clocks = m.Clocks
-	c.Tombstones = m.Tombstones
-	c.NodeID = m.NodeID
-	c.Clock = hlc.NewClock(m.NodeID)
-	c.Clock.Latest = m.Latest
+	c.value = m.Value
+	c.clocks = m.Clocks
+	c.tombstones = m.Tombstones
+	c.nodeID = m.NodeID
+	c.clock = hlc.NewClock(m.NodeID)
+	c.clock.Latest = m.Latest
 	return nil
 }

@@ -3,6 +3,8 @@ package deep
 import (
 	"reflect"
 	"testing"
+
+	"github.com/brunoga/deep/v3/internal/core"
 )
 
 func TestPatch_NumericConversion(t *testing.T) {
@@ -36,7 +38,7 @@ func TestPatch_NumericConversion(t *testing.T) {
 			v = reflect.ValueOf(tt.val)
 		}
 		targetType := reflect.TypeOf(tt.target)
-		got := convertValue(v, targetType)
+		got := core.ConvertValue(v, targetType)
 		if got.Type() != targetType && v.IsValid() && !v.Type().AssignableTo(targetType) {
 			t.Errorf("Expected %v, got %v for %v", targetType, got.Type(), tt.val)
 		}

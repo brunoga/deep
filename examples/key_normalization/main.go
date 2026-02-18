@@ -33,7 +33,7 @@ func main() {
 	
 	// Without Keyer, Diff would see this as a Remove(SessionID:100) and Add(SessionID:200).
 	// With Keyer, it sees it as an Update to the "prod:api" resource.
-	patch := deep.Diff(m1, m2)
+	patch := deep.MustDiff(m1, m2)
 
 	fmt.Println("Patch Summary:")
 	fmt.Println(patch.Summary())

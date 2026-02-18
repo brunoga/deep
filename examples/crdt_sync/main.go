@@ -77,5 +77,5 @@ func printState[T any](c *crdt.CRDT[T]) {
 		fmt.Printf("Serialization failed: %v\n", err)
 		return
 	}
-	fmt.Printf("[%s] Value: %s\n", c.NodeID, string(data))
+	fmt.Printf("[%s] Value: %s\n", c.NodeID(), string(data))
 }

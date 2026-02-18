@@ -38,7 +38,7 @@ func main() {
 	// 3. Diff the inventories.
 	// Because of the `deep:"key"` tag, this diff will be SEMANTIC.
 	// It will understand that P1 is the same object even though it's at index 1 now.
-	patch := deep.Diff(inventoryA, inventoryB)
+	patch := deep.MustDiff(inventoryA, inventoryB)
 
 	// 4. Use the Walk API to see the semantic operations.
 	fmt.Println("INVENTORY UPDATE PLAN:")
@@ -57,7 +57,7 @@ func main() {
 	})
 
 	// 5. Apply the update.
-	deep.Diff(inventoryA, inventoryB).Apply(&inventoryA)
+	deep.MustDiff(inventoryA, inventoryB).Apply(&inventoryA)
 
 	fmt.Printf("\nFinal Inventory: %+v\n", inventoryA)
 }

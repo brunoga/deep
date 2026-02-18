@@ -16,7 +16,7 @@ func TestDiff_Basic(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			patch := Diff(tt.a, tt.b)
+			patch := MustDiff(tt.a, tt.b)
 			if tt.a == tt.b {
 				if patch != nil {
 					t.Errorf("Expected nil patch, got %v", patch)
@@ -43,7 +43,7 @@ func TestDiff_Struct(t *testing.T) {
 	}
 	a := S{A: 1, B: "one", c: 10}
 	b := S{A: 2, B: "one", c: 20}
-	patch := Diff(a, b)
+	patch := MustDiff(a, b)
 	if patch == nil {
 		t.Fatal("Expected patch")
 	}
@@ -74,7 +74,7 @@ func TestDiff_Ptr(t *testing.T) {
 				input = &val
 			}
 			target := tt.b
-			patch := Diff(input, target)
+			patch := MustDiff(input, target)
 			isEqual := false
 			if input == nil && target == nil {
 				isEqual = true
@@ -151,7 +151,7 @@ func TestDiff_Map(t *testing.T) {
 					a[k] = v
 				}
 			}
-			patch := Diff(a, tt.b)
+			patch := MustDiff(a, tt.b)
 			if patch == nil {
 				t.Fatal("Expected patch")
 			}
@@ -221,7 +221,7 @@ func TestDiff_Slice(t *testing.T) {
 				a = make([]string, len(tt.a))
 				copy(a, tt.a)
 			}
-			patch := Diff(a, tt.b)
+			patch := MustDiff(a, tt.b)
 			if patch == nil {
 				t.Fatal("Expected patch")
 			}
@@ -236,7 +236,7 @@ func TestDiff_Slice(t *testing.T) {
 func TestDiff_Array(t *testing.T) {
 	a := [3]int{1, 2, 3}
 	b := [3]int{1, 4, 3}
-	patch := Diff(a, b)
+	patch := MustDiff(a, b)
 	patch.Apply(&a)
 	if a != b {
 		t.Errorf("Apply failed: expected %v, got %v", b, a)
@@ -246,13 +246,13 @@ func TestDiff_Array(t *testing.T) {
 func TestDiff_Interface(t *testing.T) {
 	var a any = 1
 	var b any = 2
-	patch := Diff(a, b)
+	patch := MustDiff(a, b)
 	patch.Apply(&a)
 	if a != b {
 		t.Errorf("Apply failed: expected %v, got %v", b, a)
 	}
 	b = "string"
-	patch = Diff(a, b)
+	patch = MustDiff(a, b)
 	patch.Apply(&a)
 	if a != b {
 		t.Errorf("Apply failed: expected %v, got %v", b, a)
@@ -275,7 +275,7 @@ func TestDiff_Nested(t *testing.T) {
 		C: &Child{Name: "new"},
 		L: []int{1, 2, 3},
 	}
-	patch := Diff(a, b)
+	patch := MustDiff(a, b)
 	patch.Apply(&a)
 	if !reflect.DeepEqual(a, b) {
 		t.Errorf("Apply failed")
@@ -289,7 +289,7 @@ func TestDiff_SliceStruct(t *testing.T) {
 	}
 	a := []S{{1, "v1"}, {2, "v2"}}
 	b := []S{{1, "v1"}, {2, "v2-mod"}}
-	patch := Diff(a, b)
+	patch := MustDiff(a, b)
 	patch.Apply(&a)
 	if !reflect.DeepEqual(a, b) {
 		t.Errorf("Apply failed")
@@ -311,7 +311,7 @@ func TestDiff_InterfaceExhaustive(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			a := tt.a
-			patch := Diff(a, tt.b)
+			patch := MustDiff(a, tt.b)
 			if tt.a == nil && tt.b == nil {
 				if patch != nil {
 					t.Errorf("Expected nil patch")
@@ -344,7 +344,7 @@ func TestDiff_MapExhaustive(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			a := tt.a
-			patch := Diff(a, tt.b)
+			patch := MustDiff(a, tt.b)
 			patch.Apply(&a)
 			if !reflect.DeepEqual(a, tt.b) {
 				t.Errorf("Apply failed: expected %v, got %v", tt.b, a)
@@ -362,7 +362,7 @@ func (c CustomTypeForDiffer) Diff(other CustomTypeForDiffer) (Patch[CustomTypeFo
 		return nil, nil
 	}
 	type internal CustomTypeForDiffer
-	p := Diff(internal(c), internal{Value: other.Value + 1000})
+	p := MustDiff(internal(c), internal{Value: other.Value + 1000})
 	return &typedPatch[CustomTypeForDiffer]{
 		inner:  p.(*typedPatch[internal]).inner,
 		strict: true,
@@ -373,7 +373,7 @@ func TestDiff_CustomDiffer_ValueReceiver(t *testing.T) {
 	a := CustomTypeForDiffer{Value: 10}
 	b := CustomTypeForDiffer{Value: 20}
 
-	patch := Diff(a, b)
+	patch := MustDiff(a, b)
 	if patch == nil {
 		t.Fatal("Expected patch")
 	}
@@ -396,7 +396,7 @@ func (c *CustomPtrTypeForDiffer) Diff(other *CustomPtrTypeForDiffer) (Patch[*Cus
 	}
 
 	type internal CustomPtrTypeForDiffer
-	p := Diff((*internal)(c), &internal{Value: other.Value + 5000})
+	p := MustDiff((*internal)(c), &internal{Value: other.Value + 5000})
 	return &typedPatch[*CustomPtrTypeForDiffer]{
 		inner:  p.(*typedPatch[*internal]).inner,
 		strict: true,
@@ -407,7 +407,7 @@ func TestDiff_CustomDiffer_PointerReceiver(t *testing.T) {
 	a := &CustomPtrTypeForDiffer{Value: 10}
 	b := &CustomPtrTypeForDiffer{Value: 20}
 
-	patch := Diff(a, b)
+	patch := MustDiff(a, b)
 	if patch == nil {
 		t.Fatal("Expected patch")
 	}
@@ -442,14 +442,14 @@ func TestDiff_CustomDiffer_ErrorCase(t *testing.T) {
 		}
 	}()
 
-	Diff(a, b)
+	MustDiff(a, b)
 }
 
 func TestDiff_CustomDiffer_ToJSONPatch(t *testing.T) {
 	a := CustomTypeForDiffer{Value: 10}
 	b := CustomTypeForDiffer{Value: 20}
 
-	patch := Diff(a, b)
+	patch := MustDiff(a, b)
 	if patch == nil {
 		t.Fatal("Expected patch")
 	}
@@ -473,7 +473,7 @@ func TestDiff_CustomDiffer_ToJSONPatch_Nested(t *testing.T) {
 	a := CustomNestedForJSON{Inner: CustomTypeForDiffer{Value: 10}}
 	b := CustomNestedForJSON{Inner: CustomTypeForDiffer{Value: 20}}
 
-	patch := Diff(a, b)
+	patch := MustDiff(a, b)
 	if patch == nil {
 		t.Fatal("Expected patch")
 	}
@@ -499,7 +499,7 @@ func TestRegisterCustomDiff(t *testing.T) {
 		if a.Val == b.Val {
 			return nil, nil
 		}
-		builder := NewBuilder[Custom]()
+		builder := NewPatchBuilder[Custom]()
 		node, _ := builder.Root().Field("Val")
 		node.Put("CUSTOM:" + b.Val)
 		return builder.Build()
@@ -508,7 +508,7 @@ func TestRegisterCustomDiff(t *testing.T) {
 	c1 := Custom{Val: "old"}
 	c2 := Custom{Val: "new"}
 
-	patch := DiffTyped(d, c1, c2)
+	patch := MustDiffUsing(d, c1, c2)
 	if patch == nil {
 		t.Fatal("Expected patch")
 	}
@@ -537,7 +537,7 @@ func TestKeyedSlice_Basic(t *testing.T) {
 		{ID: "t1", Status: "todo", Value: 1},
 	}
 
-	patch := Diff(a, b)
+	patch := MustDiff(a, b)
 	if patch == nil {
 		t.Fatal("Expected patch")
 	}
@@ -566,7 +566,7 @@ func TestKeyedSlice_Ptr(t *testing.T) {
 		{ID: "t1", Status: "todo"},
 	}
 
-	patch := Diff(a, b)
+	patch := MustDiff(a, b)
 	if patch == nil {
 		t.Fatal("Expected patch")
 	}
@@ -593,7 +593,7 @@ func TestKeyedSlice_Complex(t *testing.T) {
 		{ID: "t4", Status: "new"},
 	}
 
-	patch := Diff(a, b)
+	patch := MustDiff(a, b)
 	if patch == nil {
 		t.Fatal("Expected patch")
 	}
@@ -638,7 +638,7 @@ func TestDiff_MoveDetection(t *testing.T) {
 	}
 
 	t.Run("Disabled", func(t *testing.T) {
-		patch := Diff(ws, target, DiffDetectMoves(false))
+		patch := MustDiff(ws, target, DiffDetectMoves(false))
 		moveCount := 0
 		patch.Walk(func(path string, op OpKind, old, new any) error {
 			if op == OpMove {
@@ -662,7 +662,7 @@ func TestDiff_MoveDetection(t *testing.T) {
 	})
 
 	t.Run("Enabled", func(t *testing.T) {
-		patch := Diff(ws, target, DiffDetectMoves(true))
+		patch := MustDiff(ws, target, DiffDetectMoves(true))
 		moveCount := 0
 		var movePath string
 		var moveFrom string
@@ -712,7 +712,7 @@ func TestDiff_MoveDetection(t *testing.T) {
 			Archive: map[string]*Document{},
 		}
 
-		patch := Diff(ws, target, DiffDetectMoves(true))
+		patch := MustDiff(ws, target, DiffDetectMoves(true))
 		moveCount := 0
 		patch.Walk(func(path string, op OpKind, old, new any) error {
 			if op == OpMove {

@@ -49,7 +49,7 @@ func TestTags_Copy(t *testing.T) {
 	}
 }
 
-func TestTags_Diff(t *testing.T) {
+func TestTags_MustDiff(t *testing.T) {
 	a := TaggedStruct{
 		Normal:   "a",
 		Ignored:  "a",
@@ -69,7 +69,7 @@ func TestTags_Diff(t *testing.T) {
 		},
 	}
 
-	patch := Diff(a, b)
+	patch := MustDiff(a, b)
 	if patch == nil {
 		t.Fatal("Expected non-nil patch")
 	}

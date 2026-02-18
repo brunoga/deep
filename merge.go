@@ -2,163 +2,154 @@ package deep
 
 import (
 	"fmt"
-	"sort"
+	"reflect"
 	"strings"
+
+	"github.com/brunoga/deep/v3/internal/core"
 )
 
-// Conflict represents a conflict between two patches during a Merge operation.
+// Conflict represents a merge conflict where two patches modify the same path
+// with different values or cause structural inconsistencies (tree conflicts).
 type Conflict struct {
-	Path    string
-	OpA     OpKind
-	ValA    any
-	OpB     OpKind
-	ValB    any
-	Message string
+	Path  string
+	OpA   opInfo
+	OpB   opInfo
+	Base  any
 }
 
 func (c Conflict) String() string {
-	return fmt.Sprintf("conflict at %s: %s (A: %v %v, B: %v %v)", c.Path, c.Message, c.OpA, c.ValA, c.OpB, c.ValB)
+	return fmt.Sprintf("conflict at %s: %v vs %v", c.Path, c.OpA.Val, c.OpB.Val)
 }
 
-// Merge combines two patches into a single patch.
-// If both patches modify the same field to different values, a conflict is recorded.
-// patchA and patchB are assumed to be derived from the same base state.
-func Merge[T any](patchA, patchB Patch[T]) (Patch[T], []Conflict, error) {
-	if patchA == nil {
-		return patchB, nil, nil
-	}
-	if patchB == nil {
-		return patchA, nil, nil
+// Merge combines multiple patches into a single patch.
+// It detects conflicts and overlaps, including tree conflicts.
+func Merge[T any](patches ...Patch[T]) (Patch[T], []Conflict, error) {
+	if len(patches) == 0 {
+		return nil, nil, nil
 	}
 
-	builder := NewBuilder[T]()
+	// 1. Flatten
+	opsByPath := make(map[string]opInfo)
 	var conflicts []Conflict
+	var orderedPaths []string
 
-	var opsA []opInfo
-	err := patchA.Walk(func(path string, op OpKind, old, new any) error {
-		opsA = append(opsA, opInfo{path, op, old, new})
-		return nil
-	})
-	if err != nil {
-		return nil, nil, fmt.Errorf("walk A failed: %w", err)
-	}
+	// Track which paths are removed or moved from, to detect tree conflicts.
+	removedPaths := make(map[string]int)
 
-	var opsB []opInfo
-	err = patchB.Walk(func(path string, op OpKind, old, new any) error {
-		opsB = append(opsB, opInfo{path, op, old, new})
-		return nil
-	})
-	if err != nil {
-		return nil, nil, fmt.Errorf("walk B failed: %w", err)
-	}
-
-	// Detect conflicts and nested modifications
-	mapA := make(map[string]opInfo)
-	for _, op := range opsA {
-		mapA[op.path] = op
-	}
-
-	for _, b := range opsB {
-		if a, ok := mapA[b.path]; ok {
-			if a.op != b.op || !Equal(a.new, b.new) {
-				conflicts = append(conflicts, Conflict{
-					Path:    b.path,
-					OpA:     a.op,
-					ValA:    a.new,
-					OpB:     b.op,
-					ValB:    b.new,
-					Message: "concurrent modification",
-				})
+	for i, p := range patches {
+		err := p.Walk(func(path string, kind OpKind, oldVal, newVal any) error {
+			op := opInfo{
+				Kind: kind,
+				Path: path,
+				Val:  newVal,
 			}
-		}
-
-		// Check if B modifies something that A removed or replaced
-		for _, a := range opsA {
-			if (a.op == OpRemove || a.op == OpReplace) && isSubPath(a.path, b.path) {
-				conflicts = append(conflicts, Conflict{
-					Path:    b.path,
-					OpA:     a.op,
-					ValA:    a.new,
-					OpB:     b.op,
-					ValB:    b.new,
-					Message: "modification of a removed or replaced parent",
-				})
+			if kind == OpMove || kind == OpCopy {
+				op.From = oldVal.(string)
 			}
-		}
-	}
 
-	// Vice-versa: Check if A modifies something that B removed or replaced
-	for _, a := range opsA {
-		for _, b := range opsB {
-			if (b.op == OpRemove || b.op == OpReplace) && isSubPath(b.path, a.path) {
-				conflicts = append(conflicts, Conflict{
-					Path:    a.path,
-					OpA:     a.op,
-					ValA:    a.new,
-					OpB:     b.op,
-					ValB:    b.new,
-					Message: "modification of a removed or replaced parent",
-				})
-			}
-		}
-	}
-
-	// Combine and sort all non-conflicting ops
-	mergedOps := make(map[string]opInfo)
-	for _, a := range opsA {
-		mergedOps[a.path] = a
-	}
-	for _, b := range opsB {
-		if _, ok := mergedOps[b.path]; !ok {
-			hasConflict := false
-			for _, a := range opsA {
-				if (a.op == OpRemove || a.op == OpReplace) && isSubPath(a.path, b.path) {
-					hasConflict = true
-					break
+			// Tree Conflict Detection 1: New op is under an already removed path
+			for removed := range removedPaths {
+				if path == removed {
+					continue
+				}
+				if strings.HasPrefix(path, removed+"/") {
+					conflicts = append(conflicts, Conflict{
+						Path: path,
+						OpA:  opInfo{Kind: OpRemove, Path: removed},
+						OpB:  op,
+					})
 				}
 			}
-			if !hasConflict {
-				mergedOps[b.path] = b
+
+			// Direct Conflict Detection
+			if existing, ok := opsByPath[path]; ok {
+				conflict := false
+				if existing.Kind != op.Kind {
+					conflict = true
+				} else {
+					if kind == OpMove || kind == OpCopy {
+						if existing.From != op.From {
+							conflict = true
+						}
+					} else {
+						if !core.Equal(existing.Val, op.Val) {
+							conflict = true
+						}
+					}
+				}
+
+				if conflict {
+					conflicts = append(conflicts, Conflict{
+						Path: path,
+						OpA:  existing,
+						OpB:  op,
+					})
+				}
+				// Last wins: overwrite existing op
+				opsByPath[path] = op
+			} else {
+				opsByPath[path] = op
+				orderedPaths = append(orderedPaths, path)
+			}
+			
+			// Track removals
+			isRemoval := false
+			if kind == OpRemove {
+				isRemoval = true
+			} else if kind == OpMove {
+				removedPaths[op.From] = i
+			} else if kind == OpReplace {
+				if newVal == nil {
+					isRemoval = true
+				} else {
+					v := reflect.ValueOf(newVal)
+					if !v.IsValid() || ((v.Kind() == reflect.Pointer || v.Kind() == reflect.Interface || v.Kind() == reflect.Map || v.Kind() == reflect.Slice) && v.IsNil()) {
+						isRemoval = true
+					}
+				}
+			}
+			
+			if isRemoval {
+				removedPaths[path] = i
+				
+				// Tree Conflict Detection 2: This removal invalidates existing ops under it
+				for existingPath, existingOp := range opsByPath {
+					if existingPath == path {
+						continue
+					}
+					if strings.HasPrefix(existingPath, path+"/") {
+						conflicts = append(conflicts, Conflict{
+							Path: existingPath,
+							OpA:  op, // The removal
+							OpB:  existingOp, // The existing modification
+						})
+					}
+				}
+			}
+			
+			return nil
+		})
+		if err != nil {
+			return nil, nil, fmt.Errorf("error walking patch %d: %w", i, err)
+		}
+	}
+
+	// 3. Rebuild
+	builder := NewPatchBuilder[T]()
+	
+	// Filter out orderedPaths that were overwritten (duplicates in list? no, orderedPaths is append-only)
+	// orderedPaths might contain duplicates if we added `path` multiple times?
+	// Logic: `if existing ... else append`. So no duplicates in orderedPaths.
+	// But `opsByPath` stores the *last* op.
+	
+	for _, path := range orderedPaths {
+		if op, ok := opsByPath[path]; ok {
+			if err := applyToBuilder(builder, op); err != nil {
+				return nil, conflicts, err
 			}
 		}
 	}
 
-	var finalOps []opInfo
-	for _, op := range mergedOps {
-		finalOps = append(finalOps, op)
-	}
-
-	// Sort by kind and path to ensure parents are created before children,
-	// and that Copy/Move happen before Remove.
-	sort.Slice(finalOps, func(i, j int) bool {
-		ki := opPriority(finalOps[i].op)
-		kj := opPriority(finalOps[j].op)
-		if ki != kj {
-			return ki < kj
-		}
-		return finalOps[i].path < finalOps[j].path
-	})
-
-	for _, op := range finalOps {
-		if err := applyToBuilder(builder, op); err != nil {
-			return nil, nil, err
-		}
-	}
-
-	merged, err := builder.Build()
-	return merged, conflicts, err
-}
-
-func isSubPath(parent, child string) bool {
-	if parent == child {
-		return false
-	}
-	if parent == "/" {
-		return true
-	}
-	prefix := parent
-	if !strings.HasSuffix(prefix, "/") {
-		prefix += "/"
-	}
-	return strings.HasPrefix(child, prefix)
+	p, err := builder.Build()
+	return p, conflicts, err
 }

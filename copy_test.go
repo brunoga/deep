@@ -761,7 +761,7 @@ func TestCopy_Options(t *testing.T) {
 	s := S{A: 1, B: "secret"}
 
 	t.Run("IgnorePath", func(t *testing.T) {
-		got, err := Copy(s, CopyIgnorePath("B"))
+		got, err := Copy(s, IgnorePath("B"))
 		if err != nil {
 			t.Fatalf("Copy failed: %v", err)
 		}
@@ -796,7 +796,7 @@ func TestMustCopy_Options(t *testing.T) {
 		B string
 	}
 	s := S{A: 1, B: "secret"}
-	got := MustCopy(s, CopyIgnorePath("B"))
+	got := MustCopy(s, IgnorePath("B"))
 	if got.A != 1 || got.B != "" {
 		t.Errorf("MustCopy with options failed: %+v", got)
 	}

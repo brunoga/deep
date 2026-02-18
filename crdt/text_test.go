@@ -86,7 +86,7 @@ func TestText_CRDT_Convergence(t *testing.T) {
 
 	// A types "Hello"
 	deltaA1 := docA.Edit(func(t *Text) {
-		*t = t.Insert(0, "Hello", docA.Clock)
+		*t = t.Insert(0, "Hello", docA.Clock())
 	})
 
 	// B receives
@@ -95,23 +95,23 @@ func TestText_CRDT_Convergence(t *testing.T) {
 	// Concurrent edits
 	// A: "Hello" -> "Hello World"
 	deltaA2 := docA.Edit(func(t *Text) {
-		*t = t.Insert(5, " World", docA.Clock)
+		*t = t.Insert(5, " World", docA.Clock())
 	})
 
 	// B: "Hello" -> "He!llo"
 	deltaB1 := docB.Edit(func(t *Text) {
-		*t = t.Insert(2, "!", docB.Clock)
+		*t = t.Insert(2, "!", docB.Clock())
 	})
 
 	// Sync
 	docA.ApplyDelta(deltaB1)
 	docB.ApplyDelta(deltaA2)
 
-	if docA.Value.String() != docB.Value.String() {
-		t.Errorf("Convergence failed!\nA: %s\nB: %s", docA.Value.String(), docB.Value.String())
+	if docA.View().String() != docB.View().String() {
+		t.Errorf("Convergence failed!\nA: %s\nB: %s", docA.View().String(), docB.View().String())
 	}
 	// Expected: "He!llo World"
-	t.Logf("Converged to: %s", docA.Value.String())
+	t.Logf("Converged to: %s", docA.View().String())
 }
 
 func TestText_Normalize(t *testing.T) {
@@ -151,7 +151,7 @@ func TestText_Concurrent_Fuzz(t *testing.T) {
 
 	// Initial shared state
 	initial := nodes[0].Edit(func(text *Text) {
-		*text = text.Insert(0, "START-END", nodes[0].Clock)
+		*text = text.Insert(0, "START-END", nodes[0].Clock())
 	})
 	for i := 1; i < numNodes; i++ {
 		nodes[i].ApplyDelta(initial)
@@ -168,10 +168,11 @@ func TestText_Concurrent_Fuzz(t *testing.T) {
 			defer wg.Done()
 			node := nodes[nodeIdx]
 			for j := 0; j < opsPerNode; j++ {
+				// Use the pointer passed to Edit, NOT node.View()
 				delta := node.Edit(func(text *Text) {
-					str := node.Value.String()
+					str := text.String() // <--- FIX: Use *text instead of node.View()
 					if len(str) == 0 {
-						*text = text.Insert(0, node.NodeID, node.Clock)
+						*text = text.Insert(0, node.NodeID(), node.Clock())
 						return
 					}
 					// Random-ish position
@@ -181,7 +182,7 @@ func TestText_Concurrent_Fuzz(t *testing.T) {
 						*text = text.Delete(pos, 1)
 					} else {
 						// Insert
-						*text = text.Insert(pos, node.NodeID, node.Clock)
+						*text = text.Insert(pos, node.NodeID(), node.Clock())
 					}
 				})
 				deltas <- delta
@@ -200,9 +201,9 @@ func TestText_Concurrent_Fuzz(t *testing.T) {
 	}
 
 	// Verify all nodes converged to exactly the same state
-	expected := nodes[0].Value.String()
+	expected := nodes[0].View().String()
 	for i := 1; i < numNodes; i++ {
-		got := nodes[i].Value.String()
+		got := nodes[i].View().String()
 		if got != expected {
 			t.Errorf("Node %d did not converge. \nExpected: %q\nGot:      %q", i, expected, got)
 		}
@@ -218,15 +219,15 @@ func TestText_Concurrent_SamePositionInsertion(t *testing.T) {
 	docC := NewCRDT(Text{}, "C")
 
 	initDelta := docA.Edit(func(text *Text) {
-		*text = text.Insert(0, "[]", docA.Clock)
+		*text = text.Insert(0, "[]", docA.Clock())
 	})
 	docB.ApplyDelta(initDelta)
 	docC.ApplyDelta(initDelta)
 
 	// All insert at position 1 (between '[' and ']')
-	deltaA := docA.Edit(func(text *Text) { *text = text.Insert(1, "A", docA.Clock) })
-	deltaB := docB.Edit(func(text *Text) { *text = text.Insert(1, "B", docB.Clock) })
-	deltaC := docC.Edit(func(text *Text) { *text = text.Insert(1, "C", docC.Clock) })
+	deltaA := docA.Edit(func(text *Text) { *text = text.Insert(1, "A", docA.Clock()) })
+	deltaB := docB.Edit(func(text *Text) { *text = text.Insert(1, "B", docB.Clock()) })
+	deltaC := docC.Edit(func(text *Text) { *text = text.Insert(1, "C", docC.Clock()) })
 
 	// Full sync
 	docs := []*CRDT[Text]{docA, docB, docC}
@@ -237,9 +238,9 @@ func TestText_Concurrent_SamePositionInsertion(t *testing.T) {
 		}
 	}
 
-	finalA := docA.Value.String()
-	finalB := docB.Value.String()
-	finalC := docC.Value.String()
+	finalA := docA.View().String()
+	finalB := docB.View().String()
+	finalC := docC.View().String()
 
 	if finalA != finalB || finalB != finalC {
 		t.Fatalf("Non-deterministic convergence: A=%q, B=%q, C=%q", finalA, finalB, finalC)
@@ -256,7 +257,7 @@ func TestText_Concurrent_OverlappingDeletions(t *testing.T) {
 	docB := NewCRDT(Text{}, "B")
 
 	initDelta := docA.Edit(func(text *Text) {
-		*text = text.Insert(0, "ABCDEFG", docA.Clock)
+		*text = text.Insert(0, "ABCDEFG", docA.Clock())
 	})
 	docB.ApplyDelta(initDelta)
 
@@ -272,7 +273,7 @@ func TestText_Concurrent_OverlappingDeletions(t *testing.T) {
 	// Expected: "A" + "G" = "AG"
 	// "BCD" and "DEF" are both deleted. Overlap "DE" is deleted by both.
 	expected := "AG"
-	if docA.Value.String() != expected || docB.Value.String() != expected {
-		t.Errorf("Overlapping deletion failed. A=%q, B=%q, expected %q", docA.Value.String(), docB.Value.String(), expected)
+	if docA.View().String() != expected || docB.View().String() != expected {
+		t.Errorf("Overlapping deletion failed. A=%q, B=%q, expected %q", docA.View().String(), docB.View().String(), expected)
 	}
 }

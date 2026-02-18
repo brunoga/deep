@@ -6,11 +6,13 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/brunoga/deep/v3/cond"
 )
 
 func TestPatch_String_Basic(t *testing.T) {
 	a, b := "foo", "bar"
-	patch := Diff(a, b)
+	patch := MustDiff(a, b)
 	if !strings.Contains(patch.String(), "foo -> bar") {
 		t.Errorf("String() missing transition: %s", patch.String())
 	}
@@ -51,7 +53,7 @@ func TestPatch_String_Complex(t *testing.T) {
 		},
 		Status: &inactive,
 	}
-	patch := Diff(a, b)
+	patch := MustDiff(a, b)
 	if patch == nil {
 		t.Fatal("Expected non-nil patch")
 	}
@@ -69,7 +71,7 @@ func TestPatch_ApplyResolved(t *testing.T) {
 	c1 := Config{Value: 10}
 	c2 := Config{Value: 20}
 
-	patch := Diff(c1, c2)
+	patch := MustDiff(c1, c2)
 
 	target := Config{Value: 10}
 
@@ -114,10 +116,10 @@ func TestPatch_ConditionsExhaustive(t *testing.T) {
 		S   []InnerC
 		Arr [1]InnerC
 	}
-	builder := NewBuilder[DataC]()
+	builder := NewPatchBuilder[DataC]()
 	root := builder.Root()
 
-	c := Eq[DataC]("A", 1)
+	c := cond.Eq[DataC]("A", 1)
 
 	root.If(c).Unless(c).Test(DataC{A: 1})
 
@@ -149,7 +151,7 @@ func TestPatch_MoreApplyChecked(t *testing.T) {
 		p1 := &val1
 		val2 := 2
 		p2 := &val2
-		patch := Diff(p1, p2)
+		patch := MustDiff(p1, p2)
 		if err := patch.ApplyChecked(&p1); err != nil {
 			t.Errorf("ptrPatch ApplyChecked failed: %v", err)
 		}
@@ -158,7 +160,7 @@ func TestPatch_MoreApplyChecked(t *testing.T) {
 	t.Run("interfacePatch", func(t *testing.T) {
 		var i1 any = 1
 		var i2 any = 2
-		patch := Diff(i1, i2)
+		patch := MustDiff(i1, i2)
 		if err := patch.ApplyChecked(&i1); err != nil {
 			t.Errorf("interfacePatch ApplyChecked failed: %v", err)
 		}
@@ -174,7 +176,7 @@ func TestPatch_ToJSONPatch_Exhaustive(t *testing.T) {
 		M map[string]Inner
 	}
 
-	builder := NewBuilder[Data]()
+	builder := NewPatchBuilder[Data]()
 	root := builder.Root()
 
 	nodeP, _ := root.Field("P")
@@ -224,7 +226,7 @@ func TestPatch_LogExhaustive(t *testing.T) {
 func TestPatch_Walk_Basic(t *testing.T) {
 	a := 10
 	b := 20
-	patch := Diff(a, b)
+	patch := MustDiff(a, b)
 
 	var ops []string
 	err := patch.Walk(func(path string, op OpKind, old, new any) error {
@@ -249,7 +251,7 @@ func TestPatch_Walk_Struct(t *testing.T) {
 	}
 	a := S{A: 1, B: "one"}
 	b := S{A: 2, B: "two"}
-	patch := Diff(a, b)
+	patch := MustDiff(a, b)
 
 	ops := make(map[string]string)
 	err := patch.Walk(func(path string, op OpKind, old, new any) error {
@@ -276,7 +278,7 @@ func TestPatch_Walk_Struct(t *testing.T) {
 func TestPatch_Walk_Slice(t *testing.T) {
 	a := []int{1, 2, 3}
 	b := []int{1, 4, 3, 5}
-	patch := Diff(a, b)
+	patch := MustDiff(a, b)
 
 	var ops []string
 	err := patch.Walk(func(path string, op OpKind, old, new any) error {
@@ -309,7 +311,7 @@ func TestPatch_Walk_Slice(t *testing.T) {
 func TestPatch_Walk_Map(t *testing.T) {
 	a := map[string]int{"one": 1, "two": 2}
 	b := map[string]int{"one": 1, "two": 20, "three": 3}
-	patch := Diff(a, b)
+	patch := MustDiff(a, b)
 
 	ops := make(map[string]string)
 	err := patch.Walk(func(path string, op OpKind, old, new any) error {
@@ -343,7 +345,7 @@ func TestPatch_Walk_KeyedSlice(t *testing.T) {
 		{ID: "t1", Status: "todo"},
 	}
 
-	patch := Diff(a, b)
+	patch := MustDiff(a, b)
 
 	ops := make(map[string]string)
 	err := patch.Walk(func(path string, op OpKind, old, new any) error {
@@ -363,7 +365,7 @@ func TestPatch_Walk_KeyedSlice(t *testing.T) {
 func TestPatch_Walk_ErrorStop(t *testing.T) {
 	a := map[string]int{"one": 1, "two": 2}
 	b := map[string]int{"one": 10, "two": 20}
-	patch := Diff(a, b)
+	patch := MustDiff(a, b)
 
 	count := 0
 	err := patch.Walk(func(path string, op OpKind, old, new any) error {
@@ -383,15 +385,15 @@ type customTestStruct struct {
 	V int
 }
 
-func (c customTestStruct) Diff(other customTestStruct) (Patch[customTestStruct], error) {
-	b := NewBuilder[customTestStruct]()
+func (c customTestStruct) MustDiff(other customTestStruct) (Patch[customTestStruct], error) {
+	b := NewPatchBuilder[customTestStruct]()
 	node, _ := b.Root().Field("V")
 	node.Set(c.V, other.V)
 	return b.Build()
 }
 
 func TestCustomDiffPatch_ToJSONPatch(t *testing.T) {
-	b := NewBuilder[customTestStruct]()
+	b := NewPatchBuilder[customTestStruct]()
 	node, _ := b.Root().Field("V")
 	node.Set(1, 2)
 	patch, _ := b.Build()
@@ -401,7 +403,7 @@ func TestCustomDiffPatch_ToJSONPatch(t *testing.T) {
 		patch: patch,
 	}
 
-	jsonBytes := custom.toJSONPatch("/root")
+	jsonBytes := custom.toJSONPatch("") // Use empty prefix for root
 
 	var ops []map[string]any
 	data, _ := json.Marshal(jsonBytes)
@@ -411,12 +413,12 @@ func TestCustomDiffPatch_ToJSONPatch(t *testing.T) {
 		t.Fatalf("expected 1 op, got %d", len(ops))
 	}
 
-	if ops[0]["path"] != "/root/V" {
-		t.Errorf("expected path /root/V, got %s", ops[0]["path"])
+	if ops[0]["path"] != "/V" {
+		t.Errorf("expected path /V, got %s", ops[0]["path"])
 	}
 }
 
-func TestPatch_SummaryAndRelease(t *testing.T) {
+func TestPatch_Summary(t *testing.T) {
 	type Config struct {
 		Name    string
 		Value   int
@@ -426,7 +428,7 @@ func TestPatch_SummaryAndRelease(t *testing.T) {
 	c1 := Config{Name: "v1", Value: 10, Options: []string{"a", "b"}}
 	c2 := Config{Name: "v2", Value: 20, Options: []string{"a", "c"}}
 
-	patch := Diff(c1, c2)
+	patch := MustDiff(c1, c2)
 	if patch == nil {
 		t.Fatal("Expected patch")
 	}
@@ -434,13 +436,5 @@ func TestPatch_SummaryAndRelease(t *testing.T) {
 	summary := patch.Summary()
 	if summary == "" || summary == "No changes." {
 		t.Errorf("Unexpected summary: %q", summary)
-	}
-
-	// Just ensure it doesn't panic and clears the inner patch
-	patch.Release()
-
-	summary2 := patch.Summary()
-	if summary2 != "No changes." {
-		t.Errorf("Expected 'No changes.' after Release, got %q", summary2)
 	}
 }

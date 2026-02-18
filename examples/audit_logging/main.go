@@ -34,7 +34,7 @@ func main() {
 	}
 
 	// 3. Generate a patch representing the difference.
-	patch := deep.Diff(userA, userB)
+	patch := deep.MustDiff(userA, userB)
 	if patch == nil {
 		fmt.Println("No changes detected.")
 		return

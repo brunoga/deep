@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"reflect"
 	"testing"
+
+	"github.com/brunoga/deep/v3/cond"
 )
 
 func TestPatchJSONSerialization(t *testing.T) {
@@ -39,7 +41,7 @@ func TestPatchJSONSerialization(t *testing.T) {
 		O: &SubStruct{A: 20, B: "baz"},
 	}
 
-	p := Diff(s1, s2)
+	p := MustDiff(s1, s2)
 	if p == nil {
 		t.Fatal("Diff should not be nil")
 	}
@@ -99,7 +101,7 @@ func TestPatchGobSerialization(t *testing.T) {
 		O: &SubStruct{A: 20, B: "baz"},
 	}
 
-	p := Diff(s1, s2)
+	p := MustDiff(s1, s2)
 	if p == nil {
 		t.Fatal("Diff should not be nil")
 	}
@@ -134,7 +136,7 @@ func TestPatchWithConditionSerialization(t *testing.T) {
 	s1 := TestStruct{I: 1}
 	s2 := TestStruct{I: 2}
 
-	p := Diff(s1, s2).WithCondition(Eq[TestStruct]("I", 1))
+	p := MustDiff(s1, s2).WithCondition(cond.Eq[TestStruct]("I", 1))
 
 	data, err := json.Marshal(p)
 	if err != nil {
@@ -167,7 +169,7 @@ func TestPatch_SerializationExhaustive(t *testing.T) {
 	}
 	Register[Data]()
 
-	builder := NewBuilder[Data]()
+	builder := NewPatchBuilder[Data]()
 	root := builder.Root()
 	nodeC, _ := root.Field("C")
 	nodeCI, _ := nodeC.Index(0)
@@ -192,8 +194,8 @@ func TestPatch_SerializationExhaustive(t *testing.T) {
 
 func TestPatch_Serialization_Conditions(t *testing.T) {
 	type Data struct{ A int }
-	builder := NewBuilder[Data]()
-	c := Eq[Data]("A", 1)
+	builder := NewPatchBuilder[Data]()
+	c := cond.Eq[Data]("A", 1)
 	builder.Root().If(c).Unless(c).Test(Data{A: 1})
 	patch, _ := builder.Build()
 
@@ -229,7 +231,7 @@ func TestPatchSerialization_SemanticSlice(t *testing.T) {
 	s1 := Data{Items: []Item{{ID: 1, Name: "A"}}}
 	s2 := Data{Items: []Item{{ID: 1, Name: "A"}, {ID: 2, Name: "B"}}}
 
-	patch := Diff(s1, s2)
+	patch := MustDiff(s1, s2)
 
 	// Verify internal state before serialization
 	unwrapped := patch.(patchUnwrapper).unwrap()

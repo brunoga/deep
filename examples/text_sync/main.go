@@ -22,7 +22,7 @@ func main() {
 	fmt.Println("\n--- A types 'Hello' ---")
 	deltaA1 := docA.Edit(func(d *Document) {
 		// Insert "Hello" at position 0
-		d.Content = d.Content.Insert(0, "Hello", docA.Clock)
+		d.Content = d.Content.Insert(0, "Hello", docA.Clock())
 	})
 	fmt.Printf("Doc A: %s\n", docA.View().Content)
 
@@ -37,12 +37,12 @@ func main() {
 
 	// A appends " World" at index 5 (after "Hello")
 	deltaA2 := docA.Edit(func(d *Document) {
-		d.Content = d.Content.Insert(5, " World", docA.Clock)
+		d.Content = d.Content.Insert(5, " World", docA.Clock())
 	})
 
 	// B inserts "!" at index 5 (after "Hello")
 	deltaB1 := docB.Edit(func(d *Document) {
-		d.Content = d.Content.Insert(5, "!", docB.Clock)
+		d.Content = d.Content.Insert(5, "!", docB.Clock())
 	})
 
 	fmt.Printf("Doc A (local): %s\n", docA.View().Content)
@@ -73,12 +73,12 @@ func main() {
 
 	// A inserts "X"
 	deltaA3 := docA.Edit(func(d *Document) {
-		d.Content = d.Content.Insert(pos, "X", docA.Clock)
+		d.Content = d.Content.Insert(pos, "X", docA.Clock())
 	})
 
 	// B inserts "Y"
 	deltaB2 := docB.Edit(func(d *Document) {
-		d.Content = d.Content.Insert(pos, "Y", docB.Clock)
+		d.Content = d.Content.Insert(pos, "Y", docB.Clock())
 	})
 
 	docA.ApplyDelta(deltaB2)
