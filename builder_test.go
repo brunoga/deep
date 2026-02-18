@@ -104,9 +104,9 @@ func TestBuilder_Nested(t *testing.T) {
 func TestBuilder_Map(t *testing.T) {
 	b := NewPatchBuilder[map[string]int]()
 	root := b.Root()
-	err := root.AddMapEntry("new", 100)
+	err := root.Add("new", 100)
 	if err != nil {
-		t.Fatalf("AddMapEntry failed: %v", err)
+		t.Fatalf("Add failed: %v", err)
 	}
 	err = root.Delete("old", 50)
 	if err != nil {
@@ -216,11 +216,11 @@ func TestBuilder_ErrorPaths(t *testing.T) {
 		t.Error("Expected error for Add on map")
 	}
 
-	// AddMapEntry on non-map
+	// Add on non-map (wait, this error case needs update)
 	b4 := NewPatchBuilder[[]int]()
-	err = b4.Root().AddMapEntry("k", 1)
+	err = b4.Root().Add("k", 1)
 	if err == nil {
-		t.Error("Expected error for AddMapEntry on slice")
+		t.Error("Expected error for string Add on slice")
 	}
 }
 
@@ -245,7 +245,7 @@ func TestBuilder_Exhaustive(t *testing.T) {
 
 	t.Run("MapKeyCreation", func(t *testing.T) {
 		b := NewPatchBuilder[map[string]int]()
-		b.Root().AddMapEntry("a", 1)
+		b.Root().Add("a", 1)
 
 		p, _ := b.Build()
 		var m map[string]int

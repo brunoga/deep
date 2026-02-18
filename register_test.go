@@ -49,8 +49,7 @@ func TestRegisterCustomCopy(t *testing.T) {
 
 func TestRegisterCustomDiff_Example(t *testing.T) {
 	// Custom diff that always returns a specific atomic patch
-	d := NewDiffer()
-	RegisterCustomDiff(d, func(a, b CustomRegistered) (Patch[CustomRegistered], error) {
+	RegisterCustomDiff(func(a, b CustomRegistered) (Patch[CustomRegistered], error) {
 		if a.ID == b.ID {
 			return nil, nil
 		}
@@ -63,7 +62,7 @@ func TestRegisterCustomDiff_Example(t *testing.T) {
 	a := CustomRegistered{ID: 1, Data: "A"}
 	b := CustomRegistered{ID: 2, Data: "B"}
 
-	patch := MustDiffUsing(d, a, b)
+	patch := MustDiff(a, b)
 	if patch == nil {
 		t.Fatal("Expected patch")
 	}

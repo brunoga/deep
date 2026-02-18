@@ -48,8 +48,13 @@ var (
 )
 
 // RegisterCustomPatch registers a custom patch implementation for serialization.
-// The provided patch instance is used to determine the type.
-func RegisterCustomPatch(kind string, p any) {
+// The provided patch instance must implement interface { PatchKind() string }.
+func RegisterCustomPatch(p any) {
+	pk, ok := p.(interface{ PatchKind() string })
+	if !ok {
+		panic(fmt.Sprintf("RegisterCustomPatch: type %T does not implement PatchKind()", p))
+	}
+	kind := pk.PatchKind()
 	muCustom.Lock()
 	defer muCustom.Unlock()
 	customPatchTypes[kind] = reflect.TypeOf(p)

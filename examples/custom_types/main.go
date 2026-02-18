@@ -22,12 +22,8 @@ func main() {
 	target := base
 	target.Timestamp = base.Timestamp.Add(1 * time.Hour)
 
-	// 3. Setup Differ with custom logic for time.Time
-	// Since we don't own time.Time, we can't make it implement Differ.
-	// Instead, we register it with the Differ object.
-	d := deep.NewDiffer()
-	
-	deep.RegisterCustomDiff(d, func(a, b time.Time) (deep.Patch[time.Time], error) {
+	// 3. Setup global custom diff logic for time.Time
+	deep.RegisterCustomDiff(func(a, b time.Time) (deep.Patch[time.Time], error) {
 		if a.Equal(b) {
 			return nil, nil
 		}
@@ -38,7 +34,7 @@ func main() {
 	})
 
 	fmt.Println("--- COMPARING WITH CUSTOM TYPE REGISTRY ---")
-	patch := deep.MustDiffUsing(d, base, target)
+	patch := deep.MustDiff(base, target)
 
 	fmt.Println("Patch Summary:")
 	fmt.Println(patch.Summary())

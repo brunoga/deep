@@ -13,8 +13,8 @@ import (
 )
 
 func init() {
-	deep.RegisterCustomPatch("text", &textPatch{})
-	deep.RegisterCustomDiff[Text](nil, func(a, b Text) (deep.Patch[Text], error) {
+	deep.RegisterCustomPatch(&textPatch{})
+	deep.RegisterCustomDiff[Text](func(a, b Text) (deep.Patch[Text], error) {
 		// Optimization: if both are same, return nil
 		if len(a) == len(b) {
 			same := true
