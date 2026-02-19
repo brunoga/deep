@@ -19,8 +19,19 @@ type condSurrogate struct {
 	Data any    `json:"d,omitempty" gob:"d,omitempty"`
 }
 
-// MarshalCondition returns a serializable surrogate (struct or map) for the condition.
-// To get the JSON bytes, pass the result to json.Marshal.
+// ConditionToSerializable returns a serializable representation of the condition.
+func ConditionToSerializable(c any) (any, error) {
+	if c == nil {
+		return nil, nil
+	}
+
+	if t, ok := c.(interface{ unwrap() InternalCondition }); ok {
+		return ConditionToSerializable(t.unwrap())
+	}
+
+	return MarshalConditionAny(c)
+}
+
 func MarshalCondition[T any](c Condition[T]) (any, error) {
 	if t, ok := c.(*typedCondition[T]); ok {
 		return MarshalConditionAny(t.inner)
@@ -179,10 +190,15 @@ func UnmarshalCondition[T any](data []byte) (Condition[T], error) {
 	if err := json.Unmarshal(data, &s); err != nil {
 		return nil, err
 	}
-	return ConvertFromCondSurrogate[T](&s)
+	return UnmarshalConditionSurrogate[T](&s)
 }
 
-func ConvertFromCondSurrogate[T any](s any) (Condition[T], error) {
+// ConditionFromSerializable reconstructs a condition from its serializable representation.
+func ConditionFromSerializable[T any](s any) (Condition[T], error) {
+	return UnmarshalConditionSurrogate[T](s)
+}
+
+func UnmarshalConditionSurrogate[T any](s any) (Condition[T], error) {
 	if s == nil {
 		return nil, nil
 	}
@@ -253,7 +269,7 @@ func ConvertFromCondSurrogate[T any](s any) (Condition[T], error) {
 		d := data.([]any)
 		conds := make([]InternalCondition, 0, len(d))
 		for _, subData := range d {
-			sub, err := ConvertFromCondSurrogate[T](subData)
+			sub, err := UnmarshalConditionSurrogate[T](subData)
 			if err != nil {
 				return nil, err
 			}
@@ -269,7 +285,7 @@ func ConvertFromCondSurrogate[T any](s any) (Condition[T], error) {
 		d := data.([]any)
 		conds := make([]InternalCondition, 0, len(d))
 		for _, subData := range d {
-			sub, err := ConvertFromCondSurrogate[T](subData)
+			sub, err := UnmarshalConditionSurrogate[T](subData)
 			if err != nil {
 				return nil, err
 			}
@@ -281,7 +297,7 @@ func ConvertFromCondSurrogate[T any](s any) (Condition[T], error) {
 		}
 		inner = &rawOrCondition{Conditions: conds}
 	case "not":
-		sub, err := ConvertFromCondSurrogate[T](data)
+		sub, err := UnmarshalConditionSurrogate[T](data)
 		if err != nil {
 			return nil, err
 		}

@@ -275,3 +275,31 @@ func TestPatchSerialization_SemanticSlice(t *testing.T) {
 		}
 	}
 }
+
+func TestPatchSerializable(t *testing.T) {
+	type TestStruct struct {
+		A int
+		B string
+	}
+	s1 := TestStruct{A: 1, B: "foo"}
+	s2 := TestStruct{A: 2, B: "bar"}
+	patch := MustDiff(s1, s2)
+
+	// Marshal to serializable
+	data, err := patch.MarshalSerializable()
+	if err != nil {
+		t.Fatalf("MarshalSerializable failed: %v", err)
+	}
+
+	// Unmarshal from serializable
+	p2, err := UnmarshalPatchSerializable[TestStruct](data)
+	if err != nil {
+		t.Fatalf("UnmarshalPatchSerializable failed: %v", err)
+	}
+
+	s3 := s1
+	p2.Apply(&s3)
+	if !reflect.DeepEqual(s2, s3) {
+		t.Errorf("Apply after serializable roundtrip failed. Got %+v, want %+v", s3, s2)
+	}
+}

@@ -254,11 +254,11 @@ func TestCondition_Errors(t *testing.T) {
 		if err == nil {
 			t.Error("Expected error marshalling unknown type")
 		}
-		_, err = ConvertFromCondSurrogate[any](123)
+		_, err = UnmarshalConditionSurrogate[any](123)
 		if err == nil {
 			t.Error("Expected error converting from invalid surrogate type")
 		}
-		_, err = ConvertFromCondSurrogate[any](map[string]any{"k": "unknown", "d": nil})
+		_, err = UnmarshalConditionSurrogate[any](map[string]any{"k": "unknown", "d": nil})
 		if err == nil {
 			t.Error("Expected error converting from unknown kind")
 		}

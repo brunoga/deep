@@ -151,9 +151,14 @@ func (p *textPatch) Walk(fn func(path string, op deep.OpKind, old, new any) erro
 func (p *textPatch) WithCondition(c cond.Condition[Text]) deep.Patch[Text] { return p }
 func (p *textPatch) WithStrict(strict bool) deep.Patch[Text]             { return p }
 func (p *textPatch) Reverse() deep.Patch[Text]                           { return p }
-func (p *textPatch) ToJSONPatch() ([]byte, error)                        { return nil, nil }
-func (p *textPatch) Summary() string                                     { return "Text update" }
-func (p *textPatch) String() string                                      { return "TextPatch" }
+func (p *textPatch) ToJSONPatch() ([]byte, error) { return nil, nil }
+func (p *textPatch) Summary() string             { return "Text update" }
+func (p *textPatch) String() string              { return "TextPatch" }
+
+func (p *textPatch) MarshalSerializable() (any, error) {
+	return deep.PatchToSerializable(p)
+}
+
 
 // CRDT represents a Conflict-free Replicated Data Type wrapper around type T.
 type CRDT[T any] struct {
