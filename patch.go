@@ -81,11 +81,61 @@ type Patch[T any] interface {
 
 	// Summary returns a human-readable summary of the changes in the patch.
 	Summary() string
+
+	// MarshalSerializable returns a serializable representation of the patch.
+	MarshalSerializable() (any, error)
 }
 
 // NewPatch returns a new, empty patch for type T.
 func NewPatch[T any]() Patch[T] {
 	return &typedPatch[T]{}
+}
+
+// UnmarshalPatchSerializable reconstructs a patch from its serializable representation.
+func UnmarshalPatchSerializable[T any](data any) (Patch[T], error) {
+	if data == nil {
+		return &typedPatch[T]{}, nil
+	}
+
+	m, ok := data.(map[string]any)
+	if !ok {
+		// Try direct unmarshal if it's not the wrapped map
+		inner, err := PatchFromSerializable(data)
+		if err != nil {
+			return nil, err
+		}
+		return &typedPatch[T]{inner: inner.(diffPatch)}, nil
+	}
+
+	innerData, ok := m["inner"]
+	if !ok {
+		// It might be a direct surrogate map
+		inner, err := PatchFromSerializable(m)
+		if err != nil {
+			return nil, err
+		}
+		return &typedPatch[T]{inner: inner.(diffPatch)}, nil
+	}
+
+	inner, err := PatchFromSerializable(innerData)
+	if err != nil {
+		return nil, err
+	}
+
+	p := &typedPatch[T]{
+		inner: inner.(diffPatch),
+	}
+	if condData, ok := m["cond"]; ok && condData != nil {
+		c, err := cond.ConditionFromSerializable[T](condData)
+		if err != nil {
+			return nil, err
+		}
+		p.cond = c
+	}
+	if strict, ok := m["strict"].(bool); ok {
+		p.strict = strict
+	}
+	return p, nil
 }
 
 // Register registers the Patch implementation for type T with the gob package.
@@ -235,6 +285,22 @@ func (p *typedPatch[T]) Summary() string {
 	return p.inner.summary("/")
 }
 
+func (p *typedPatch[T]) MarshalSerializable() (any, error) {
+	inner, err := PatchToSerializable(p.inner)
+	if err != nil {
+		return nil, err
+	}
+	c, err := cond.ConditionToSerializable(p.cond)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"inner":  inner,
+		"cond":   c,
+		"strict": p.strict,
+	}, nil
+}
+
 func (p *typedPatch[T]) String() string {
 	if p.inner == nil {
 		return "<nil>"
@@ -243,61 +309,36 @@ func (p *typedPatch[T]) String() string {
 }
 
 func (p *typedPatch[T]) MarshalJSON() ([]byte, error) {
-	inner, err := marshalDiffPatch(p.inner)
+	s, err := p.MarshalSerializable()
 	if err != nil {
 		return nil, err
 	}
-	c, err := cond.MarshalCondition(p.cond)
-	if err != nil {
-		return nil, err
-	}
-	return json.Marshal(map[string]any{
-		"inner":  inner,
-		"cond":   c,
-		"strict": p.strict,
-	})
+	return json.Marshal(s)
 }
 
 func (p *typedPatch[T]) UnmarshalJSON(data []byte) error {
-	var m map[string]json.RawMessage
+	var m map[string]any
 	if err := json.Unmarshal(data, &m); err != nil {
 		return err
 	}
-	if innerData, ok := m["inner"]; ok && len(innerData) > 0 && string(innerData) != "null" {
-		inner, err := unmarshalDiffPatch(innerData)
-		if err != nil {
-			return err
-		}
-		p.inner = inner
+	res, err := UnmarshalPatchSerializable[T](m)
+	if err != nil {
+		return err
 	}
-	if condData, ok := m["cond"]; ok && len(condData) > 0 && string(condData) != "null" {
-		c, err := cond.UnmarshalCondition[T](condData)
-		if err != nil {
-			return err
-		}
-		p.cond = c
-	}
-	if strictData, ok := m["strict"]; ok {
-		json.Unmarshal(strictData, &p.strict)
+	if tp, ok := res.(*typedPatch[T]); ok {
+		p.inner = tp.inner
+		p.cond = tp.cond
+		p.strict = tp.strict
 	}
 	return nil
 }
 
 func (p *typedPatch[T]) GobEncode() ([]byte, error) {
-	inner, err := marshalDiffPatch(p.inner)
+	s, err := p.MarshalSerializable()
 	if err != nil {
 		return nil, err
 	}
-	c, err := cond.MarshalCondition(p.cond)
-	if err != nil {
-		return nil, err
-	}
-	// Note: We use json-like map for consistency with surrogates
-	return json.Marshal(map[string]any{
-		"inner":  inner,
-		"cond":   c,
-		"strict": p.strict,
-	})
+	return json.Marshal(s)
 }
 
 func (p *typedPatch[T]) GobDecode(data []byte) error {
@@ -305,22 +346,14 @@ func (p *typedPatch[T]) GobDecode(data []byte) error {
 	if err := json.Unmarshal(data, &m); err != nil {
 		return err
 	}
-	if innerData, ok := m["inner"]; ok && innerData != nil {
-		inner, err := convertFromSurrogate(innerData)
-		if err != nil {
-			return err
-		}
-		p.inner = inner
+	res, err := UnmarshalPatchSerializable[T](m)
+	if err != nil {
+		return err
 	}
-	if condData, ok := m["cond"]; ok && condData != nil {
-		c, err := cond.ConvertFromCondSurrogate[T](condData)
-		if err != nil {
-			return err
-		}
-		p.cond = c
-	}
-	if strict, ok := m["strict"].(bool); ok {
-		p.strict = strict
+	if tp, ok := res.(*typedPatch[T]); ok {
+		p.inner = tp.inner
+		p.cond = tp.cond
+		p.strict = tp.strict
 	}
 	return nil
 }

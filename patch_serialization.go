@@ -18,21 +18,21 @@ type patchSurrogate struct {
 
 func makeSurrogate(kind string, data map[string]any, p diffPatch) (*patchSurrogate, error) {
 	c, ifC, unlessC := p.conditions()
-	cData, err := cond.MarshalConditionAny(c)
+	cData, err := cond.ConditionToSerializable(c)
 	if err != nil {
 		return nil, err
 	}
 	if cData != nil {
 		data["c"] = cData
 	}
-	ifCData, err := cond.MarshalConditionAny(ifC)
+	ifCData, err := cond.ConditionToSerializable(ifC)
 	if err != nil {
 		return nil, err
 	}
 	if ifCData != nil {
 		data["if"] = ifCData
 	}
-	unlessCData, err := cond.MarshalConditionAny(unlessC)
+	unlessCData, err := cond.ConditionToSerializable(unlessC)
 	if err != nil {
 		return nil, err
 	}
@@ -58,6 +58,25 @@ func RegisterCustomPatch(p any) {
 	muCustom.Lock()
 	defer muCustom.Unlock()
 	customPatchTypes[kind] = reflect.TypeOf(p)
+}
+
+// PatchToSerializable returns a serializable representation of the patch.
+// This is intended for use by pluggable encoders (e.g. gRPC, custom binary formats).
+func PatchToSerializable(p any) (any, error) {
+	if p == nil {
+		return nil, nil
+	}
+
+	var dp diffPatch
+	if typed, ok := p.(patchUnwrapper); ok {
+		dp = typed.unwrap()
+	} else if direct, ok := p.(diffPatch); ok {
+		dp = direct
+	} else {
+		return nil, fmt.Errorf("invalid patch type: %T", p)
+	}
+
+	return marshalDiffPatch(dp)
 }
 
 func marshalDiffPatch(p diffPatch) (any, error) {
@@ -194,16 +213,8 @@ func unmarshalDiffPatch(data []byte) (diffPatch, error) {
 
 func unmarshalCondFromMap(d map[string]any, key string) (any, error) {
 	if cData, ok := d[key]; ok && cData != nil {
-		jsonData, err := json.Marshal(cData)
-		if err != nil {
-			return nil, err
-		}
-		// We use unmarshalCondition for 'any' since diffPatch stores 'any' (InternalCondition)
-		// But UnmarshalCondition returns Condition[T].
-		// We need InternalCondition.
-		// Condition[T] implements InternalCondition.
-		// So we can use UnmarshalCondition[any] and return it.
-		c, err := cond.UnmarshalCondition[any](jsonData)
+		// We use ConditionFromSerializable for 'any' since diffPatch stores 'any' (InternalCondition)
+		c, err := cond.ConditionFromSerializable[any](cData)
 		if err != nil {
 			return nil, err
 		}
@@ -230,6 +241,14 @@ func unmarshalBasePatch(d map[string]any) (basePatch, error) {
 		ifCond:     ifCond,
 		unlessCond: unlessCond,
 	}, nil
+}
+
+// PatchFromSerializable reconstructs a patch from its serializable representation.
+func PatchFromSerializable(s any) (any, error) {
+	if s == nil {
+		return nil, nil
+	}
+	return convertFromSurrogate(s)
 }
 
 func convertFromSurrogate(s any) (diffPatch, error) {

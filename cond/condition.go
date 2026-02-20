@@ -14,6 +14,9 @@ type Condition[T any] interface {
 	// MarshalJSON returns the JSON representation of the condition.
 	MarshalJSON() ([]byte, error)
 
+	// MarshalSerializable returns a serializable representation of the condition.
+	MarshalSerializable() (any, error)
+
 	InternalCondition
 }
 
@@ -51,6 +54,37 @@ func (c *typedCondition[T]) MarshalJSON() ([]byte, error) {
 		return nil, err
 	}
 	return json.Marshal(s)
+}
+
+func (c *typedCondition[T]) MarshalSerializable() (any, error) {
+	return MarshalConditionAny(c.inner)
+}
+
+func (c *typedCondition[T]) GobEncode() ([]byte, error) {
+	s, err := MarshalConditionAny(c.inner)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(s)
+}
+
+func (c *typedCondition[T]) GobDecode(data []byte) error {
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		return err
+	}
+	cond, err := UnmarshalConditionSurrogate[T](m)
+	if err != nil {
+		return err
+	}
+	if tc, ok := cond.(*typedCondition[T]); ok {
+		c.inner = tc.inner
+	}
+	return nil
+}
+
+func (c *typedCondition[T]) unwrap() InternalCondition {
+	return c.inner
 }
 
 // Eq returns a condition that checks if the value at the path is equal to the given value.
