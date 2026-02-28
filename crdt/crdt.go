@@ -6,15 +6,15 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/brunoga/deep/v4"
-	"github.com/brunoga/deep/v4/cond"
-	"github.com/brunoga/deep/v4/crdt/hlc"
-	crdtresolver "github.com/brunoga/deep/v4/resolvers/crdt"
+	"github.com/brunoga/deep/v5/cond"
+	"github.com/brunoga/deep/v5/crdt/hlc"
+	"github.com/brunoga/deep/v5/internal/engine"
+	crdtresolver "github.com/brunoga/deep/v5/resolvers/crdt"
 )
 
 func init() {
-	deep.RegisterCustomPatch(&textPatch{})
-	deep.RegisterCustomDiff[Text](func(a, b Text) (deep.Patch[Text], error) {
+	engine.RegisterCustomPatch(&textPatch{})
+	engine.RegisterCustomDiff[Text](func(a, b Text) (engine.Patch[Text], error) {
 		// Optimization: if both are same, return nil
 		if len(a) == len(b) {
 			same := true
@@ -48,7 +48,7 @@ func (p *textPatch) ApplyChecked(v *Text) error {
 	return nil
 }
 
-func (p *textPatch) ApplyResolved(v *Text, r deep.ConflictResolver) error {
+func (p *textPatch) ApplyResolved(v *Text, r engine.ConflictResolver) error {
 	*v = mergeTextRuns(*v, p.Runs)
 	return nil
 }
@@ -144,21 +144,20 @@ func mergeTextRuns(a, b Text) Text {
 	return result.normalize()
 }
 
-func (p *textPatch) Walk(fn func(path string, op deep.OpKind, old, new any) error) error {
-	return fn("", deep.OpReplace, nil, p.Runs)
+func (p *textPatch) Walk(fn func(path string, op engine.OpKind, old, new any) error) error {
+	return fn("", engine.OpReplace, nil, p.Runs)
 }
 
-func (p *textPatch) WithCondition(c cond.Condition[Text]) deep.Patch[Text] { return p }
-func (p *textPatch) WithStrict(strict bool) deep.Patch[Text]             { return p }
-func (p *textPatch) Reverse() deep.Patch[Text]                           { return p }
-func (p *textPatch) ToJSONPatch() ([]byte, error) { return nil, nil }
-func (p *textPatch) Summary() string             { return "Text update" }
-func (p *textPatch) String() string              { return "TextPatch" }
+func (p *textPatch) WithCondition(c cond.Condition[Text]) engine.Patch[Text] { return p }
+func (p *textPatch) WithStrict(strict bool) engine.Patch[Text]               { return p }
+func (p *textPatch) Reverse() engine.Patch[Text]                             { return p }
+func (p *textPatch) ToJSONPatch() ([]byte, error)                            { return nil, nil }
+func (p *textPatch) Summary() string                                         { return "Text update" }
+func (p *textPatch) String() string                                          { return "TextPatch" }
 
 func (p *textPatch) MarshalSerializable() (any, error) {
-	return deep.PatchToSerializable(p)
+	return engine.PatchToSerializable(p)
 }
-
 
 // CRDT represents a Conflict-free Replicated Data Type wrapper around type T.
 type CRDT[T any] struct {
@@ -172,8 +171,8 @@ type CRDT[T any] struct {
 
 // Delta represents a set of changes with a causal timestamp.
 type Delta[T any] struct {
-	Patch     deep.Patch[T] `json:"p"`
-	Timestamp hlc.HLC       `json:"t"`
+	Patch     engine.Patch[T] `json:"p"`
+	Timestamp hlc.HLC         `json:"t"`
 }
 
 func (d *Delta[T]) UnmarshalJSON(data []byte) error {
@@ -186,7 +185,7 @@ func (d *Delta[T]) UnmarshalJSON(data []byte) error {
 	}
 	d.Timestamp = m.Timestamp
 	if len(m.Patch) > 0 && string(m.Patch) != "null" {
-		p := deep.NewPatch[T]()
+		p := engine.NewPatch[T]()
 		if err := json.Unmarshal(m.Patch, p); err != nil {
 			return err
 		}
@@ -220,7 +219,7 @@ func (c *CRDT[T]) Clock() *hlc.Clock {
 func (c *CRDT[T]) View() T {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	copied, err := deep.Copy(c.value)
+	copied, err := engine.Copy(c.value)
 	if err != nil {
 		var zero T
 		return zero
@@ -233,13 +232,13 @@ func (c *CRDT[T]) Edit(fn func(*T)) Delta[T] {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	workingCopy, err := deep.Copy(c.value)
+	workingCopy, err := engine.Copy(c.value)
 	if err != nil {
 		return Delta[T]{}
 	}
 	fn(&workingCopy)
 
-	patch, err := deep.Diff(c.value, workingCopy)
+	patch, err := engine.Diff(c.value, workingCopy)
 	if err != nil || patch == nil {
 		return Delta[T]{}
 	}
@@ -258,7 +257,7 @@ func (c *CRDT[T]) Edit(fn func(*T)) Delta[T] {
 // CreateDelta takes an existing patch, applies it to the local value,
 // updates local metadata, and returns a Delta. Use this if you have
 // already generated a patch manually.
-func (c *CRDT[T]) CreateDelta(patch deep.Patch[T]) Delta[T] {
+func (c *CRDT[T]) CreateDelta(patch engine.Patch[T]) Delta[T] {
 	if patch == nil {
 		return Delta[T]{}
 	}
@@ -277,9 +276,9 @@ func (c *CRDT[T]) CreateDelta(patch deep.Patch[T]) Delta[T] {
 	}
 }
 
-func (c *CRDT[T]) updateMetadataLocked(patch deep.Patch[T], ts hlc.HLC) {
-	err := patch.Walk(func(path string, op deep.OpKind, old, new any) error {
-		if op == deep.OpRemove {
+func (c *CRDT[T]) updateMetadataLocked(patch engine.Patch[T], ts hlc.HLC) {
+	err := patch.Walk(func(path string, op engine.OpKind, old, new any) error {
+		if op == engine.OpRemove {
 			c.tombstones[path] = ts
 		} else {
 			c.clocks[path] = ts
@@ -328,7 +327,7 @@ func (c *CRDT[T]) Merge(other *CRDT[T]) bool {
 		c.clock.Update(h)
 	}
 
-	patch, err := deep.Diff(c.value, other.value)
+	patch, err := engine.Diff(c.value, other.value)
 	if err != nil || patch == nil {
 		c.mergeMeta(other)
 		return false
@@ -358,7 +357,6 @@ func (c *CRDT[T]) Merge(other *CRDT[T]) bool {
 	c.mergeMeta(other)
 	return true
 }
-
 
 func (c *CRDT[T]) mergeMeta(other *CRDT[T]) {
 	for k, v := range other.clocks {

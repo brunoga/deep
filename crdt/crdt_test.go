@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/brunoga/deep/v4"
+	"github.com/brunoga/deep/v5/internal/engine"
 )
 
 type TestUser struct {
@@ -40,8 +40,8 @@ func TestCRDT_EditDelta(t *testing.T) {
 func TestCRDT_CreateDelta(t *testing.T) {
 	node := NewCRDT(TestUser{ID: 1, Name: "Old"}, "node1")
 
-	// Manually create a patch using deep.Diff
-	patch := deep.MustDiff(node.View(), TestUser{ID: 1, Name: "New"})
+	// Manually create a patch using engine.Diff
+	patch := engine.MustDiff(node.View(), TestUser{ID: 1, Name: "New"})
 
 	// Use the new helper to wrap it into a Delta and update local state
 	delta := node.CreateDelta(patch)
@@ -133,7 +133,7 @@ func TestCRDT_JSON(t *testing.T) {
 	if newNode.View().Name != "Modified" {
 		t.Errorf("expected Name Modified, got %s", newNode.View().Name)
 	}
-	
+
 	// Ensure clocks are restored by doing a merge
 	// If clocks are missing, merge might fail to converge correctly or assume old data
 	node2 := NewCRDT(TestUser{ID: 1, Name: "Initial"}, "node2")

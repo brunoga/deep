@@ -2,85 +2,54 @@ package main
 
 import (
 	"fmt"
-	"github.com/brunoga/deep/v4"
+	"github.com/brunoga/deep/v5"
+	"github.com/brunoga/deep/v5/crdt/hlc"
 )
 
 type SystemConfig struct {
-	AppName    string
-	MaxThreads int
-	Debug      bool
-	Endpoints  map[string]string
+	AppName    string            `json:"app"`
+	MaxThreads int               `json:"threads"`
+	Endpoints  map[string]string `json:"endpoints"`
+}
+
+type Resolver struct{}
+
+func (r *Resolver) Resolve(path string, local, remote any) any {
+	fmt.Printf("- conflict at %s: %v vs %v (picking remote)\n", path, local, remote)
+	return remote
 }
 
 func main() {
-	// 1. Common Base State
+	clock := hlc.NewClock("server")
 	base := SystemConfig{
 		AppName:    "CoreAPI",
 		MaxThreads: 10,
-		Debug:      false,
 		Endpoints:  map[string]string{"auth": "https://auth.local"},
 	}
 
-	fmt.Printf("--- BASE STATE ---\n%+v\n\n", base)
+	// User A changes Endpoints/auth
+	tsA := clock.Now()
+	patchA := v5.NewPatch[SystemConfig]()
+	patchA.Operations = append(patchA.Operations, v5.Operation{
+		Kind: v5.OpReplace, Path: "/endpoints/auth", New: "https://auth.internal", Timestamp: tsA,
+	})
 
-	// 2. User A: Changes AppName and adds an Endpoint
-	userA := base
-	userA.AppName = "CoreAPI-v2"
-	// We must deep copy or re-initialize maps to avoid shared state in the example
-	userA.Endpoints = map[string]string{
-		"auth":    "https://auth.internal",
-		"metrics": "https://metrics.local",
-	}
-	patchA := deep.MustDiff(base, userA)
+	// User B also changes Endpoints/auth
+	tsB := clock.Now()
+	patchB := v5.NewPatch[SystemConfig]()
+	patchB.Operations = append(patchB.Operations, v5.Operation{
+		Kind: v5.OpReplace, Path: "/endpoints/auth", New: "https://auth.remote", Timestamp: tsB,
+	})
 
-	fmt.Println("--- PATCH A (User A) ---")
-	fmt.Println(patchA.Summary())
-	fmt.Println()
+	fmt.Println("--- BASE STATE ---")
+	fmt.Printf("%+v\n", base)
 
-	// 3. User B: Changes MaxThreads and Debug mode
-	userB := base
-	userB.MaxThreads = 20
-	userB.Debug = true
-	userB.Endpoints = map[string]string{
-		"auth": "https://auth.remote",
-	}
-	// Copy other endpoints from base to avoid accidental removal
-	for k, v := range base.Endpoints {
-		if _, ok := userB.Endpoints[k]; !ok {
-			userB.Endpoints[k] = v
-		}
-	}
-	patchB := deep.MustDiff(base, userB)
+	fmt.Println("\n--- MERGING PATCHES (Custom Resolution) ---")
+	merged := v5.Merge(patchA, patchB, &Resolver{})
 
-	fmt.Println("--- PATCH B (User B) ---")
-	fmt.Println(patchB.Summary())
-	fmt.Println()
+	final := base
+	v5.Apply(&final, merged)
 
-	// 4. Merge Patch A and Patch B
-	fmt.Println("--- MERGING PATCHES ---")
-	merged, conflicts, err := deep.Merge(patchA, patchB)
-	if err != nil {
-		fmt.Printf("Merge failed error: %v\n", err)
-		return
-	}
-
-	if len(conflicts) > 0 {
-		fmt.Println("Detected Conflicts (A wins by default):")
-		for _, c := range conflicts {
-			fmt.Printf("- %s\n", c.String())
-		}
-		fmt.Println()
-	}
-
-	fmt.Printf("Merged Patch Summary:\n%s\n\n", merged.Summary())
-
-	// 5. Apply Merged Patch to Base
-	finalState := base
-	err = merged.ApplyChecked(&finalState)
-	if err != nil {
-		fmt.Printf("Apply failed: %v\n", err)
-	}
-
-	fmt.Println("--- FINAL STATE (After Merge & Apply) ---")
-	fmt.Printf("%+v\n", finalState)
+	fmt.Println("\n--- FINAL STATE ---")
+	fmt.Printf("%+v\n", final)
 }

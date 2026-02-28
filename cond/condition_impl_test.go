@@ -192,7 +192,10 @@ func TestCompareValues_Exhaustive(t *testing.T) {
 }
 
 func TestCondition_Aliases(t *testing.T) {
-	type Data struct { I int; S string }
+	type Data struct {
+		I int
+		S string
+	}
 	d := Data{I: 10, S: "FOO"}
 
 	tests := []struct {

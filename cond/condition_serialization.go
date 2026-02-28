@@ -7,7 +7,7 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/brunoga/deep/v4/internal/core"
+	"github.com/brunoga/deep/v5/internal/core"
 )
 
 func init() {

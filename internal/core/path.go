@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/brunoga/deep/v4/internal/unsafe"
+	"github.com/brunoga/deep/v5/internal/unsafe"
 )
 
 // DeepPath represents a path to a field or element within a structure.
@@ -27,11 +27,11 @@ func (p DeepPath) ResolveParentPath() (DeepPath, PathPart, error) {
 		return "", PathPart{}, fmt.Errorf("path is empty")
 	}
 	last := parts[len(parts)-1]
-	
+
 	if len(parts) == 1 {
 		return "", last, nil
 	}
-	
+
 	parentParts := parts[:len(parts)-1]
 	var b strings.Builder
 	for _, part := range parentParts {
@@ -380,7 +380,7 @@ func ParseJSONPointer(path string) []PathPart {
 	if path == "" || path == "/" {
 		return nil
 	}
-	
+
 	// Handle paths not starting with / (treat as relative/simple key)
 	var tokens []string
 	if strings.HasPrefix(path, "/") {

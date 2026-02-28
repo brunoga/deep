@@ -2,80 +2,36 @@ package main
 
 import (
 	"fmt"
-	"github.com/brunoga/deep/v4"
+	"github.com/brunoga/deep/v5"
 )
 
-type Document struct {
-	Title   string
-	Content string
-}
-
 type Workspace struct {
-	Drafts  []Document
-	Archive map[string]Document
+	Drafts  []string          `json:"drafts"`
+	Archive map[string]string `json:"archive"`
 }
 
 func main() {
-	// 1. Initial state: A document in Drafts
-	doc := Document{
-		Title:   "Breaking Changes v2",
-		Content: "Standardize on JSON Pointers and add Differ object...",
+	w1 := Workspace{
+		Drafts:  []string{"Important Doc"},
+		Archive: make(map[string]string),
 	}
 
-	ws := Workspace{
-		Drafts:  []Document{doc},
-		Archive: make(map[string]Document),
-	}
-
-	fmt.Println("--- INITIAL WORKSPACE ---")
-	fmt.Printf("Drafts: %d, Archive: %d\n\n", len(ws.Drafts), len(ws.Archive))
-
-	// 2. Target state: Move the document from Drafts to Archive
-	target := Workspace{
-		Drafts: []Document{},
-		Archive: map[string]Document{
-			"v2-release": doc,
+	// Move from Drafts[0] to Archive["v1"]
+	w2 := Workspace{
+		Drafts: []string{},
+		Archive: map[string]string{
+			"v1": "Important Doc",
 		},
 	}
 
-	// 3. Generate Patch
-	// The Differ will index 'ws' and find 'doc' at '/Drafts/0'
-	// When it sees 'doc' at '/Archive/v2-release' in 'target', it emits a Copy.
-	patch := deep.MustDiff(ws, target, deep.DiffDetectMoves(true))
+	// Move detection is a high-level feature currently handled by reflection fallback
+	patch := v5.Diff(w1, w2)
 
-	fmt.Println("--- GENERATED PATCH SUMMARY ---")
-	fmt.Println(patch.Summary())
-	fmt.Println()
+	fmt.Printf("--- GENERATED PATCH SUMMARY ---\n%v\n", patch)
 
-	// 4. Verify semantic efficiency
-	fmt.Println("--- PATCH OPERATIONS (Walk) ---")
-	err := patch.Walk(func(path string, op deep.OpKind, old, new any) error {
-		if op == deep.OpCopy {
-			fmt.Printf("[%s] Op: %s, From: %v\n", path, op, old)
-		} else {
-			fmt.Printf("[%s] Op: %s\n", path, op)
-		}
-		return nil
-	})
-	if err != nil {
-		fmt.Printf("Walk failed: %v\n", err)
-		return
-	}
-	fmt.Println()
+	// Apply
+	final := w1
+	v5.Apply(&final, patch)
 
-	// 5. Apply and Verify
-	final, err := deep.Copy(ws)
-	if err != nil {
-		fmt.Printf("Copy failed: %v\n", err)
-		return
-	}
-	err = patch.ApplyChecked(&final)
-	if err != nil {
-		fmt.Printf("Apply failed: %v\n", err)
-		return
-	}
-
-	fmt.Println("--- FINAL WORKSPACE ---")
-	fmt.Printf("Drafts: %d, Archive: %d\n", len(final.Drafts), len(final.Archive))
-	fmt.Printf("Archived Doc: %s\n", final.Archive["v2-release"].Title)
+	fmt.Printf("\nFinal Workspace: %+v\n", final)
 }

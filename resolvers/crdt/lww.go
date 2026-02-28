@@ -3,11 +3,11 @@ package crdt
 import (
 	"reflect"
 
-	"github.com/brunoga/deep/v4"
-	"github.com/brunoga/deep/v4/crdt/hlc"
+	"github.com/brunoga/deep/v5/crdt/hlc"
+	"github.com/brunoga/deep/v5/internal/engine"
 )
 
-// LWWResolver implements deep.ConflictResolver using Last-Write-Wins logic
+// LWWResolver implements engine.ConflictResolver using Last-Write-Wins logic
 // for a single operation or delta with a fixed timestamp.
 type LWWResolver struct {
 	Clocks     map[string]hlc.HLC
@@ -15,7 +15,7 @@ type LWWResolver struct {
 	OpTime     hlc.HLC
 }
 
-func (r *LWWResolver) Resolve(path string, op deep.OpKind, key, prevKey any, current, proposed reflect.Value) (reflect.Value, bool) {
+func (r *LWWResolver) Resolve(path string, op engine.OpKind, key, prevKey any, current, proposed reflect.Value) (reflect.Value, bool) {
 	lClock := r.Clocks[path]
 	lTomb, hasLT := r.Tombstones[path]
 	lTime := lClock
@@ -28,7 +28,7 @@ func (r *LWWResolver) Resolve(path string, op deep.OpKind, key, prevKey any, cur
 	}
 
 	// Accepted. Update clocks for this path.
-	if op == deep.OpRemove {
+	if op == engine.OpRemove {
 		r.Tombstones[path] = r.OpTime
 	} else {
 		r.Clocks[path] = r.OpTime
@@ -37,7 +37,7 @@ func (r *LWWResolver) Resolve(path string, op deep.OpKind, key, prevKey any, cur
 	return proposed, true
 }
 
-// StateResolver implements deep.ConflictResolver for merging two full CRDT states.
+// StateResolver implements engine.ConflictResolver for merging two full CRDT states.
 // It compares clocks for each path dynamically.
 type StateResolver struct {
 	LocalClocks      map[string]hlc.HLC
@@ -46,7 +46,7 @@ type StateResolver struct {
 	RemoteTombstones map[string]hlc.HLC
 }
 
-func (r *StateResolver) Resolve(path string, op deep.OpKind, key, prevKey any, current, proposed reflect.Value) (reflect.Value, bool) {
+func (r *StateResolver) Resolve(path string, op engine.OpKind, key, prevKey any, current, proposed reflect.Value) (reflect.Value, bool) {
 	// Local Time
 	lClock := r.LocalClocks[path]
 	lTomb, hasLT := r.LocalTombstones[path]

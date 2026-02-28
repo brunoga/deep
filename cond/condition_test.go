@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/brunoga/deep/v4/internal/core"
+	"github.com/brunoga/deep/v5/internal/core"
 )
 
 func TestJSONPointer_Resolve(t *testing.T) {
@@ -272,13 +272,13 @@ func TestCondition_Structure(t *testing.T) {
 			B int
 		}
 	}
-	
+
 	c := Eq[Data]("/A/B", 10)
 	paths := c.Paths()
 	if len(paths) != 1 || paths[0] != "/A/B" {
 		t.Errorf("Paths() incorrect: %v", paths)
 	}
-	
+
 	// Test relative path
 	// Condition on /A/B, prefix /A.
 	// Result path should be /B.
@@ -287,14 +287,14 @@ func TestCondition_Structure(t *testing.T) {
 	if len(relPaths) != 1 || relPaths[0] != "/B" {
 		t.Errorf("WithRelativePath() incorrect: %v", relPaths)
 	}
-	
+
 	// Test complex condition structure
 	c2 := And(Eq[Data]("/A/B", 10), Greater[Data]("/A/B", 5))
 	paths2 := c2.Paths()
 	if len(paths2) != 2 {
 		t.Errorf("Expected 2 paths, got %d", len(paths2))
 	}
-	
+
 	rel2 := c2.WithRelativePath("/A")
 	relPaths2 := rel2.Paths()
 	if relPaths2[0] != "/B" || relPaths2[1] != "/B" {
@@ -304,7 +304,7 @@ func TestCondition_Structure(t *testing.T) {
 
 func TestCondition_Structure_Exhaustive(t *testing.T) {
 	type Data struct{}
-	
+
 	// Defined
 	cDef := Defined[Data]("/P")
 	if len(cDef.Paths()) != 1 {
@@ -313,43 +313,43 @@ func TestCondition_Structure_Exhaustive(t *testing.T) {
 	if cDef.WithRelativePath("/A").Paths()[0] != "/P" { // Path logic might differ depending on prefix
 		// If prefix doesn't match, it returns original.
 	}
-	
+
 	// Undefined
 	cUndef := Undefined[Data]("/P")
 	if len(cUndef.Paths()) != 1 {
 		t.Error("Undefined Paths failed")
 	}
-	
+
 	// Not
 	cNot := Not(cDef)
 	if len(cNot.Paths()) != 1 {
 		t.Error("Not Paths failed")
 	}
-	
+
 	// Or
 	cOr := Or(cDef, cUndef)
 	if len(cOr.Paths()) != 2 {
 		t.Error("Or Paths failed")
 	}
-	
+
 	// CompareField
 	cComp := EqualField[Data]("/A", "/B")
 	if len(cComp.Paths()) != 2 {
 		t.Error("EqualField Paths failed")
 	}
-	
+
 	// In
 	cIn := In[Data]("/A", 1, 2)
 	if len(cIn.Paths()) != 1 {
 		t.Error("In Paths failed")
 	}
-	
+
 	// String ops
 	cStr := Contains[Data]("/A", "foo")
 	if len(cStr.Paths()) != 1 {
 		t.Error("Contains Paths failed")
 	}
-	
+
 	// Log
 	cLog := Log[Data]("msg")
 	if len(cLog.Paths()) != 0 {
@@ -368,22 +368,22 @@ func TestMarshalCondition(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MarshalCondition failed: %v", err)
 	}
-	
+
 	bytes, err := json.Marshal(surrogate)
 	if err != nil {
 		t.Fatalf("json.Marshal failed: %v", err)
 	}
-	
+
 	var m map[string]any
 	if err := json.Unmarshal(bytes, &m); err != nil {
 		t.Fatalf("Unmarshal failed: %v", err)
 	}
-	
+
 	// Use "equal" as expected by implementation
 	if m["k"] != "equal" {
 		t.Errorf("Expected k=equal, got %v", m["k"])
 	}
-	
+
 	// Test MarshalJSON method on the Condition itself (should return bytes directly)
 	bytes2, err := c.MarshalJSON()
 	if err != nil {

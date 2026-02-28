@@ -1,359 +1,292 @@
-package deep
+package v5
 
 import (
 	"encoding/gob"
 	"encoding/json"
 	"fmt"
-	"reflect"
+	"github.com/brunoga/deep/v5/crdt/hlc"
+	"github.com/brunoga/deep/v5/internal/engine"
 	"strings"
-
-	"github.com/brunoga/deep/v4/cond"
 )
 
-// OpKind represents the type of operation in a patch.
-type OpKind int
-
-const (
-	OpAdd OpKind = iota
-	OpRemove
-	OpReplace
-	OpMove
-	OpCopy
-	OpTest
-	OpLog
-)
-
-func (k OpKind) String() string {
-	switch k {
-	case OpAdd:
-		return "add"
-	case OpRemove:
-		return "remove"
-	case OpReplace:
-		return "replace"
-	case OpMove:
-		return "move"
-	case OpCopy:
-		return "copy"
-	case OpTest:
-		return "test"
-	case OpLog:
-		return "log"
-	default:
-		return "unknown"
-	}
-}
-
-// Patch represents a set of changes that can be applied to a value of type T.
-type Patch[T any] interface {
-	fmt.Stringer
-
-	// Apply applies the patch to the value pointed to by v.
-	// The value v must not be nil.
-	Apply(v *T)
-
-	// ApplyChecked applies the patch only if specific conditions are met.
-	// 1. If the patch has a global Condition, it must evaluate to true.
-	// 2. If Strict mode is enabled, every modification must match the 'oldVal' recorded in the patch.
-	// 3. Any local per-field conditions must evaluate to true.
-	ApplyChecked(v *T) error
-
-	// ApplyResolved applies the patch using a custom ConflictResolver.
-	// This is used for convergent synchronization (CRDTs).
-	ApplyResolved(v *T, r ConflictResolver) error
-
-	// Walk calls fn for every operation in the patch.
-	// The path is a JSON Pointer dot-notation path (e.g. "/Field/SubField/0").
-	// If fn returns an error, walking stops and that error is returned.
-	Walk(fn func(path string, op OpKind, old, new any) error) error
-
-	// WithCondition returns a new Patch with the given global condition attached.
-	WithCondition(c cond.Condition[T]) Patch[T]
-
-	// WithStrict returns a new Patch with the strict consistency check enabled or disabled.
-	WithStrict(strict bool) Patch[T]
-
-	// Reverse returns a new Patch that undoes the changes in this patch.
-	Reverse() Patch[T]
-
-	// ToJSONPatch returns an RFC 6902 compliant JSON Patch representation of this patch.
-	ToJSONPatch() ([]byte, error)
-
-	// Summary returns a human-readable summary of the changes in the patch.
-	Summary() string
-
-	// MarshalSerializable returns a serializable representation of the patch.
-	MarshalSerializable() (any, error)
-}
-
-// NewPatch returns a new, empty patch for type T.
-func NewPatch[T any]() Patch[T] {
-	return &typedPatch[T]{}
-}
-
-// UnmarshalPatchSerializable reconstructs a patch from its serializable representation.
-func UnmarshalPatchSerializable[T any](data any) (Patch[T], error) {
-	if data == nil {
-		return &typedPatch[T]{}, nil
-	}
-
-	m, ok := data.(map[string]any)
-	if !ok {
-		// Try direct unmarshal if it's not the wrapped map
-		inner, err := PatchFromSerializable(data)
-		if err != nil {
-			return nil, err
-		}
-		return &typedPatch[T]{inner: inner.(diffPatch)}, nil
-	}
-
-	innerData, ok := m["inner"]
-	if !ok {
-		// It might be a direct surrogate map
-		inner, err := PatchFromSerializable(m)
-		if err != nil {
-			return nil, err
-		}
-		return &typedPatch[T]{inner: inner.(diffPatch)}, nil
-	}
-
-	inner, err := PatchFromSerializable(innerData)
-	if err != nil {
-		return nil, err
-	}
-
-	p := &typedPatch[T]{
-		inner: inner.(diffPatch),
-	}
-	if condData, ok := m["cond"]; ok && condData != nil {
-		c, err := cond.ConditionFromSerializable[T](condData)
-		if err != nil {
-			return nil, err
-		}
-		p.cond = c
-	}
-	if strict, ok := m["strict"].(bool); ok {
-		p.strict = strict
-	}
-	return p, nil
+func init() {
+	gob.Register(&Condition{})
+	gob.Register(Operation{})
+	gob.Register(hlc.HLC{})
+	gob.Register(Text{})
 }
 
 // Register registers the Patch implementation for type T with the gob package.
-// This is required if you want to use Gob serialization with Patch[T].
 func Register[T any]() {
-	gob.Register(&typedPatch[T]{})
+	gob.Register(Patch[T]{})
+	gob.Register(LWW[T]{})
+	// We also register common collection types that might be used in 'any' fields
+	gob.Register([]T{})
+	gob.Register(map[string]T{})
 }
 
 // ApplyError represents one or more errors that occurred during patch application.
 type ApplyError struct {
-	errors []error
+	Errors []error
 }
 
 func (e *ApplyError) Error() string {
-	if len(e.errors) == 1 {
-		return e.errors[0].Error()
+	if len(e.Errors) == 1 {
+		return e.Errors[0].Error()
 	}
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("%d errors during apply:\n", len(e.errors)))
-	for _, err := range e.errors {
+	b.WriteString(fmt.Sprintf("%d errors during apply:\n", len(e.Errors)))
+	for _, err := range e.Errors {
 		b.WriteString("- " + err.Error() + "\n")
 	}
 	return b.String()
 }
 
-func (e *ApplyError) Unwrap() []error {
-	return e.errors
+// OpKind represents the type of operation in a patch.
+type OpKind = engine.OpKind
+
+const (
+	OpAdd     = engine.OpAdd
+	OpRemove  = engine.OpRemove
+	OpReplace = engine.OpReplace
+	OpMove    = engine.OpMove
+	OpCopy    = engine.OpCopy
+	OpLog     = engine.OpLog
+)
+
+// Patch is a pure data structure representing a set of changes to type T.
+// It is designed to be easily serializable and manipulatable.
+type Patch[T any] struct {
+	// Root is the root object type the patch applies to.
+	// Used for type safety during Apply.
+	_ [0]T
+
+	// Global condition that must be met before applying the patch.
+	Condition *Condition `json:"cond,omitempty"`
+
+	// Operations is a flat list of changes.
+	Operations []Operation `json:"ops"`
+
+	// Metadata stores optional properties like timestamps or IDs.
+	Metadata map[string]any `json:"meta,omitempty"`
+
+	// Strict mode enables Old value verification.
+	Strict bool `json:"strict,omitempty"`
 }
 
-func (e *ApplyError) Errors() []error {
-	return e.errors
+// Operation represents a single change.
+type Operation struct {
+	Kind      OpKind     `json:"k"`
+	Path      string     `json:"p"` // Still uses string path for serialization, but created via Selectors.
+	Old       any        `json:"o,omitempty"`
+	New       any        `json:"n,omitempty"`
+	Timestamp hlc.HLC    `json:"t,omitempty"` // Integrated causality
+	If        *Condition `json:"if,omitempty"`
+	Unless    *Condition `json:"un,omitempty"`
+	Strict    bool       `json:"s,omitempty"` // Propagated from Patch
 }
 
-type typedPatch[T any] struct {
-	inner  diffPatch
-	cond   cond.Condition[T]
-	strict bool
+// Condition represents a serializable predicate for conditional application.
+type Condition struct {
+	Path  string       `json:"p,omitempty"`
+	Op    string       `json:"o"` // "eq", "ne", "gt", "lt", "exists", "in", "log", "matches", "type", "and", "or", "not"
+	Value any          `json:"v,omitempty"`
+	Apply []*Condition `json:"apply,omitempty"` // For logical operators
 }
 
-type patchUnwrapper interface {
-	unwrap() diffPatch
+// NewPatch returns a new, empty patch for type T.
+func NewPatch[T any]() Patch[T] {
+	return Patch[T]{}
 }
 
-func (p *typedPatch[T]) unwrap() diffPatch {
-	return p.inner
-}
-
-func (p *typedPatch[T]) Apply(v *T) {
-	if p.inner == nil {
-		return
+// WithStrict returns a new patch with the strict flag set.
+func (p Patch[T]) WithStrict(strict bool) Patch[T] {
+	p.Strict = strict
+	for i := range p.Operations {
+		p.Operations[i].Strict = strict
 	}
-	rv := reflect.ValueOf(v).Elem()
-	p.inner.apply(reflect.ValueOf(v), rv, "/")
+	return p
 }
 
-func (p *typedPatch[T]) ApplyChecked(v *T) error {
-	if p.cond != nil {
-		ok, err := p.cond.Evaluate(v)
-		if err != nil {
-			return &ApplyError{errors: []error{fmt.Errorf("condition evaluation failed: %w", err)}}
-		}
-		if !ok {
-			return &ApplyError{errors: []error{fmt.Errorf("condition failed")}}
-		}
-	}
-
-	if p.inner == nil {
-		return nil
-	}
-
-	rv := reflect.ValueOf(v).Elem()
-	err := p.inner.applyChecked(reflect.ValueOf(v), rv, p.strict, "/")
-	if err != nil {
-		if ae, ok := err.(*ApplyError); ok {
-			return ae
-		}
-		return &ApplyError{errors: []error{err}}
-	}
-	return nil
+// WithCondition returns a new patch with the global condition set.
+func (p Patch[T]) WithCondition(c *Condition) Patch[T] {
+	p.Condition = c
+	return p
 }
 
-func (p *typedPatch[T]) ApplyResolved(v *T, r ConflictResolver) error {
-	if p.inner == nil {
-		return nil
-	}
-
-	rv := reflect.ValueOf(v).Elem()
-	return p.inner.applyResolved(reflect.ValueOf(v), rv, "/", r)
-}
-
-func (p *typedPatch[T]) Walk(fn func(path string, op OpKind, old, new any) error) error {
-	if p.inner == nil {
-		return nil
-	}
-
-	return p.inner.walk("", func(path string, op OpKind, old, new any) error {
-		fullPath := path
-		if fullPath == "" {
-			fullPath = "/"
-		} else if fullPath[0] != '/' {
-			fullPath = "/" + fullPath
-		}
-
-		return fn(fullPath, op, old, new)
-	})
-}
-
-func (p *typedPatch[T]) WithCondition(c cond.Condition[T]) Patch[T] {
-	return &typedPatch[T]{
-		inner:  p.inner,
-		cond:   c,
-		strict: p.strict,
-	}
-}
-
-func (p *typedPatch[T]) WithStrict(strict bool) Patch[T] {
-	return &typedPatch[T]{
-		inner:  p.inner,
-		cond:   p.cond,
-		strict: strict,
-	}
-}
-
-func (p *typedPatch[T]) Reverse() Patch[T] {
-	if p.inner == nil {
-		return &typedPatch[T]{}
-	}
-	return &typedPatch[T]{
-		inner:  p.inner.reverse(),
-		strict: p.strict,
-	}
-}
-
-func (p *typedPatch[T]) ToJSONPatch() ([]byte, error) {
-	if p.inner == nil {
-		return json.Marshal([]any{})
-	}
-	// We pass empty string because toJSONPatch prepends "/" when needed
-	// and handles root as "/".
-	return json.Marshal(p.inner.toJSONPatch(""))
-}
-
-func (p *typedPatch[T]) Summary() string {
-	if p.inner == nil {
+func (p Patch[T]) String() string {
+	if len(p.Operations) == 0 {
 		return "No changes."
 	}
-	return p.inner.summary("/")
+	var b strings.Builder
+	for i, op := range p.Operations {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		switch op.Kind {
+		case OpAdd:
+			b.WriteString(fmt.Sprintf("Add %s: %v", op.Path, op.New))
+		case OpRemove:
+			b.WriteString(fmt.Sprintf("Remove %s (was %v)", op.Path, op.Old))
+		case OpReplace:
+			b.WriteString(fmt.Sprintf("Replace %s: %v -> %v", op.Path, op.Old, op.New))
+		case OpMove:
+			b.WriteString(fmt.Sprintf("Move %v to %s", op.Old, op.Path))
+		case OpCopy:
+			b.WriteString(fmt.Sprintf("Copy %v to %s", op.Old, op.Path))
+		case OpLog:
+			b.WriteString(fmt.Sprintf("Log %s: %v", op.Path, op.New))
+		}
+	}
+	return b.String()
 }
 
-func (p *typedPatch[T]) MarshalSerializable() (any, error) {
-	inner, err := PatchToSerializable(p.inner)
-	if err != nil {
-		return nil, err
+// Reverse returns a new patch that undoes the changes in this patch.
+func (p Patch[T]) Reverse() Patch[T] {
+	res := Patch[T]{
+		Strict: p.Strict,
 	}
-	c, err := cond.ConditionToSerializable(p.cond)
-	if err != nil {
-		return nil, err
+	for i := len(p.Operations) - 1; i >= 0; i-- {
+		op := p.Operations[i]
+		rev := Operation{
+			Path:      op.Path,
+			Timestamp: op.Timestamp,
+		}
+		switch op.Kind {
+		case OpAdd:
+			rev.Kind = OpRemove
+			rev.Old = op.New
+		case OpRemove:
+			rev.Kind = OpAdd
+			rev.New = op.Old
+		case OpReplace:
+			rev.Kind = OpReplace
+			rev.Old = op.New
+			rev.New = op.Old
+		case OpMove:
+			rev.Kind = OpMove
+			// op.Old for Move was the fromPath string.
+			// To reverse, we move back from current Path to op.Old Path.
+			rev.Path = fmt.Sprintf("%v", op.Old)
+			rev.Old = op.Path
+		case OpCopy:
+			// Undoing a copy means removing the copied value at the target path
+			rev.Kind = OpRemove
+			rev.Old = op.New
+		}
+		res.Operations = append(res.Operations, rev)
 	}
+	return res
+}
+
+// ToJSONPatch returns a JSON Patch representation compatible with RFC 6902
+// and the github.com/brunoga/jsonpatch extensions.
+func (p Patch[T]) ToJSONPatch() ([]byte, error) {
+	var res []map[string]any
+
+	// If there is a global condition, we prepend a no-op test operation
+	// that carries the condition. github.com/brunoga/jsonpatch supports this.
+	if p.Condition != nil {
+		res = append(res, map[string]any{
+			"op":   "test",
+			"path": "/",
+			"if":   p.Condition.toPredicate(),
+		})
+	}
+
+	for _, op := range p.Operations {
+		m := map[string]any{
+			"op":   op.Kind.String(),
+			"path": op.Path,
+		}
+
+		switch op.Kind {
+		case OpAdd, OpReplace:
+			m["value"] = op.New
+		case OpMove, OpCopy:
+			m["from"] = op.Old
+		}
+
+		if op.If != nil {
+			m["if"] = op.If.toPredicate()
+		}
+		if op.Unless != nil {
+			m["unless"] = op.Unless.toPredicate()
+		}
+
+		res = append(res, m)
+	}
+
+	return json.Marshal(res)
+}
+
+func (c *Condition) toPredicate() map[string]any {
+	if c == nil {
+		return nil
+	}
+
+	op := c.Op
+	switch op {
+	case "==":
+		op = "test"
+	case "!=":
+		// Not equal is a 'not' predicate in some extensions
+		return map[string]any{
+			"op": "not",
+			"apply": []map[string]any{
+				{"op": "test", "path": c.Path, "value": c.Value},
+			},
+		}
+	case ">":
+		op = "more"
+	case "<":
+		op = "less"
+	case "exists":
+		op = "defined"
+	case "in":
+		op = "contains"
+	case "log":
+		op = "log"
+	case "matches":
+		op = "matches"
+	case "type":
+		op = "type"
+	case "and", "or", "not":
+		res := map[string]any{
+			"op": op,
+		}
+		var apply []map[string]any
+		for _, sub := range c.Apply {
+			apply = append(apply, sub.toPredicate())
+		}
+		res["apply"] = apply
+		return res
+	}
+
 	return map[string]any{
-		"inner":  inner,
-		"cond":   c,
-		"strict": p.strict,
-	}, nil
+		"op":    op,
+		"path":  c.Path,
+		"value": c.Value,
+	}
 }
 
-func (p *typedPatch[T]) String() string {
-	if p.inner == nil {
-		return "<nil>"
-	}
-	return p.inner.format(0)
+// LWW represents a Last-Write-Wins register for type T.
+type LWW[T any] struct {
+	Value     T       `json:"v"`
+	Timestamp hlc.HLC `json:"t"`
 }
 
-func (p *typedPatch[T]) MarshalJSON() ([]byte, error) {
-	s, err := p.MarshalSerializable()
-	if err != nil {
-		return nil, err
-	}
-	return json.Marshal(s)
+type User struct {
+	ID    int            `json:"id"`
+	Name  string         `json:"full_name"`
+	Info  Detail         `json:"info"`
+	Roles []string       `json:"roles"`
+	Score map[string]int `json:"score"`
+	Bio   Text           `json:"bio"`
+	age   int            // Unexported field
 }
 
-func (p *typedPatch[T]) UnmarshalJSON(data []byte) error {
-	var m map[string]any
-	if err := json.Unmarshal(data, &m); err != nil {
-		return err
-	}
-	res, err := UnmarshalPatchSerializable[T](m)
-	if err != nil {
-		return err
-	}
-	if tp, ok := res.(*typedPatch[T]); ok {
-		p.inner = tp.inner
-		p.cond = tp.cond
-		p.strict = tp.strict
-	}
-	return nil
-}
-
-func (p *typedPatch[T]) GobEncode() ([]byte, error) {
-	s, err := p.MarshalSerializable()
-	if err != nil {
-		return nil, err
-	}
-	return json.Marshal(s)
-}
-
-func (p *typedPatch[T]) GobDecode(data []byte) error {
-	var m map[string]any
-	if err := json.Unmarshal(data, &m); err != nil {
-		return err
-	}
-	res, err := UnmarshalPatchSerializable[T](m)
-	if err != nil {
-		return err
-	}
-	if tp, ok := res.(*typedPatch[T]); ok {
-		p.inner = tp.inner
-		p.cond = tp.cond
-		p.strict = tp.strict
-	}
-	return nil
+type Detail struct {
+	Age     int
+	Address string `json:"addr"`
 }

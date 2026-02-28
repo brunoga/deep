@@ -4,7 +4,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/brunoga/deep/v4/crdt/hlc"
+	"github.com/brunoga/deep/v5/crdt/hlc"
 )
 
 // TextRun represents a contiguous run of characters with a unique starting ID.
@@ -130,7 +130,7 @@ func (t Text) splitAt(pos int) Text {
 
 			rightID := run.ID
 			rightID.Logical += int32(offset)
-			
+
 			rightPrev := run.ID
 			rightPrev.Logical += int32(offset - 1)
 
@@ -141,18 +141,18 @@ func (t Text) splitAt(pos int) Text {
 				Deleted: run.Deleted,
 			}
 
-			// Mark original as "tombstoned" but we don't need the actual 
-			// tombstone if we are in a slice-based approach, UNLESS we 
+			// Mark original as "tombstoned" but we don't need the actual
+			// tombstone if we are in a slice-based approach, UNLESS we
 			// want to avoid the "Replace" conflict.
-			
+
 			// Actually, let's keep it simple: the split SHOULD be deterministic.
-			// The problem is that the "Value" of run.ID is being changed 
+			// The problem is that the "Value" of run.ID is being changed
 			// in two different ways by Node A and Node B.
-			
+
 			// Node A splits at 6: ID 1.0 becomes "word1 "
 			// Node B splits at 18: ID 1.0 becomes "word1 word2 word3 "
-			
-			// If we merge these, one wins. 
+
+			// If we merge these, one wins.
 			// If Node B wins, ID 1.0 is "word1 word2 word3 ".
 			// Then we have ID 1.6 (from A) which is "word2 word3 word4".
 			// Result: "word1 word2 word3 " + "word2 word3 word4" -> DUPLICATION.
@@ -195,16 +195,16 @@ func (t Text) getOrdered() Text {
 		// A parent can be the start of a run OR any character within a run.
 		// If 'id' is a character within a run, we should have already rendered
 		// up to that character.
-		
-		// In this optimized implementation, we assume children only attach to 
+
+		// In this optimized implementation, we assume children only attach to
 		// explicitly split boundaries or the very end of a run.
 		// (Text.Insert and Text.splitAt ensure this).
-		
+
 		for _, run := range children[id] {
 			if !seen[run.ID] {
 				seen[run.ID] = true
 				result = append(result, run)
-				
+
 				// After rendering this run, check for children attached to any of its characters.
 				for i := 0; i < len(run.Value); i++ {
 					charID := run.ID
@@ -240,7 +240,7 @@ func (t Text) normalize() Text {
 		// 3. Current follows exactly the last char of previous
 		expectedID := last.ID
 		expectedID.Logical += int32(len(last.Value))
-		
+
 		prevID := last.ID
 		prevID.Logical += int32(len(last.Value) - 1)
 

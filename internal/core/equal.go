@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/brunoga/deep/v4/internal/unsafe"
+	"github.com/brunoga/deep/v5/internal/unsafe"
 )
 
 // EqualOption allows configuring the behavior of the Equal function.
@@ -139,7 +139,7 @@ func equalRecursive(a, b reflect.Value, visited map[VisitKey]bool, config *equal
 		if ptrA == ptrB {
 			return true
 		}
-		
+
 		k := VisitKey{ptrA, ptrB, a.Type()}
 		if visited[k] {
 			return true
@@ -165,7 +165,7 @@ func equalRecursive(a, b reflect.Value, visited map[VisitKey]bool, config *equal
 			if !fB.CanInterface() {
 				unsafe.DisableRO(&fB)
 			}
-			
+
 			var newStack []string
 			if pathStack != nil {
 				newStack = append(pathStack, fInfo.Name)
@@ -203,7 +203,7 @@ func equalRecursive(a, b reflect.Value, visited map[VisitKey]bool, config *equal
 			if !valB.IsValid() {
 				return false
 			}
-			
+
 			var newStack []string
 			if pathStack != nil {
 				// Normalize map key path construction as in copy.go

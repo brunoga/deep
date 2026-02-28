@@ -14,7 +14,7 @@ func TestConvertValue(t *testing.T) {
 		{int(1), int64(0), int64(1)},
 		{float64(1.0), int(0), int(1)},
 		// int to string = rune conversion
-		{65, "", "A"}, 
+		{65, "", "A"},
 		// bool to string = not convertible, returns original
 		{true, "", true},
 	}
@@ -33,15 +33,15 @@ func TestExtractKey(t *testing.T) {
 	type Keyed struct {
 		ID int `deep:"key"`
 	}
-	
+
 	k := Keyed{ID: 10}
 	v := reflect.ValueOf(k)
-	
+
 	key := ExtractKey(v, 0)
 	if key.(int) != 10 {
 		t.Errorf("ExtractKey failed: %v", key)
 	}
-	
+
 	// Pointer
 	kp := &k
 	vp := reflect.ValueOf(kp)

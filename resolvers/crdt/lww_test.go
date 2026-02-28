@@ -4,8 +4,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/brunoga/deep/v4"
-	"github.com/brunoga/deep/v4/crdt/hlc"
+	"github.com/brunoga/deep/v5/crdt/hlc"
+	"github.com/brunoga/deep/v5/internal/engine"
 )
 
 func TestLWWResolver(t *testing.T) {
@@ -23,7 +23,7 @@ func TestLWWResolver(t *testing.T) {
 	proposed := reflect.ValueOf("new")
 
 	// Newer op should be accepted
-	resolved, ok := resolver.Resolve("f1", deep.OpReplace, nil, nil, reflect.Value{}, proposed)
+	resolved, ok := resolver.Resolve("f1", engine.OpReplace, nil, nil, reflect.Value{}, proposed)
 	if !ok {
 		t.Error("Should accept newer operation")
 	}
@@ -36,7 +36,7 @@ func TestLWWResolver(t *testing.T) {
 
 	// Older op should be rejected
 	resolver.OpTime = hlc.HLC{WallTime: 99, Logical: 0, NodeID: "C"}
-	_, ok = resolver.Resolve("f1", deep.OpReplace, nil, nil, reflect.Value{}, proposed)
+	_, ok = resolver.Resolve("f1", engine.OpReplace, nil, nil, reflect.Value{}, proposed)
 	if ok {
 		t.Error("Should reject older operation")
 	}
@@ -53,7 +53,7 @@ func TestStateResolver(t *testing.T) {
 
 	proposed := reflect.ValueOf("remote")
 
-	resolved, ok := resolver.Resolve("f1", deep.OpReplace, nil, nil, reflect.Value{}, proposed)
+	resolved, ok := resolver.Resolve("f1", engine.OpReplace, nil, nil, reflect.Value{}, proposed)
 	if !ok {
 		t.Error("Remote should win (newer)")
 	}
@@ -62,7 +62,7 @@ func TestStateResolver(t *testing.T) {
 	}
 
 	resolver.RemoteClocks["f1"] = hlc.HLC{WallTime: 99, Logical: 0, NodeID: "B"}
-	_, ok = resolver.Resolve("f1", deep.OpReplace, nil, nil, reflect.Value{}, proposed)
+	_, ok = resolver.Resolve("f1", engine.OpReplace, nil, nil, reflect.Value{}, proposed)
 	if ok {
 		t.Error("Local should win (remote is older)")
 	}

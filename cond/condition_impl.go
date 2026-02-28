@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/brunoga/deep/v4/internal/core"
+	"github.com/brunoga/deep/v5/internal/core"
 )
 
 type rawDefinedCondition struct {
@@ -28,7 +28,7 @@ func (c *rawDefinedCondition) WithRelativePath(prefix string) InternalCondition 
 	// Re-parse internally
 	// pathParts := core.ParsePath(string(c.Path)) // Unused
 	prefixParts := core.ParsePath(prefix)
-	
+
 	newPath := c.Path.StripParts(prefixParts)
 	return &rawDefinedCondition{Path: newPath}
 }
@@ -52,7 +52,7 @@ func (c *rawUndefinedCondition) WithRelativePath(prefix string) InternalConditio
 	// pathParts := core.ParsePath(string(c.Path)) // Unused
 	prefixParts := core.ParsePath(prefix)
 	newPath := c.Path.StripParts(prefixParts)
-	
+
 	return &rawUndefinedCondition{Path: newPath}
 }
 

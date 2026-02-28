@@ -2,75 +2,38 @@ package main
 
 import (
 	"fmt"
-	"strings"
-
-	"github.com/brunoga/deep/v4"
+	"github.com/brunoga/deep/v5"
 )
 
-// User represents a typical user profile in a system.
 type User struct {
-	ID    int
-	Name  string
-	Email string
-	Roles []string
+	Name  string   `json:"name"`
+	Email string   `json:"email"`
+	Roles []string `json:"roles"`
 }
 
 func main() {
-	// 1. Initial state of the user.
-	userA := User{
-		ID:    1,
+	u1 := User{
 		Name:  "Alice",
 		Email: "alice@example.com",
 		Roles: []string{"user"},
 	}
 
-	// 2. Modified state of the user.
-	// We've changed the name, email, and added a role.
-	userB := User{
-		ID:    1,
-		Name:  "Alice Smith",
-		Email: "alice.smith@example.com",
-		Roles: []string{"user", "admin"},
-	}
+	// Create a patch using the type-safe builder
+	builder := v5.Edit(&u1)
+	v5.Set(builder, v5.Field(func(u *User) *string { return &u.Name }), "Alice Smith")
+	v5.Set(builder, v5.Field(func(u *User) *string { return &u.Email }), "alice.smith@example.com")
+	v5.Add(builder, v5.Field(func(u *User) *[]string { return &u.Roles }).Index(1), "admin")
 
-	// 3. Generate a patch representing the difference.
-	patch := deep.MustDiff(userA, userB)
-	if patch == nil {
-		fmt.Println("No changes detected.")
-		return
-	}
+	patch := builder.Build()
 
-	// 4. Use the Walk API to generate an audit log.
-	// This is much better than just printing the struct, as it tells us
-	// exactly WHAT changed, from WHAT, to WHAT.
-	fmt.Println("AUDIT LOG:")
+	fmt.Println("AUDIT LOG (v5):")
 	fmt.Println("----------")
-
-	err := patch.Walk(func(path string, op deep.OpKind, old, new any) error {
-		switch op {
-		case deep.OpReplace:
-			fmt.Printf("Modified field '%s': %v -> %v\n", path, old, new)
-		case deep.OpAdd:
-			// For slice elements, path will look like "Roles[1]"
-			if strings.Contains(path, "[") {
-				fmt.Printf("Added to list '%s': %v\n", path, new)
-			} else {
-				fmt.Printf("Set new field '%s': %v\n", path, new)
-			}
-		case deep.OpRemove:
-			fmt.Printf("Removed field/item '%s' (was: %v)\n", path, old)
+	for _, op := range patch.Operations {
+		switch op.Kind {
+		case v5.OpReplace:
+			fmt.Printf("Modified field '%s': %v -> %v\n", op.Path, op.Old, op.New)
+		case v5.OpAdd:
+			fmt.Printf("Set new field '%s': %v\n", op.Path, op.New)
 		}
-		return nil
-	})
-
-	if err != nil {
-		fmt.Printf("Error walking patch: %v\n", err)
 	}
-
-	// Output should look like:
-	// AUDIT LOG:
-	// ----------
-	// Modified field 'Name': Alice -> Alice Smith
-	// Modified field 'Email': alice@example.com -> alice.smith@example.com
-	// Added to list 'Roles[1]': admin
 }
