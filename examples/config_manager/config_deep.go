@@ -3,8 +3,11 @@ package main
 
 import (
 	"fmt"
-	"github.com/brunoga/deep/v5"
+	"reflect"
+	"regexp"
 	"strings"
+
+	v5 "github.com/brunoga/deep/v5"
 )
 
 // ApplyOperation applies a single operation to Config efficiently.
@@ -37,6 +40,15 @@ func (t *Config) ApplyOperation(op v5.Operation) (bool, error) {
 
 	switch op.Path {
 	case "/version", "/Version":
+		if op.Kind == v5.OpLog {
+			fmt.Printf("DEEP LOG: %v (at %s, field value: %v)\n", op.New, op.Path, t.Version)
+			return true, nil
+		}
+		if op.Kind == v5.OpReplace && op.Strict {
+			if t.Version != op.Old.(int) {
+				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Version)
+			}
+		}
 		if v, ok := op.New.(int); ok {
 			t.Version = v
 			return true, nil
@@ -46,11 +58,29 @@ func (t *Config) ApplyOperation(op v5.Operation) (bool, error) {
 			return true, nil
 		}
 	case "/env", "/Environment":
+		if op.Kind == v5.OpLog {
+			fmt.Printf("DEEP LOG: %v (at %s, field value: %v)\n", op.New, op.Path, t.Environment)
+			return true, nil
+		}
+		if op.Kind == v5.OpReplace && op.Strict {
+			if t.Environment != op.Old.(string) {
+				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Environment)
+			}
+		}
 		if v, ok := op.New.(string); ok {
 			t.Environment = v
 			return true, nil
 		}
 	case "/timeout", "/Timeout":
+		if op.Kind == v5.OpLog {
+			fmt.Printf("DEEP LOG: %v (at %s, field value: %v)\n", op.New, op.Path, t.Timeout)
+			return true, nil
+		}
+		if op.Kind == v5.OpReplace && op.Strict {
+			if t.Timeout != op.Old.(int) {
+				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Timeout)
+			}
+		}
 		if v, ok := op.New.(int); ok {
 			t.Timeout = v
 			return true, nil
@@ -60,12 +90,33 @@ func (t *Config) ApplyOperation(op v5.Operation) (bool, error) {
 			return true, nil
 		}
 	case "/features", "/Features":
+		if op.Kind == v5.OpLog {
+			fmt.Printf("DEEP LOG: %v (at %s, field value: %v)\n", op.New, op.Path, t.Features)
+			return true, nil
+		}
+		if op.Kind == v5.OpReplace && op.Strict {
+			// Complex strict check skipped in prototype
+		}
 		if v, ok := op.New.(map[string]bool); ok {
 			t.Features = v
 			return true, nil
 		}
 	default:
 		if strings.HasPrefix(op.Path, "/features/") {
+			parts := strings.Split(op.Path[len("/features/"):], "/")
+			key := parts[0]
+			if op.Kind == v5.OpRemove {
+				delete(t.Features, key)
+				return true, nil
+			} else {
+				if t.Features == nil {
+					t.Features = make(map[string]bool)
+				}
+				if v, ok := op.New.(bool); ok {
+					t.Features[key] = v
+					return true, nil
+				}
+			}
 		}
 	}
 	return false, nil
@@ -109,8 +160,12 @@ func (t *Config) Diff(other *Config) v5.Patch[Config] {
 				continue
 			}
 			if oldV, ok := t.Features[k]; !ok || v != oldV {
+				kind := v5.OpReplace
+				if !ok {
+					kind = v5.OpAdd
+				}
 				p.Operations = append(p.Operations, v5.Operation{
-					Kind: v5.OpReplace,
+					Kind: kind,
 					Path: fmt.Sprintf("/features/%v", k),
 					Old:  oldV,
 					New:  v,
@@ -133,6 +188,34 @@ func (t *Config) Diff(other *Config) v5.Patch[Config] {
 }
 
 func (t *Config) evaluateCondition(c v5.Condition) (bool, error) {
+	switch c.Op {
+	case "and":
+		for _, sub := range c.Apply {
+			ok, err := t.evaluateCondition(*sub)
+			if err != nil || !ok {
+				return false, err
+			}
+		}
+		return true, nil
+	case "or":
+		for _, sub := range c.Apply {
+			ok, err := t.evaluateCondition(*sub)
+			if err == nil && ok {
+				return true, nil
+			}
+		}
+		return false, nil
+	case "not":
+		if len(c.Apply) > 0 {
+			ok, err := t.evaluateCondition(*c.Apply[0])
+			if err != nil {
+				return false, err
+			}
+			return !ok, nil
+		}
+		return true, nil
+	}
+
 	switch c.Path {
 	case "/version", "/Version":
 		switch c.Op {
@@ -140,6 +223,13 @@ func (t *Config) evaluateCondition(c v5.Condition) (bool, error) {
 			return t.Version == c.Value.(int), nil
 		case "!=":
 			return t.Version != c.Value.(int), nil
+		case "log":
+			fmt.Printf("DEEP LOG CONDITION: %v (at %s, value: %v)\n", c.Value, c.Path, t.Version)
+			return true, nil
+		case "matches":
+			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Version))
+		case "type":
+			return checkType(t.Version, c.Value.(string)), nil
 		}
 	case "/env", "/Environment":
 		switch c.Op {
@@ -147,6 +237,13 @@ func (t *Config) evaluateCondition(c v5.Condition) (bool, error) {
 			return t.Environment == c.Value.(string), nil
 		case "!=":
 			return t.Environment != c.Value.(string), nil
+		case "log":
+			fmt.Printf("DEEP LOG CONDITION: %v (at %s, value: %v)\n", c.Value, c.Path, t.Environment)
+			return true, nil
+		case "matches":
+			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Environment))
+		case "type":
+			return checkType(t.Environment, c.Value.(string)), nil
 		}
 	case "/timeout", "/Timeout":
 		switch c.Op {
@@ -154,6 +251,13 @@ func (t *Config) evaluateCondition(c v5.Condition) (bool, error) {
 			return t.Timeout == c.Value.(int), nil
 		case "!=":
 			return t.Timeout != c.Value.(int), nil
+		case "log":
+			fmt.Printf("DEEP LOG CONDITION: %v (at %s, value: %v)\n", c.Value, c.Path, t.Timeout)
+			return true, nil
+		case "matches":
+			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Timeout))
+		case "type":
+			return checkType(t.Timeout, c.Value.(string)), nil
 		}
 	}
 	return false, fmt.Errorf("unsupported condition path or op: %s", c.Path)
@@ -195,4 +299,33 @@ func (t *Config) Copy() *Config {
 func contains[M ~map[K]V, K comparable, V any](m M, k K) bool {
 	_, ok := m[k]
 	return ok
+}
+
+func checkType(v any, typeName string) bool {
+	switch typeName {
+	case "string":
+		_, ok := v.(string)
+		return ok
+	case "number":
+		switch v.(type) {
+		case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
+			return true
+		}
+	case "boolean":
+		_, ok := v.(bool)
+		return ok
+	case "object":
+		rv := reflect.ValueOf(v)
+		return rv.Kind() == reflect.Struct || rv.Kind() == reflect.Map
+	case "array":
+		rv := reflect.ValueOf(v)
+		return rv.Kind() == reflect.Slice || rv.Kind() == reflect.Array
+	case "null":
+		if v == nil {
+			return true
+		}
+		rv := reflect.ValueOf(v)
+		return (rv.Kind() == reflect.Pointer || rv.Kind() == reflect.Interface || rv.Kind() == reflect.Slice || rv.Kind() == reflect.Map) && rv.IsNil()
+	}
+	return false
 }

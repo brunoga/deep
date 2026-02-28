@@ -3,8 +3,10 @@ package main
 
 import (
 	"fmt"
-	"github.com/brunoga/deep/v5"
+	"reflect"
 	"strings"
+
+	v5 "github.com/brunoga/deep/v5"
 )
 
 // ApplyOperation applies a single operation to Workspace efficiently.
@@ -37,17 +39,45 @@ func (t *Workspace) ApplyOperation(op v5.Operation) (bool, error) {
 
 	switch op.Path {
 	case "/drafts", "/Drafts":
+		if op.Kind == v5.OpLog {
+			fmt.Printf("DEEP LOG: %v (at %s, field value: %v)\n", op.New, op.Path, t.Drafts)
+			return true, nil
+		}
+		if op.Kind == v5.OpReplace && op.Strict {
+			// Complex strict check skipped in prototype
+		}
 		if v, ok := op.New.([]string); ok {
 			t.Drafts = v
 			return true, nil
 		}
 	case "/archive", "/Archive":
+		if op.Kind == v5.OpLog {
+			fmt.Printf("DEEP LOG: %v (at %s, field value: %v)\n", op.New, op.Path, t.Archive)
+			return true, nil
+		}
+		if op.Kind == v5.OpReplace && op.Strict {
+			// Complex strict check skipped in prototype
+		}
 		if v, ok := op.New.(map[string]string); ok {
 			t.Archive = v
 			return true, nil
 		}
 	default:
 		if strings.HasPrefix(op.Path, "/archive/") {
+			parts := strings.Split(op.Path[len("/archive/"):], "/")
+			key := parts[0]
+			if op.Kind == v5.OpRemove {
+				delete(t.Archive, key)
+				return true, nil
+			} else {
+				if t.Archive == nil {
+					t.Archive = make(map[string]string)
+				}
+				if v, ok := op.New.(string); ok {
+					t.Archive[key] = v
+					return true, nil
+				}
+			}
 		}
 	}
 	return false, nil
@@ -86,8 +116,12 @@ func (t *Workspace) Diff(other *Workspace) v5.Patch[Workspace] {
 				continue
 			}
 			if oldV, ok := t.Archive[k]; !ok || v != oldV {
+				kind := v5.OpReplace
+				if !ok {
+					kind = v5.OpAdd
+				}
 				p.Operations = append(p.Operations, v5.Operation{
-					Kind: v5.OpReplace,
+					Kind: kind,
 					Path: fmt.Sprintf("/archive/%v", k),
 					Old:  oldV,
 					New:  v,
@@ -110,6 +144,34 @@ func (t *Workspace) Diff(other *Workspace) v5.Patch[Workspace] {
 }
 
 func (t *Workspace) evaluateCondition(c v5.Condition) (bool, error) {
+	switch c.Op {
+	case "and":
+		for _, sub := range c.Apply {
+			ok, err := t.evaluateCondition(*sub)
+			if err != nil || !ok {
+				return false, err
+			}
+		}
+		return true, nil
+	case "or":
+		for _, sub := range c.Apply {
+			ok, err := t.evaluateCondition(*sub)
+			if err == nil && ok {
+				return true, nil
+			}
+		}
+		return false, nil
+	case "not":
+		if len(c.Apply) > 0 {
+			ok, err := t.evaluateCondition(*c.Apply[0])
+			if err != nil {
+				return false, err
+			}
+			return !ok, nil
+		}
+		return true, nil
+	}
+
 	switch c.Path {
 	}
 	return false, fmt.Errorf("unsupported condition path or op: %s", c.Path)
@@ -143,4 +205,33 @@ func (t *Workspace) Copy() *Workspace {
 func contains[M ~map[K]V, K comparable, V any](m M, k K) bool {
 	_, ok := m[k]
 	return ok
+}
+
+func checkType(v any, typeName string) bool {
+	switch typeName {
+	case "string":
+		_, ok := v.(string)
+		return ok
+	case "number":
+		switch v.(type) {
+		case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
+			return true
+		}
+	case "boolean":
+		_, ok := v.(bool)
+		return ok
+	case "object":
+		rv := reflect.ValueOf(v)
+		return rv.Kind() == reflect.Struct || rv.Kind() == reflect.Map
+	case "array":
+		rv := reflect.ValueOf(v)
+		return rv.Kind() == reflect.Slice || rv.Kind() == reflect.Array
+	case "null":
+		if v == nil {
+			return true
+		}
+		rv := reflect.ValueOf(v)
+		return (rv.Kind() == reflect.Pointer || rv.Kind() == reflect.Interface || rv.Kind() == reflect.Slice || rv.Kind() == reflect.Map) && rv.IsNil()
+	}
+	return false
 }

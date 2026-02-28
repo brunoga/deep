@@ -3,8 +3,10 @@ package main
 
 import (
 	"fmt"
-	"github.com/brunoga/deep/v5"
+	"reflect"
 	"regexp"
+
+	v5 "github.com/brunoga/deep/v5"
 )
 
 // ApplyOperation applies a single operation to Stock efficiently.
@@ -137,7 +139,7 @@ func (t *Stock) evaluateCondition(c v5.Condition) (bool, error) {
 		case "matches":
 			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.SKU))
 		case "type":
-			return v5.CheckType(t.SKU, c.Value.(string)), nil
+			return checkType(t.SKU, c.Value.(string)), nil
 		}
 	case "/q", "/Quantity":
 		switch c.Op {
@@ -151,7 +153,7 @@ func (t *Stock) evaluateCondition(c v5.Condition) (bool, error) {
 		case "matches":
 			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Quantity))
 		case "type":
-			return v5.CheckType(t.Quantity, c.Value.(string)), nil
+			return checkType(t.Quantity, c.Value.(string)), nil
 		}
 	}
 	return false, fmt.Errorf("unsupported condition path or op: %s", c.Path)
@@ -182,7 +184,7 @@ func contains[M ~map[K]V, K comparable, V any](m M, k K) bool {
 	return ok
 }
 
-func CheckType(v any, typeName string) bool {
+func checkType(v any, typeName string) bool {
 	switch typeName {
 	case "string":
 		_, ok := v.(string)
@@ -195,6 +197,18 @@ func CheckType(v any, typeName string) bool {
 	case "boolean":
 		_, ok := v.(bool)
 		return ok
+	case "object":
+		rv := reflect.ValueOf(v)
+		return rv.Kind() == reflect.Struct || rv.Kind() == reflect.Map
+	case "array":
+		rv := reflect.ValueOf(v)
+		return rv.Kind() == reflect.Slice || rv.Kind() == reflect.Array
+	case "null":
+		if v == nil {
+			return true
+		}
+		rv := reflect.ValueOf(v)
+		return (rv.Kind() == reflect.Pointer || rv.Kind() == reflect.Interface || rv.Kind() == reflect.Slice || rv.Kind() == reflect.Map) && rv.IsNil()
 	}
 	return false
 }

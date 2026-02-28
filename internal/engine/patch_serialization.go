@@ -203,14 +203,6 @@ func marshalDiffPatch(p diffPatch) (any, error) {
 	return nil, fmt.Errorf("unknown patch type: %T", p)
 }
 
-func unmarshalDiffPatch(data []byte) (diffPatch, error) {
-	var s patchSurrogate
-	if err := json.Unmarshal(data, &s); err != nil {
-		return nil, err
-	}
-	return convertFromSurrogate(&s)
-}
-
 func unmarshalCondFromMap(d map[string]any, key string) (any, error) {
 	if cData, ok := d[key]; ok && cData != nil {
 		// We use ConditionFromSerializable for 'any' since diffPatch stores 'any' (InternalCondition)

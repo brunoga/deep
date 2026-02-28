@@ -190,7 +190,7 @@ func (p Patch[T]) ToJSONPatch() ([]byte, error) {
 		res = append(res, map[string]any{
 			"op":   "test",
 			"path": "/",
-			"if":   p.Condition.toPredicate(),
+			"if":   p.Condition.toPredicateInternal(),
 		})
 	}
 
@@ -208,10 +208,10 @@ func (p Patch[T]) ToJSONPatch() ([]byte, error) {
 		}
 
 		if op.If != nil {
-			m["if"] = op.If.toPredicate()
+			m["if"] = op.If.toPredicateInternal()
 		}
 		if op.Unless != nil {
-			m["unless"] = op.Unless.toPredicate()
+			m["unless"] = op.Unless.toPredicateInternal()
 		}
 
 		res = append(res, m)
@@ -220,7 +220,7 @@ func (p Patch[T]) ToJSONPatch() ([]byte, error) {
 	return json.Marshal(res)
 }
 
-func (c *Condition) toPredicate() map[string]any {
+func (c *Condition) toPredicateInternal() map[string]any {
 	if c == nil {
 		return nil
 	}
@@ -257,7 +257,7 @@ func (c *Condition) toPredicate() map[string]any {
 		}
 		var apply []map[string]any
 		for _, sub := range c.Apply {
-			apply = append(apply, sub.toPredicate())
+			apply = append(apply, sub.toPredicateInternal())
 		}
 		res["apply"] = apply
 		return res
@@ -276,17 +276,3 @@ type LWW[T any] struct {
 	Timestamp hlc.HLC `json:"t"`
 }
 
-type User struct {
-	ID    int            `json:"id"`
-	Name  string         `json:"full_name"`
-	Info  Detail         `json:"info"`
-	Roles []string       `json:"roles"`
-	Score map[string]int `json:"score"`
-	Bio   Text           `json:"bio"`
-	age   int            // Unexported field
-}
-
-type Detail struct {
-	Age     int
-	Address string `json:"addr"`
-}

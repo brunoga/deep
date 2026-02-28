@@ -52,7 +52,7 @@ func Apply[T any](target *T, p Patch[T]) error {
 		// 2. Fallback to reflection
 		// Strict check (Old value verification)
 		if p.Strict && op.Kind == OpReplace {
-			current, err := resolveV5(v.Elem(), op.Path)
+			current, err := resolveInternal(v.Elem(), op.Path)
 			if err == nil && current.IsValid() {
 				if !core.Equal(current.Interface(), op.Old) {
 					errors = append(errors, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, current.Interface()))
@@ -101,7 +101,7 @@ func Apply[T any](target *T, p Patch[T]) error {
 
 			// LWW logic
 			if op.Timestamp.WallTime != 0 {
-				current, err := resolveV5(v.Elem(), op.Path)
+				current, err := resolveInternal(v.Elem(), op.Path)
 				if err == nil && current.IsValid() {
 					if current.Kind() == reflect.Struct {
 						tsField := current.FieldByName("Timestamp")
@@ -117,24 +117,24 @@ func Apply[T any](target *T, p Patch[T]) error {
 			}
 
 			// We use a custom set logic that uses findField internally
-			err = setValueV5(v.Elem(), op.Path, newVal)
+			err = setValueInternal(v.Elem(), op.Path, newVal)
 		case OpRemove:
-			err = deleteValueV5(v.Elem(), op.Path)
+			err = deleteValueInternal(v.Elem(), op.Path)
 		case OpMove:
 			fromPath := op.Old.(string)
 			var val reflect.Value
-			val, err = resolveV5(v.Elem(), fromPath)
+			val, err = resolveInternal(v.Elem(), fromPath)
 			if err == nil {
-				if err = deleteValueV5(v.Elem(), fromPath); err == nil {
-					err = setValueV5(v.Elem(), op.Path, val)
+				if err = deleteValueInternal(v.Elem(), fromPath); err == nil {
+					err = setValueInternal(v.Elem(), op.Path, val)
 				}
 			}
 		case OpCopy:
 			fromPath := op.Old.(string)
 			var val reflect.Value
-			val, err = resolveV5(v.Elem(), fromPath)
+			val, err = resolveInternal(v.Elem(), fromPath)
 			if err == nil {
-				err = setValueV5(v.Elem(), op.Path, val)
+				err = setValueInternal(v.Elem(), op.Path, val)
 			}
 		case OpLog:
 			fmt.Printf("DEEP LOG: %s (at %s)\n", op.New, op.Path)
@@ -245,7 +245,7 @@ func evaluateCondition(root reflect.Value, c *Condition) (bool, error) {
 		}
 	}
 
-	val, err := resolveV5(root, c.Path)
+	val, err := resolveInternal(root, c.Path)
 	if err != nil {
 		if c.Op == "exists" {
 			return false, nil
@@ -276,13 +276,13 @@ func evaluateCondition(root reflect.Value, c *Condition) (bool, error) {
 		if !ok {
 			return false, fmt.Errorf("type requires string value")
 		}
-		return CheckType(val.Interface(), expectedType), nil
+		return checkType(val.Interface(), expectedType), nil
 	}
 
 	return core.CompareValues(val, reflect.ValueOf(c.Value), c.Op, false)
 }
 
-func CheckType(v any, typeName string) bool {
+func checkType(v any, typeName string) bool {
 	rv := reflect.ValueOf(v)
 	switch typeName {
 	case "string":
@@ -339,7 +339,7 @@ func findField(v reflect.Value, name string) (reflect.Value, reflect.StructField
 	return reflect.Value{}, reflect.StructField{}, false
 }
 
-func resolveV5(root reflect.Value, path string) (reflect.Value, error) {
+func resolveInternal(root reflect.Value, path string) (reflect.Value, error) {
 	parts := core.ParsePath(path)
 	current := root
 	var err error
@@ -390,7 +390,7 @@ func resolveV5(root reflect.Value, path string) (reflect.Value, error) {
 	return current, nil
 }
 
-func setValueV5(v reflect.Value, path string, val reflect.Value) error {
+func setValueInternal(v reflect.Value, path string, val reflect.Value) error {
 	parts := core.ParsePath(path)
 	if len(parts) == 0 {
 		if !v.CanSet() {
@@ -415,7 +415,7 @@ func setValueV5(v reflect.Value, path string, val reflect.Value) error {
 		parentPath = b.String()
 	}
 
-	parent, err := resolveV5(v, parentPath)
+	parent, err := resolveInternal(v, parentPath)
 	if err != nil {
 		return err
 	}
@@ -424,6 +424,9 @@ func setValueV5(v reflect.Value, path string, val reflect.Value) error {
 
 	switch parent.Kind() {
 	case reflect.Map:
+		if parent.IsNil() {
+			return fmt.Errorf("cannot set in nil map")
+		}
 		keyType := parent.Type().Key()
 		var keyVal reflect.Value
 		key := lastPart.Key
@@ -436,6 +439,9 @@ func setValueV5(v reflect.Value, path string, val reflect.Value) error {
 		parent.SetMapIndex(keyVal, core.ConvertValue(val, parent.Type().Elem()))
 		return nil
 	case reflect.Slice:
+		if !parent.CanSet() {
+			return fmt.Errorf("cannot set in un-settable slice at %s", path)
+		}
 		idx := lastPart.Index
 		if idx < 0 || idx > parent.Len() {
 			return fmt.Errorf("index out of bounds")
@@ -455,13 +461,16 @@ func setValueV5(v reflect.Value, path string, val reflect.Value) error {
 		if !ok {
 			return fmt.Errorf("field %s not found", key)
 		}
+		if !f.CanSet() {
+			return fmt.Errorf("cannot set un-settable field %s", key)
+		}
 		f.Set(core.ConvertValue(val, f.Type()))
 		return nil
 	}
 	return fmt.Errorf("cannot set value in %v", parent.Kind())
 }
 
-func deleteValueV5(v reflect.Value, path string) error {
+func deleteValueInternal(v reflect.Value, path string) error {
 	parts := core.ParsePath(path)
 	if len(parts) == 0 {
 		return fmt.Errorf("cannot delete root")
@@ -482,7 +491,7 @@ func deleteValueV5(v reflect.Value, path string) error {
 		parentPath = b.String()
 	}
 
-	parent, err := resolveV5(v, parentPath)
+	parent, err := resolveInternal(v, parentPath)
 	if err != nil {
 		return err
 	}
@@ -491,6 +500,9 @@ func deleteValueV5(v reflect.Value, path string) error {
 
 	switch parent.Kind() {
 	case reflect.Map:
+		if parent.IsNil() {
+			return nil
+		}
 		keyType := parent.Type().Key()
 		var keyVal reflect.Value
 		key := lastPart.Key
@@ -503,6 +515,9 @@ func deleteValueV5(v reflect.Value, path string) error {
 		parent.SetMapIndex(keyVal, reflect.Value{})
 		return nil
 	case reflect.Slice:
+		if !parent.CanSet() {
+			return fmt.Errorf("cannot delete from un-settable slice at %s", path)
+		}
 		idx := lastPart.Index
 		if idx < 0 || idx >= parent.Len() {
 			return fmt.Errorf("index out of bounds")
@@ -519,8 +534,18 @@ func deleteValueV5(v reflect.Value, path string) error {
 		if !ok {
 			return fmt.Errorf("field %s not found", key)
 		}
+		if !f.CanSet() {
+			return fmt.Errorf("cannot delete from un-settable field %s", key)
+		}
 		f.Set(reflect.Zero(f.Type()))
 		return nil
 	}
 	return fmt.Errorf("cannot delete from %v", parent.Kind())
 }
+
+func contains[M ~map[K]V, K comparable, V any](m M, k K) bool {
+	_, ok := m[k]
+	return ok
+}
+
+

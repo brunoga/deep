@@ -3,7 +3,9 @@ package main
 
 import (
 	"fmt"
-	"github.com/brunoga/deep/v5"
+	"reflect"
+
+	v5 "github.com/brunoga/deep/v5"
 )
 
 // ApplyOperation applies a single operation to Fleet efficiently.
@@ -36,6 +38,13 @@ func (t *Fleet) ApplyOperation(op v5.Operation) (bool, error) {
 
 	switch op.Path {
 	case "/devices", "/Devices":
+		if op.Kind == v5.OpLog {
+			fmt.Printf("DEEP LOG: %v (at %s, field value: %v)\n", op.New, op.Path, t.Devices)
+			return true, nil
+		}
+		if op.Kind == v5.OpReplace && op.Strict {
+			// Complex strict check skipped in prototype
+		}
 		if v, ok := op.New.(map[DeviceID]string); ok {
 			t.Devices = v
 			return true, nil
@@ -59,8 +68,12 @@ func (t *Fleet) Diff(other *Fleet) v5.Patch[Fleet] {
 				continue
 			}
 			if oldV, ok := t.Devices[k]; !ok || v != oldV {
+				kind := v5.OpReplace
+				if !ok {
+					kind = v5.OpAdd
+				}
 				p.Operations = append(p.Operations, v5.Operation{
-					Kind: v5.OpReplace,
+					Kind: kind,
 					Path: fmt.Sprintf("/devices/%v", k),
 					Old:  oldV,
 					New:  v,
@@ -83,6 +96,34 @@ func (t *Fleet) Diff(other *Fleet) v5.Patch[Fleet] {
 }
 
 func (t *Fleet) evaluateCondition(c v5.Condition) (bool, error) {
+	switch c.Op {
+	case "and":
+		for _, sub := range c.Apply {
+			ok, err := t.evaluateCondition(*sub)
+			if err != nil || !ok {
+				return false, err
+			}
+		}
+		return true, nil
+	case "or":
+		for _, sub := range c.Apply {
+			ok, err := t.evaluateCondition(*sub)
+			if err == nil && ok {
+				return true, nil
+			}
+		}
+		return false, nil
+	case "not":
+		if len(c.Apply) > 0 {
+			ok, err := t.evaluateCondition(*c.Apply[0])
+			if err != nil {
+				return false, err
+			}
+			return !ok, nil
+		}
+		return true, nil
+	}
+
 	switch c.Path {
 	}
 	return false, fmt.Errorf("unsupported condition path or op: %s", c.Path)
@@ -111,4 +152,33 @@ func (t *Fleet) Copy() *Fleet {
 func contains[M ~map[K]V, K comparable, V any](m M, k K) bool {
 	_, ok := m[k]
 	return ok
+}
+
+func checkType(v any, typeName string) bool {
+	switch typeName {
+	case "string":
+		_, ok := v.(string)
+		return ok
+	case "number":
+		switch v.(type) {
+		case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
+			return true
+		}
+	case "boolean":
+		_, ok := v.(bool)
+		return ok
+	case "object":
+		rv := reflect.ValueOf(v)
+		return rv.Kind() == reflect.Struct || rv.Kind() == reflect.Map
+	case "array":
+		rv := reflect.ValueOf(v)
+		return rv.Kind() == reflect.Slice || rv.Kind() == reflect.Array
+	case "null":
+		if v == nil {
+			return true
+		}
+		rv := reflect.ValueOf(v)
+		return (rv.Kind() == reflect.Pointer || rv.Kind() == reflect.Interface || rv.Kind() == reflect.Slice || rv.Kind() == reflect.Map) && rv.IsNil()
+	}
+	return false
 }

@@ -3,7 +3,10 @@ package main
 
 import (
 	"fmt"
-	"github.com/brunoga/deep/v5"
+	"reflect"
+	"regexp"
+
+	v5 "github.com/brunoga/deep/v5"
 )
 
 // ApplyOperation applies a single operation to UIState efficiently.
@@ -36,11 +39,29 @@ func (t *UIState) ApplyOperation(op v5.Operation) (bool, error) {
 
 	switch op.Path {
 	case "/theme", "/Theme":
+		if op.Kind == v5.OpLog {
+			fmt.Printf("DEEP LOG: %v (at %s, field value: %v)\n", op.New, op.Path, t.Theme)
+			return true, nil
+		}
+		if op.Kind == v5.OpReplace && op.Strict {
+			if t.Theme != op.Old.(string) {
+				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Theme)
+			}
+		}
 		if v, ok := op.New.(string); ok {
 			t.Theme = v
 			return true, nil
 		}
 	case "/sidebar_open", "/Open":
+		if op.Kind == v5.OpLog {
+			fmt.Printf("DEEP LOG: %v (at %s, field value: %v)\n", op.New, op.Path, t.Open)
+			return true, nil
+		}
+		if op.Kind == v5.OpReplace && op.Strict {
+			if t.Open != op.Old.(bool) {
+				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Open)
+			}
+		}
 		if v, ok := op.New.(bool); ok {
 			t.Open = v
 			return true, nil
@@ -73,6 +94,34 @@ func (t *UIState) Diff(other *UIState) v5.Patch[UIState] {
 }
 
 func (t *UIState) evaluateCondition(c v5.Condition) (bool, error) {
+	switch c.Op {
+	case "and":
+		for _, sub := range c.Apply {
+			ok, err := t.evaluateCondition(*sub)
+			if err != nil || !ok {
+				return false, err
+			}
+		}
+		return true, nil
+	case "or":
+		for _, sub := range c.Apply {
+			ok, err := t.evaluateCondition(*sub)
+			if err == nil && ok {
+				return true, nil
+			}
+		}
+		return false, nil
+	case "not":
+		if len(c.Apply) > 0 {
+			ok, err := t.evaluateCondition(*c.Apply[0])
+			if err != nil {
+				return false, err
+			}
+			return !ok, nil
+		}
+		return true, nil
+	}
+
 	switch c.Path {
 	case "/theme", "/Theme":
 		switch c.Op {
@@ -80,6 +129,13 @@ func (t *UIState) evaluateCondition(c v5.Condition) (bool, error) {
 			return t.Theme == c.Value.(string), nil
 		case "!=":
 			return t.Theme != c.Value.(string), nil
+		case "log":
+			fmt.Printf("DEEP LOG CONDITION: %v (at %s, value: %v)\n", c.Value, c.Path, t.Theme)
+			return true, nil
+		case "matches":
+			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Theme))
+		case "type":
+			return checkType(t.Theme, c.Value.(string)), nil
 		}
 	case "/sidebar_open", "/Open":
 		switch c.Op {
@@ -87,6 +143,13 @@ func (t *UIState) evaluateCondition(c v5.Condition) (bool, error) {
 			return t.Open == c.Value.(bool), nil
 		case "!=":
 			return t.Open != c.Value.(bool), nil
+		case "log":
+			fmt.Printf("DEEP LOG CONDITION: %v (at %s, value: %v)\n", c.Value, c.Path, t.Open)
+			return true, nil
+		case "matches":
+			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Open))
+		case "type":
+			return checkType(t.Open, c.Value.(string)), nil
 		}
 	}
 	return false, fmt.Errorf("unsupported condition path or op: %s", c.Path)
@@ -115,4 +178,33 @@ func (t *UIState) Copy() *UIState {
 func contains[M ~map[K]V, K comparable, V any](m M, k K) bool {
 	_, ok := m[k]
 	return ok
+}
+
+func checkType(v any, typeName string) bool {
+	switch typeName {
+	case "string":
+		_, ok := v.(string)
+		return ok
+	case "number":
+		switch v.(type) {
+		case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
+			return true
+		}
+	case "boolean":
+		_, ok := v.(bool)
+		return ok
+	case "object":
+		rv := reflect.ValueOf(v)
+		return rv.Kind() == reflect.Struct || rv.Kind() == reflect.Map
+	case "array":
+		rv := reflect.ValueOf(v)
+		return rv.Kind() == reflect.Slice || rv.Kind() == reflect.Array
+	case "null":
+		if v == nil {
+			return true
+		}
+		rv := reflect.ValueOf(v)
+		return (rv.Kind() == reflect.Pointer || rv.Kind() == reflect.Interface || rv.Kind() == reflect.Slice || rv.Kind() == reflect.Map) && rv.IsNil()
+	}
+	return false
 }

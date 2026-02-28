@@ -111,30 +111,30 @@ func TestCoverage_EngineAdvanced(t *testing.T) {
 		t.Error("Copy or Equal failed")
 	}
 
-	// CheckType
-	if !CheckType("foo", "string") {
-		t.Error("CheckType string failed")
+	// checkType
+	if !checkType("foo", "string") {
+		t.Error("checkType string failed")
 	}
-	if !CheckType(1, "number") {
-		t.Error("CheckType number failed")
+	if !checkType(1, "number") {
+		t.Error("checkType number failed")
 	}
-	if !CheckType(true, "boolean") {
-		t.Error("CheckType boolean failed")
+	if !checkType(true, "boolean") {
+		t.Error("checkType boolean failed")
 	}
-	if !CheckType(u, "object") {
-		t.Error("CheckType object failed")
+	if !checkType(u, "object") {
+		t.Error("checkType object failed")
 	}
-	if !CheckType([]int{}, "array") {
-		t.Error("CheckType array failed")
+	if !checkType([]int{}, "array") {
+		t.Error("checkType array failed")
 	}
-	if !CheckType((*User)(nil), "null") {
-		t.Error("CheckType null failed")
+	if !checkType((*User)(nil), "null") {
+		t.Error("checkType null failed")
 	}
-	if !CheckType(nil, "null") {
-		t.Error("CheckType nil null failed")
+	if !checkType(nil, "null") {
+		t.Error("checkType nil null failed")
 	}
-	if CheckType("foo", "number") {
-		t.Error("CheckType invalid failed")
+	if checkType("foo", "number") {
+		t.Error("checkType invalid failed")
 	}
 
 	// evaluateCondition

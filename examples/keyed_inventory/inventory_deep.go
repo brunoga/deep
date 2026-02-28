@@ -3,7 +3,10 @@ package main
 
 import (
 	"fmt"
-	"github.com/brunoga/deep/v5"
+	"reflect"
+	"regexp"
+
+	v5 "github.com/brunoga/deep/v5"
 )
 
 // ApplyOperation applies a single operation to Item efficiently.
@@ -36,11 +39,29 @@ func (t *Item) ApplyOperation(op v5.Operation) (bool, error) {
 
 	switch op.Path {
 	case "/sku", "/SKU":
+		if op.Kind == v5.OpLog {
+			fmt.Printf("DEEP LOG: %v (at %s, field value: %v)\n", op.New, op.Path, t.SKU)
+			return true, nil
+		}
+		if op.Kind == v5.OpReplace && op.Strict {
+			if t.SKU != op.Old.(string) {
+				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.SKU)
+			}
+		}
 		if v, ok := op.New.(string); ok {
 			t.SKU = v
 			return true, nil
 		}
 	case "/q", "/Quantity":
+		if op.Kind == v5.OpLog {
+			fmt.Printf("DEEP LOG: %v (at %s, field value: %v)\n", op.New, op.Path, t.Quantity)
+			return true, nil
+		}
+		if op.Kind == v5.OpReplace && op.Strict {
+			if t.Quantity != op.Old.(int) {
+				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Quantity)
+			}
+		}
 		if v, ok := op.New.(int); ok {
 			t.Quantity = v
 			return true, nil
@@ -77,6 +98,34 @@ func (t *Item) Diff(other *Item) v5.Patch[Item] {
 }
 
 func (t *Item) evaluateCondition(c v5.Condition) (bool, error) {
+	switch c.Op {
+	case "and":
+		for _, sub := range c.Apply {
+			ok, err := t.evaluateCondition(*sub)
+			if err != nil || !ok {
+				return false, err
+			}
+		}
+		return true, nil
+	case "or":
+		for _, sub := range c.Apply {
+			ok, err := t.evaluateCondition(*sub)
+			if err == nil && ok {
+				return true, nil
+			}
+		}
+		return false, nil
+	case "not":
+		if len(c.Apply) > 0 {
+			ok, err := t.evaluateCondition(*c.Apply[0])
+			if err != nil {
+				return false, err
+			}
+			return !ok, nil
+		}
+		return true, nil
+	}
+
 	switch c.Path {
 	case "/sku", "/SKU":
 		switch c.Op {
@@ -84,6 +133,13 @@ func (t *Item) evaluateCondition(c v5.Condition) (bool, error) {
 			return t.SKU == c.Value.(string), nil
 		case "!=":
 			return t.SKU != c.Value.(string), nil
+		case "log":
+			fmt.Printf("DEEP LOG CONDITION: %v (at %s, value: %v)\n", c.Value, c.Path, t.SKU)
+			return true, nil
+		case "matches":
+			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.SKU))
+		case "type":
+			return checkType(t.SKU, c.Value.(string)), nil
 		}
 	case "/q", "/Quantity":
 		switch c.Op {
@@ -91,6 +147,13 @@ func (t *Item) evaluateCondition(c v5.Condition) (bool, error) {
 			return t.Quantity == c.Value.(int), nil
 		case "!=":
 			return t.Quantity != c.Value.(int), nil
+		case "log":
+			fmt.Printf("DEEP LOG CONDITION: %v (at %s, value: %v)\n", c.Value, c.Path, t.Quantity)
+			return true, nil
+		case "matches":
+			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Quantity))
+		case "type":
+			return checkType(t.Quantity, c.Value.(string)), nil
 		}
 	}
 	return false, fmt.Errorf("unsupported condition path or op: %s", c.Path)
@@ -146,6 +209,13 @@ func (t *Inventory) ApplyOperation(op v5.Operation) (bool, error) {
 
 	switch op.Path {
 	case "/items", "/Items":
+		if op.Kind == v5.OpLog {
+			fmt.Printf("DEEP LOG: %v (at %s, field value: %v)\n", op.New, op.Path, t.Items)
+			return true, nil
+		}
+		if op.Kind == v5.OpReplace && op.Strict {
+			// Complex strict check skipped in prototype
+		}
 		if v, ok := op.New.([]Item); ok {
 			t.Items = v
 			return true, nil
@@ -189,6 +259,34 @@ func (t *Inventory) Diff(other *Inventory) v5.Patch[Inventory] {
 }
 
 func (t *Inventory) evaluateCondition(c v5.Condition) (bool, error) {
+	switch c.Op {
+	case "and":
+		for _, sub := range c.Apply {
+			ok, err := t.evaluateCondition(*sub)
+			if err != nil || !ok {
+				return false, err
+			}
+		}
+		return true, nil
+	case "or":
+		for _, sub := range c.Apply {
+			ok, err := t.evaluateCondition(*sub)
+			if err == nil && ok {
+				return true, nil
+			}
+		}
+		return false, nil
+	case "not":
+		if len(c.Apply) > 0 {
+			ok, err := t.evaluateCondition(*c.Apply[0])
+			if err != nil {
+				return false, err
+			}
+			return !ok, nil
+		}
+		return true, nil
+	}
+
 	switch c.Path {
 	}
 	return false, fmt.Errorf("unsupported condition path or op: %s", c.Path)
@@ -213,4 +311,33 @@ func (t *Inventory) Copy() *Inventory {
 func contains[M ~map[K]V, K comparable, V any](m M, k K) bool {
 	_, ok := m[k]
 	return ok
+}
+
+func checkType(v any, typeName string) bool {
+	switch typeName {
+	case "string":
+		_, ok := v.(string)
+		return ok
+	case "number":
+		switch v.(type) {
+		case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
+			return true
+		}
+	case "boolean":
+		_, ok := v.(bool)
+		return ok
+	case "object":
+		rv := reflect.ValueOf(v)
+		return rv.Kind() == reflect.Struct || rv.Kind() == reflect.Map
+	case "array":
+		rv := reflect.ValueOf(v)
+		return rv.Kind() == reflect.Slice || rv.Kind() == reflect.Array
+	case "null":
+		if v == nil {
+			return true
+		}
+		rv := reflect.ValueOf(v)
+		return (rv.Kind() == reflect.Pointer || rv.Kind() == reflect.Interface || rv.Kind() == reflect.Slice || rv.Kind() == reflect.Map) && rv.IsNil()
+	}
+	return false
 }

@@ -203,9 +203,6 @@ func TestPatch_Serialization_Conditions(t *testing.T) {
 }
 
 func TestPatch_Serialization_Errors(t *testing.T) {
-	// unmarshalDiffPatch error
-	unmarshalDiffPatch([]byte("INVALID"))
-
 	// unmarshalCondFromMap missing key
 	unmarshalCondFromMap(map[string]any{}, "c")
 

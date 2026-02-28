@@ -3,8 +3,10 @@ package main
 
 import (
 	"fmt"
-	"github.com/brunoga/deep/v5"
+	"reflect"
 	"regexp"
+
+	v5 "github.com/brunoga/deep/v5"
 )
 
 // ApplyOperation applies a single operation to Employee efficiently.
@@ -185,7 +187,7 @@ func (t *Employee) evaluateCondition(c v5.Condition) (bool, error) {
 		case "matches":
 			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.ID))
 		case "type":
-			return v5.CheckType(t.ID, c.Value.(string)), nil
+			return checkType(t.ID, c.Value.(string)), nil
 		}
 	case "/name", "/Name":
 		switch c.Op {
@@ -199,7 +201,7 @@ func (t *Employee) evaluateCondition(c v5.Condition) (bool, error) {
 		case "matches":
 			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Name))
 		case "type":
-			return v5.CheckType(t.Name, c.Value.(string)), nil
+			return checkType(t.Name, c.Value.(string)), nil
 		}
 	case "/role", "/Role":
 		switch c.Op {
@@ -213,7 +215,7 @@ func (t *Employee) evaluateCondition(c v5.Condition) (bool, error) {
 		case "matches":
 			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Role))
 		case "type":
-			return v5.CheckType(t.Role, c.Value.(string)), nil
+			return checkType(t.Role, c.Value.(string)), nil
 		}
 	case "/rating", "/Rating":
 		switch c.Op {
@@ -227,7 +229,7 @@ func (t *Employee) evaluateCondition(c v5.Condition) (bool, error) {
 		case "matches":
 			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Rating))
 		case "type":
-			return v5.CheckType(t.Rating, c.Value.(string)), nil
+			return checkType(t.Rating, c.Value.(string)), nil
 		}
 	}
 	return false, fmt.Errorf("unsupported condition path or op: %s", c.Path)
@@ -266,7 +268,7 @@ func contains[M ~map[K]V, K comparable, V any](m M, k K) bool {
 	return ok
 }
 
-func CheckType(v any, typeName string) bool {
+func checkType(v any, typeName string) bool {
 	switch typeName {
 	case "string":
 		_, ok := v.(string)
@@ -279,6 +281,18 @@ func CheckType(v any, typeName string) bool {
 	case "boolean":
 		_, ok := v.(bool)
 		return ok
+	case "object":
+		rv := reflect.ValueOf(v)
+		return rv.Kind() == reflect.Struct || rv.Kind() == reflect.Map
+	case "array":
+		rv := reflect.ValueOf(v)
+		return rv.Kind() == reflect.Slice || rv.Kind() == reflect.Array
+	case "null":
+		if v == nil {
+			return true
+		}
+		rv := reflect.ValueOf(v)
+		return (rv.Kind() == reflect.Pointer || rv.Kind() == reflect.Interface || rv.Kind() == reflect.Slice || rv.Kind() == reflect.Map) && rv.IsNil()
 	}
 	return false
 }

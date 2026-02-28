@@ -20,7 +20,7 @@ type Path[T, V any] struct {
 // String returns the string representation of the path.
 func (p Path[T, V]) String() string {
 	if p.path == "" && p.selector != nil {
-		p.path = resolvePath(p.selector)
+		p.path = resolvePathInternal(p.selector)
 	}
 	return p.path
 }
@@ -51,7 +51,7 @@ var (
 	pathCacheMu sync.RWMutex
 )
 
-func resolvePath[T, V any](s Selector[T, V]) string {
+func resolvePathInternal[T, V any](s Selector[T, V]) string {
 	var zero T
 	typ := reflect.TypeOf(zero)
 
@@ -84,12 +84,12 @@ func resolvePath[T, V any](s Selector[T, V]) string {
 		pathCache[typ] = make(map[uintptr]string)
 	}
 
-	scanStruct("", typ, 0, pathCache[typ])
+	scanStructInternal("", typ, 0, pathCache[typ])
 
 	return pathCache[typ][offset]
 }
 
-func scanStruct(prefix string, typ reflect.Type, baseOffset uintptr, cache map[uintptr]string) {
+func scanStructInternal(prefix string, typ reflect.Type, baseOffset uintptr, cache map[uintptr]string) {
 	for i := 0; i < typ.NumField(); i++ {
 		field := typ.Field(i)
 
@@ -111,7 +111,8 @@ func scanStruct(prefix string, typ reflect.Type, baseOffset uintptr, cache map[u
 		}
 
 		if fieldType.Kind() == reflect.Struct {
-			scanStruct(fieldPath, fieldType, offset, cache)
+			scanStructInternal(fieldPath, fieldType, offset, cache)
 		}
 	}
 }
+

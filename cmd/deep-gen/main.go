@@ -29,6 +29,10 @@ func (g *Generator) header(fields []FieldInfo) {
 	g.buf.WriteString("\t\"fmt\"\n")
 	g.buf.WriteString("\t\"regexp\"\n")
 
+	if g.pkgName != "v5" {
+		g.buf.WriteString("\t\"reflect\"\n")
+	}
+
 	needsStrings := false
 	for _, f := range fields {
 		if f.Ignore {
@@ -152,14 +156,20 @@ func (g *Generator) generate(typeName string, fields []FieldInfo) {
 			if f.ReadOnly {
 				g.buf.WriteString(fmt.Sprintf("\t\t\treturn true, fmt.Errorf(\"field %%s is read-only\", op.Path)\n"))
 			} else {
+				isPtr := strings.HasPrefix(f.Type, "*")
 				selfArg := "(&t." + f.Name + ")"
-				if strings.HasPrefix(f.Type, "*") {
+				if isPtr {
 					selfArg = "t." + f.Name
 				}
-				g.buf.WriteString(fmt.Sprintf("\t\t\tif %s != nil {\n", selfArg))
-				g.buf.WriteString(fmt.Sprintf("\t\t\t\top.Path = op.Path[len(\"/%s/\")-1:]\n", f.JSONName))
-				g.buf.WriteString(fmt.Sprintf("\t\t\t\treturn %s.ApplyOperation(op)\n", selfArg))
-				g.buf.WriteString("\t\t\t}\n")
+				if isPtr {
+					g.buf.WriteString(fmt.Sprintf("\t\t\tif %s != nil {\n", selfArg))
+					g.buf.WriteString(fmt.Sprintf("\t\t\t\top.Path = op.Path[len(\"/%s/\")-1:]\n", f.JSONName))
+					g.buf.WriteString(fmt.Sprintf("\t\t\t\treturn %s.ApplyOperation(op)\n", selfArg))
+					g.buf.WriteString("\t\t\t}\n")
+				} else {
+					g.buf.WriteString(fmt.Sprintf("\t\t\top.Path = op.Path[len(\"/%s/\")-1:]\n", f.JSONName))
+					g.buf.WriteString(fmt.Sprintf("\t\t\treturn %s.ApplyOperation(op)\n", selfArg))
+				}
 			}
 			g.buf.WriteString("\t\t}\n")
 		}
@@ -210,16 +220,23 @@ func (g *Generator) generate(typeName string, fields []FieldInfo) {
 		}
 
 		if (f.IsStruct || f.IsText) && !f.Atomic {
+			isPtr := strings.HasPrefix(f.Type, "*")
 			otherArg := "&other." + f.Name
 			selfArg := "(&t." + f.Name + ")"
-			if strings.HasPrefix(f.Type, "*") {
+			if isPtr {
 				otherArg = "other." + f.Name
 				selfArg = "t." + f.Name
 			}
 			if f.IsText {
 				otherArg = "other." + f.Name
 			}
-			g.buf.WriteString(fmt.Sprintf("\tif %s != nil && %s != nil {\n", selfArg, otherArg))
+
+			if isPtr {
+				g.buf.WriteString(fmt.Sprintf("\tif %s != nil && %s != nil {\n", selfArg, otherArg))
+			} else if f.IsText {
+				g.buf.WriteString(fmt.Sprintf("\tif t.%s != nil && %s != nil {\n", f.Name, otherArg))
+			}
+
 			g.buf.WriteString(fmt.Sprintf("\t\tsub%s := %s.Diff(%s)\n", f.Name, selfArg, otherArg))
 			g.buf.WriteString(fmt.Sprintf("\t\tfor _, op := range sub%s.Operations {\n", f.Name))
 			g.buf.WriteString(fmt.Sprintf("\t\t\tif op.Path == \"\" || op.Path == \"/\" {\n"))
@@ -229,7 +246,10 @@ func (g *Generator) generate(typeName string, fields []FieldInfo) {
 			g.buf.WriteString(fmt.Sprintf("\t\t\t}\n"))
 			g.buf.WriteString("\t\t\tp.Operations = append(p.Operations, op)\n")
 			g.buf.WriteString("\t\t}\n")
-			g.buf.WriteString("\t}\n")
+
+			if isPtr || f.IsText {
+				g.buf.WriteString("\t}\n")
+			}
 		} else if f.IsCollection && !f.Atomic {
 			if strings.HasPrefix(f.Type, "map[") {
 				g.buf.WriteString(fmt.Sprintf("\tif other.%s != nil {\n", f.Name))
@@ -380,7 +400,7 @@ func (g *Generator) generate(typeName string, fields []FieldInfo) {
 		g.buf.WriteString(fmt.Sprintf("\t\tcase \"!=\": return t.%s != c.Value.(%s), nil\n", f.Name, f.Type))
 		g.buf.WriteString(fmt.Sprintf("\t\tcase \"log\": fmt.Printf(\"DEEP LOG CONDITION: %%v (at %%s, value: %%v)\\n\", c.Value, c.Path, t.%s); return true, nil\n", f.Name))
 		g.buf.WriteString(fmt.Sprintf("\t\tcase \"matches\": return regexp.MatchString(c.Value.(string), fmt.Sprintf(\"%%v\", t.%s))\n", f.Name))
-		g.buf.WriteString(fmt.Sprintf("\t\tcase \"type\": return %sCheckType(t.%s, c.Value.(string)), nil\n", pkgPrefix, f.Name))
+		g.buf.WriteString(fmt.Sprintf("\t\tcase \"type\": return checkType(t.%s, c.Value.(string)), nil\n", f.Name))
 		g.buf.WriteString("\t\t}\n")
 	}
 	g.buf.WriteString("\t}\n")
@@ -394,15 +414,20 @@ func (g *Generator) generate(typeName string, fields []FieldInfo) {
 		if f.Ignore {
 			continue
 		}
+		isPtr := strings.HasPrefix(f.Type, "*")
 		selfArg := "(&t." + f.Name + ")"
 		otherArg := "(&other." + f.Name + ")"
-		if strings.HasPrefix(f.Type, "*") {
+		if isPtr {
 			selfArg = "t." + f.Name
 			otherArg = "other." + f.Name
 		}
 		if f.IsStruct {
-			g.buf.WriteString(fmt.Sprintf("\tif (%s == nil) != (%s == nil) { return false }\n", selfArg, otherArg))
-			g.buf.WriteString(fmt.Sprintf("\tif %s != nil && !%s.Equal(%s) { return false }\n", selfArg, selfArg, otherArg))
+			if isPtr {
+				g.buf.WriteString(fmt.Sprintf("\tif (%s == nil) != (%s == nil) { return false }\n", selfArg, otherArg))
+				g.buf.WriteString(fmt.Sprintf("\tif %s != nil && !%s.Equal(%s) { return false }\n", selfArg, selfArg, otherArg))
+			} else {
+				g.buf.WriteString(fmt.Sprintf("\tif !%s.Equal(%s) { return false }\n", selfArg, otherArg))
+			}
 		} else if f.IsText {
 			g.buf.WriteString(fmt.Sprintf("\tif len(t.%s) != len(other.%s) { return false }\n", f.Name, f.Name))
 			g.buf.WriteString(fmt.Sprintf("\tfor i := range t.%s {\n", f.Name))
@@ -444,17 +469,18 @@ func (g *Generator) generate(typeName string, fields []FieldInfo) {
 			continue
 		}
 		if f.IsStruct {
+			isPtr := strings.HasPrefix(f.Type, "*")
 			selfArg := "(&t." + f.Name + ")"
-			if strings.HasPrefix(f.Type, "*") {
+			if isPtr {
 				selfArg = "t." + f.Name
 			}
-			g.buf.WriteString(fmt.Sprintf("\tif %s != nil {\n", selfArg))
-			if strings.HasPrefix(f.Type, "*") {
+			if isPtr {
+				g.buf.WriteString(fmt.Sprintf("\tif %s != nil {\n", selfArg))
 				g.buf.WriteString(fmt.Sprintf("\t\tres.%s = %s.Copy()\n", f.Name, selfArg))
+				g.buf.WriteString("\t}\n")
 			} else {
-				g.buf.WriteString(fmt.Sprintf("\t\tres.%s = *%s.Copy()\n", f.Name, selfArg))
+				g.buf.WriteString(fmt.Sprintf("\tres.%s = *%s.Copy()\n", f.Name, selfArg))
 			}
-			g.buf.WriteString("\t}\n")
 		}
 		if f.IsCollection && strings.HasPrefix(f.Type, "map[") {
 			g.buf.WriteString(fmt.Sprintf("\tif t.%s != nil {\n", f.Name))
@@ -686,14 +712,14 @@ func main() {
 	}
 
 	if g != nil {
-		// helper for map contains check
-		g.buf.WriteString("\nfunc contains[M ~map[K]V, K comparable, V any](m M, k K) bool {\n")
-		g.buf.WriteString("\t_, ok := m[k]\n")
-		g.buf.WriteString("\treturn ok\n")
-		g.buf.WriteString("}\n")
-
 		if g.pkgName != "v5" {
-			g.buf.WriteString("\nfunc CheckType(v any, typeName string) bool {\n")
+			// helper for map contains check
+			g.buf.WriteString("\nfunc contains[M ~map[K]V, K comparable, V any](m M, k K) bool {\n")
+			g.buf.WriteString("\t_, ok := m[k]\n")
+			g.buf.WriteString("\treturn ok\n")
+			g.buf.WriteString("}\n")
+
+			g.buf.WriteString("\nfunc checkType(v any, typeName string) bool {\n")
 			g.buf.WriteString("\tswitch typeName {\n")
 			g.buf.WriteString("\tcase \"string\":\n")
 			g.buf.WriteString("\t\t_, ok := v.(string)\n")
@@ -706,10 +732,21 @@ func main() {
 			g.buf.WriteString("\tcase \"boolean\":\n")
 			g.buf.WriteString("\t\t_, ok := v.(bool)\n")
 			g.buf.WriteString("\t\treturn ok\n")
+			g.buf.WriteString("\tcase \"object\":\n")
+			g.buf.WriteString("\t\trv := reflect.ValueOf(v)\n")
+			g.buf.WriteString("\t\treturn rv.Kind() == reflect.Struct || rv.Kind() == reflect.Map\n")
+			g.buf.WriteString("\tcase \"array\":\n")
+			g.buf.WriteString("\t\trv := reflect.ValueOf(v)\n")
+			g.buf.WriteString("\t\treturn rv.Kind() == reflect.Slice || rv.Kind() == reflect.Array\n")
+			g.buf.WriteString("\tcase \"null\":\n")
+			g.buf.WriteString("\t\tif v == nil { return true }\n")
+			g.buf.WriteString("\t\trv := reflect.ValueOf(v)\n")
+			g.buf.WriteString("\t\treturn (rv.Kind() == reflect.Pointer || rv.Kind() == reflect.Interface || rv.Kind() == reflect.Slice || rv.Kind() == reflect.Map) && rv.IsNil()\n")
 			g.buf.WriteString("\t}\n")
 			g.buf.WriteString("\treturn false\n")
 			g.buf.WriteString("}\n")
 		}
+
 		fmt.Print(g.buf.String())
 	}
 }

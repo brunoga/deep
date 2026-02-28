@@ -136,10 +136,8 @@ func (t *User) ApplyOperation(op Operation) (bool, error) {
 		}
 	default:
 		if strings.HasPrefix(op.Path, "/info/") {
-			if (&t.Info) != nil {
-				op.Path = op.Path[len("/info/")-1:]
-				return (&t.Info).ApplyOperation(op)
-			}
+			op.Path = op.Path[len("/info/")-1:]
+			return (&t.Info).ApplyOperation(op)
 		}
 		if strings.HasPrefix(op.Path, "/score/") {
 			parts := strings.Split(op.Path[len("/score/"):], "/")
@@ -180,16 +178,14 @@ func (t *User) Diff(other *User) Patch[User] {
 			New:  other.Name,
 		})
 	}
-	if (&t.Info) != nil && &other.Info != nil {
-		subInfo := (&t.Info).Diff(&other.Info)
-		for _, op := range subInfo.Operations {
-			if op.Path == "" || op.Path == "/" {
-				op.Path = "/info"
-			} else {
-				op.Path = "/info" + op.Path
-			}
-			p.Operations = append(p.Operations, op)
+	subInfo := (&t.Info).Diff(&other.Info)
+	for _, op := range subInfo.Operations {
+		if op.Path == "" || op.Path == "/" {
+			op.Path = "/info"
+		} else {
+			op.Path = "/info" + op.Path
 		}
+		p.Operations = append(p.Operations, op)
 	}
 	if len(t.Roles) != len(other.Roles) {
 		p.Operations = append(p.Operations, Operation{
@@ -245,7 +241,7 @@ func (t *User) Diff(other *User) Patch[User] {
 			}
 		}
 	}
-	if (&t.Bio) != nil && other.Bio != nil {
+	if t.Bio != nil && other.Bio != nil {
 		subBio := (&t.Bio).Diff(other.Bio)
 		for _, op := range subBio.Operations {
 			if op.Path == "" || op.Path == "/" {
@@ -309,7 +305,7 @@ func (t *User) evaluateCondition(c Condition) (bool, error) {
 		case "matches":
 			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.ID))
 		case "type":
-			return CheckType(t.ID, c.Value.(string)), nil
+			return checkType(t.ID, c.Value.(string)), nil
 		}
 	case "/full_name", "/Name":
 		switch c.Op {
@@ -323,7 +319,7 @@ func (t *User) evaluateCondition(c Condition) (bool, error) {
 		case "matches":
 			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Name))
 		case "type":
-			return CheckType(t.Name, c.Value.(string)), nil
+			return checkType(t.Name, c.Value.(string)), nil
 		}
 	case "/age":
 		switch c.Op {
@@ -337,7 +333,7 @@ func (t *User) evaluateCondition(c Condition) (bool, error) {
 		case "matches":
 			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.age))
 		case "type":
-			return CheckType(t.age, c.Value.(string)), nil
+			return checkType(t.age, c.Value.(string)), nil
 		}
 	}
 	return false, fmt.Errorf("unsupported condition path or op: %s", c.Path)
@@ -351,10 +347,7 @@ func (t *User) Equal(other *User) bool {
 	if t.Name != other.Name {
 		return false
 	}
-	if ((&t.Info) == nil) != ((&other.Info) == nil) {
-		return false
-	}
-	if (&t.Info) != nil && !(&t.Info).Equal((&other.Info)) {
+	if !(&t.Info).Equal((&other.Info)) {
 		return false
 	}
 	if len(t.Roles) != len(other.Roles) {
@@ -386,9 +379,7 @@ func (t *User) Copy() *User {
 		Bio:   append(Text(nil), t.Bio...),
 		age:   t.age,
 	}
-	if (&t.Info) != nil {
-		res.Info = *(&t.Info).Copy()
-	}
+	res.Info = *(&t.Info).Copy()
 	if t.Score != nil {
 		res.Score = make(map[string]int)
 		for k, v := range t.Score {
@@ -528,7 +519,7 @@ func (t *Detail) evaluateCondition(c Condition) (bool, error) {
 		case "matches":
 			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Age))
 		case "type":
-			return CheckType(t.Age, c.Value.(string)), nil
+			return checkType(t.Age, c.Value.(string)), nil
 		}
 	case "/addr", "/Address":
 		switch c.Op {
@@ -542,7 +533,7 @@ func (t *Detail) evaluateCondition(c Condition) (bool, error) {
 		case "matches":
 			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Address))
 		case "type":
-			return CheckType(t.Address, c.Value.(string)), nil
+			return checkType(t.Address, c.Value.(string)), nil
 		}
 	}
 	return false, fmt.Errorf("unsupported condition path or op: %s", c.Path)
@@ -566,9 +557,4 @@ func (t *Detail) Copy() *Detail {
 		Address: t.Address,
 	}
 	return res
-}
-
-func contains[M ~map[K]V, K comparable, V any](m M, k K) bool {
-	_, ok := m[k]
-	return ok
 }

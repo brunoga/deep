@@ -3,8 +3,10 @@ package main
 
 import (
 	"fmt"
-	"github.com/brunoga/deep/v5"
+	"reflect"
 	"regexp"
+
+	v5 "github.com/brunoga/deep/v5"
 )
 
 // ApplyOperation applies a single operation to ProxyConfig efficiently.
@@ -137,7 +139,7 @@ func (t *ProxyConfig) evaluateCondition(c v5.Condition) (bool, error) {
 		case "matches":
 			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Host))
 		case "type":
-			return v5.CheckType(t.Host, c.Value.(string)), nil
+			return checkType(t.Host, c.Value.(string)), nil
 		}
 	case "/port", "/Port":
 		switch c.Op {
@@ -151,7 +153,7 @@ func (t *ProxyConfig) evaluateCondition(c v5.Condition) (bool, error) {
 		case "matches":
 			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Port))
 		case "type":
-			return v5.CheckType(t.Port, c.Value.(string)), nil
+			return checkType(t.Port, c.Value.(string)), nil
 		}
 	}
 	return false, fmt.Errorf("unsupported condition path or op: %s", c.Path)
@@ -289,7 +291,7 @@ func (t *SystemMeta) evaluateCondition(c v5.Condition) (bool, error) {
 		case "matches":
 			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.ClusterID))
 		case "type":
-			return v5.CheckType(t.ClusterID, c.Value.(string)), nil
+			return checkType(t.ClusterID, c.Value.(string)), nil
 		}
 	}
 	return false, fmt.Errorf("unsupported condition path or op: %s", c.Path)
@@ -300,10 +302,7 @@ func (t *SystemMeta) Equal(other *SystemMeta) bool {
 	if t.ClusterID != other.ClusterID {
 		return false
 	}
-	if ((&t.Settings) == nil) != ((&other.Settings) == nil) {
-		return false
-	}
-	if (&t.Settings) != nil && !(&t.Settings).Equal((&other.Settings)) {
+	if !(&t.Settings).Equal((&other.Settings)) {
 		return false
 	}
 	return true
@@ -314,9 +313,7 @@ func (t *SystemMeta) Copy() *SystemMeta {
 	res := &SystemMeta{
 		ClusterID: t.ClusterID,
 	}
-	if (&t.Settings) != nil {
-		res.Settings = *(&t.Settings).Copy()
-	}
+	res.Settings = *(&t.Settings).Copy()
 	return res
 }
 
@@ -325,7 +322,7 @@ func contains[M ~map[K]V, K comparable, V any](m M, k K) bool {
 	return ok
 }
 
-func CheckType(v any, typeName string) bool {
+func checkType(v any, typeName string) bool {
 	switch typeName {
 	case "string":
 		_, ok := v.(string)
@@ -338,6 +335,18 @@ func CheckType(v any, typeName string) bool {
 	case "boolean":
 		_, ok := v.(bool)
 		return ok
+	case "object":
+		rv := reflect.ValueOf(v)
+		return rv.Kind() == reflect.Struct || rv.Kind() == reflect.Map
+	case "array":
+		rv := reflect.ValueOf(v)
+		return rv.Kind() == reflect.Slice || rv.Kind() == reflect.Array
+	case "null":
+		if v == nil {
+			return true
+		}
+		rv := reflect.ValueOf(v)
+		return (rv.Kind() == reflect.Pointer || rv.Kind() == reflect.Interface || rv.Kind() == reflect.Slice || rv.Kind() == reflect.Map) && rv.IsNil()
 	}
 	return false
 }

@@ -3,7 +3,10 @@ package main
 
 import (
 	"fmt"
-	"github.com/brunoga/deep/v5"
+	"reflect"
+	"regexp"
+
+	v5 "github.com/brunoga/deep/v5"
 )
 
 // ApplyOperation applies a single operation to Resource efficiently.
@@ -36,16 +39,43 @@ func (t *Resource) ApplyOperation(op v5.Operation) (bool, error) {
 
 	switch op.Path {
 	case "/id", "/ID":
+		if op.Kind == v5.OpLog {
+			fmt.Printf("DEEP LOG: %v (at %s, field value: %v)\n", op.New, op.Path, t.ID)
+			return true, nil
+		}
+		if op.Kind == v5.OpReplace && op.Strict {
+			if t.ID != op.Old.(string) {
+				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.ID)
+			}
+		}
 		if v, ok := op.New.(string); ok {
 			t.ID = v
 			return true, nil
 		}
 	case "/data", "/Data":
+		if op.Kind == v5.OpLog {
+			fmt.Printf("DEEP LOG: %v (at %s, field value: %v)\n", op.New, op.Path, t.Data)
+			return true, nil
+		}
+		if op.Kind == v5.OpReplace && op.Strict {
+			if t.Data != op.Old.(string) {
+				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Data)
+			}
+		}
 		if v, ok := op.New.(string); ok {
 			t.Data = v
 			return true, nil
 		}
 	case "/value", "/Value":
+		if op.Kind == v5.OpLog {
+			fmt.Printf("DEEP LOG: %v (at %s, field value: %v)\n", op.New, op.Path, t.Value)
+			return true, nil
+		}
+		if op.Kind == v5.OpReplace && op.Strict {
+			if t.Value != op.Old.(int) {
+				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Value)
+			}
+		}
 		if v, ok := op.New.(int); ok {
 			t.Value = v
 			return true, nil
@@ -90,6 +120,34 @@ func (t *Resource) Diff(other *Resource) v5.Patch[Resource] {
 }
 
 func (t *Resource) evaluateCondition(c v5.Condition) (bool, error) {
+	switch c.Op {
+	case "and":
+		for _, sub := range c.Apply {
+			ok, err := t.evaluateCondition(*sub)
+			if err != nil || !ok {
+				return false, err
+			}
+		}
+		return true, nil
+	case "or":
+		for _, sub := range c.Apply {
+			ok, err := t.evaluateCondition(*sub)
+			if err == nil && ok {
+				return true, nil
+			}
+		}
+		return false, nil
+	case "not":
+		if len(c.Apply) > 0 {
+			ok, err := t.evaluateCondition(*c.Apply[0])
+			if err != nil {
+				return false, err
+			}
+			return !ok, nil
+		}
+		return true, nil
+	}
+
 	switch c.Path {
 	case "/id", "/ID":
 		switch c.Op {
@@ -97,6 +155,13 @@ func (t *Resource) evaluateCondition(c v5.Condition) (bool, error) {
 			return t.ID == c.Value.(string), nil
 		case "!=":
 			return t.ID != c.Value.(string), nil
+		case "log":
+			fmt.Printf("DEEP LOG CONDITION: %v (at %s, value: %v)\n", c.Value, c.Path, t.ID)
+			return true, nil
+		case "matches":
+			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.ID))
+		case "type":
+			return checkType(t.ID, c.Value.(string)), nil
 		}
 	case "/data", "/Data":
 		switch c.Op {
@@ -104,6 +169,13 @@ func (t *Resource) evaluateCondition(c v5.Condition) (bool, error) {
 			return t.Data == c.Value.(string), nil
 		case "!=":
 			return t.Data != c.Value.(string), nil
+		case "log":
+			fmt.Printf("DEEP LOG CONDITION: %v (at %s, value: %v)\n", c.Value, c.Path, t.Data)
+			return true, nil
+		case "matches":
+			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Data))
+		case "type":
+			return checkType(t.Data, c.Value.(string)), nil
 		}
 	case "/value", "/Value":
 		switch c.Op {
@@ -111,6 +183,13 @@ func (t *Resource) evaluateCondition(c v5.Condition) (bool, error) {
 			return t.Value == c.Value.(int), nil
 		case "!=":
 			return t.Value != c.Value.(int), nil
+		case "log":
+			fmt.Printf("DEEP LOG CONDITION: %v (at %s, value: %v)\n", c.Value, c.Path, t.Value)
+			return true, nil
+		case "matches":
+			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Value))
+		case "type":
+			return checkType(t.Value, c.Value.(string)), nil
 		}
 	}
 	return false, fmt.Errorf("unsupported condition path or op: %s", c.Path)
@@ -143,4 +222,33 @@ func (t *Resource) Copy() *Resource {
 func contains[M ~map[K]V, K comparable, V any](m M, k K) bool {
 	_, ok := m[k]
 	return ok
+}
+
+func checkType(v any, typeName string) bool {
+	switch typeName {
+	case "string":
+		_, ok := v.(string)
+		return ok
+	case "number":
+		switch v.(type) {
+		case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
+			return true
+		}
+	case "boolean":
+		_, ok := v.(bool)
+		return ok
+	case "object":
+		rv := reflect.ValueOf(v)
+		return rv.Kind() == reflect.Struct || rv.Kind() == reflect.Map
+	case "array":
+		rv := reflect.ValueOf(v)
+		return rv.Kind() == reflect.Slice || rv.Kind() == reflect.Array
+	case "null":
+		if v == nil {
+			return true
+		}
+		rv := reflect.ValueOf(v)
+		return (rv.Kind() == reflect.Pointer || rv.Kind() == reflect.Interface || rv.Kind() == reflect.Slice || rv.Kind() == reflect.Map) && rv.IsNil()
+	}
+	return false
 }
