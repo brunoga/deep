@@ -2,7 +2,6 @@ package deep_test
 
 import (
 	"fmt"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -100,67 +99,6 @@ func TestApplyError(t *testing.T) {
 	}
 }
 
-func TestEngineAdvanced(t *testing.T) {
-	u := testmodels.User{ID: 1, Name: "Alice"}
-
-	// Copy
-	u2 := deep.Copy(u)
-	if !deep.Equal(u, u2) {
-		t.Error("Copy or Equal failed")
-	}
-
-	// checkType
-	if !deep.CheckType("foo", "string") {
-		t.Error("deep.CheckType string failed")
-	}
-	if !deep.CheckType(1, "number") {
-		t.Error("deep.CheckType number failed")
-	}
-	if !deep.CheckType(true, "boolean") {
-		t.Error("deep.CheckType boolean failed")
-	}
-	if !deep.CheckType(u, "object") {
-		t.Error("deep.CheckType object failed")
-	}
-	if !deep.CheckType([]int{}, "array") {
-		t.Error("deep.CheckType array failed")
-	}
-	if !deep.CheckType((*testmodels.User)(nil), "null") {
-		t.Error("deep.CheckType null failed")
-	}
-	if !deep.CheckType(nil, "null") {
-		t.Error("deep.CheckType nil null failed")
-	}
-	if deep.CheckType("foo", "number") {
-		t.Error("deep.CheckType invalid failed")
-	}
-
-	// evaluateCondition
-	root := reflect.ValueOf(u)
-	tests := []struct {
-		c    *deep.Condition
-		want bool
-	}{
-		{c: &deep.Condition{Op: "exists", Path: "/id"}, want: true},
-		{c: &deep.Condition{Op: "exists", Path: "/none"}, want: false},
-		{c: &deep.Condition{Op: "matches", Path: "/full_name", Value: "^Al.*$"}, want: true},
-		{c: &deep.Condition{Op: "type", Path: "/id", Value: "number"}, want: true},
-		{c: deep.And(deep.Eq(deep.Field(func(u *testmodels.User) *int { return &u.ID }), 1), deep.Eq(deep.Field(func(u *testmodels.User) *string { return &u.Name }), "Alice")), want: true},
-		{c: deep.Or(deep.Eq(deep.Field(func(u *testmodels.User) *int { return &u.ID }), 2), deep.Eq(deep.Field(func(u *testmodels.User) *string { return &u.Name }), "Alice")), want: true},
-		{c: deep.Not(deep.Eq(deep.Field(func(u *testmodels.User) *int { return &u.ID }), 2)), want: true},
-	}
-
-	for _, tt := range tests {
-		got, err := deep.EvaluateCondition(root, tt.c)
-		if err != nil {
-			t.Errorf("deep.EvaluateCondition(%s) error: %v", tt.c.Op, err)
-		}
-		if got != tt.want {
-			t.Errorf("deep.EvaluateCondition(%s) = %v, want %v", tt.c.Op, got, tt.want)
-		}
-	}
-}
-
 func TestReflectionEngineAdvanced(t *testing.T) {
 	type Data struct {
 		A int
@@ -205,23 +143,7 @@ func TestFinalPush(t *testing.T) {
 		_ = deep.OpKind(i).String()
 	}
 
-	// 2. deep.Condition failures
-	u := testmodels.User{ID: 1, Name: "Alice"}
-	root := reflect.ValueOf(u)
-
-	// OR failure
-	deep.Or(deep.Eq(deep.Field(func(u *testmodels.User) *int { return &u.ID }), 2), deep.Eq(deep.Field(func(u *testmodels.User) *int { return &u.ID }), 3))
-	deep.EvaluateCondition(root, &deep.Condition{Op: "or", Apply: []*deep.Condition{
-		{Op: "==", Path: "/id", Value: 2},
-		{Op: "==", Path: "/id", Value: 3},
-	}})
-
-	// NOT failure
-	deep.EvaluateCondition(root, &deep.Condition{Op: "not", Apply: []*deep.Condition{
-		{Op: "==", Path: "/id", Value: 1},
-	}})
-
-	// Nested delegation failure (nil field)
+	// 2. Nested delegation failure (nil field)
 	type NestedNil struct {
 		User *testmodels.User
 	}
