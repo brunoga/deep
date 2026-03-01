@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"reflect"
 	"testing"
 )
 
@@ -53,10 +54,18 @@ func TestRegisterCustomDiff_Example(t *testing.T) {
 		if a.ID == b.ID {
 			return nil, nil
 		}
-		// Return atomic patch replacing entire struct
-		bld := NewPatchBuilder[CustomRegistered]()
-		bld.Set(a, b)
-		return bld.Build()
+		/*
+			// Return atomic patch replacing entire struct
+			bld := NewPatchBuilder[CustomRegistered]()
+			bld.Set(a, b)
+			return bld.Build()
+		*/
+		return &typedPatch[CustomRegistered]{
+			inner: &valuePatch{
+				oldVal: reflect.ValueOf(a),
+				newVal: reflect.ValueOf(b),
+			},
+		}, nil
 	})
 
 	a := CustomRegistered{ID: 1, Data: "A"}

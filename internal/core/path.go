@@ -107,10 +107,20 @@ func (p DeepPath) Navigate(v reflect.Value, parts []PathPart) (reflect.Value, Pa
 				key = strconv.Itoa(part.Index)
 			}
 
-			f := current.FieldByName(key)
-			if !f.IsValid() {
+			info := GetTypeInfo(current.Type())
+			var fieldIdx = -1
+			for _, fInfo := range info.Fields {
+				if fInfo.Name == key || (fInfo.JSONTag != "" && fInfo.JSONTag == key) {
+					fieldIdx = fInfo.Index
+					break
+				}
+			}
+
+			if fieldIdx == -1 {
 				return reflect.Value{}, PathPart{}, fmt.Errorf("field %s not found", key)
 			}
+			f := current.Field(fieldIdx)
+
 			if !f.CanInterface() {
 				unsafe.DisableRO(&f)
 			}
@@ -180,10 +190,18 @@ func (p DeepPath) Set(v reflect.Value, val reflect.Value) error {
 		if key == "" && lastPart.IsIndex {
 			key = strconv.Itoa(lastPart.Index)
 		}
-		f := parent.FieldByName(key)
-		if !f.IsValid() {
+		info := GetTypeInfo(parent.Type())
+		var fieldIdx = -1
+		for _, fInfo := range info.Fields {
+			if fInfo.Name == key || (fInfo.JSONTag != "" && fInfo.JSONTag == key) {
+				fieldIdx = fInfo.Index
+				break
+			}
+		}
+		if fieldIdx == -1 {
 			return fmt.Errorf("field %s not found", key)
 		}
+		f := parent.Field(fieldIdx)
 		if !f.CanSet() {
 			unsafe.DisableRO(&f)
 		}
@@ -239,10 +257,18 @@ func (p DeepPath) Delete(v reflect.Value) error {
 		if key == "" && lastPart.IsIndex {
 			key = strconv.Itoa(lastPart.Index)
 		}
-		f := parent.FieldByName(key)
-		if !f.IsValid() {
+		info := GetTypeInfo(parent.Type())
+		var fieldIdx = -1
+		for _, fInfo := range info.Fields {
+			if fInfo.Name == key || (fInfo.JSONTag != "" && fInfo.JSONTag == key) {
+				fieldIdx = fInfo.Index
+				break
+			}
+		}
+		if fieldIdx == -1 {
 			return fmt.Errorf("field %s not found", key)
 		}
+		f := parent.Field(fieldIdx)
 		if !f.CanSet() {
 			unsafe.DisableRO(&f)
 		}

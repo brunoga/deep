@@ -2,13 +2,15 @@ package core
 
 import (
 	"reflect"
+	"strings"
 	"sync"
 )
 
 type FieldInfo struct {
-	Index int
-	Name  string
-	Tag   StructTag
+	Index   int
+	Name    string
+	JSONTag string
+	Tag     StructTag
 }
 
 type TypeInfo struct {
@@ -32,10 +34,15 @@ func GetTypeInfo(typ reflect.Type) *TypeInfo {
 		for i := 0; i < typ.NumField(); i++ {
 			field := typ.Field(i)
 			tag := ParseTag(field)
+			jsonTag := field.Tag.Get("json")
+			if jsonTag != "" {
+				jsonTag = strings.Split(jsonTag, ",")[0]
+			}
 			info.Fields = append(info.Fields, FieldInfo{
-				Index: i,
-				Name:  field.Name,
-				Tag:   tag,
+				Index:   i,
+				Name:    field.Name,
+				JSONTag: jsonTag,
+				Tag:     tag,
 			})
 			if tag.Key {
 				info.KeyFieldIndex = i
@@ -46,3 +53,4 @@ func GetTypeInfo(typ reflect.Type) *TypeInfo {
 	typeCache.Store(typ, info)
 	return info
 }
+

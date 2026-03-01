@@ -712,7 +712,14 @@ func (p *structPatch) apply(root, v reflect.Value, path string) {
 
 	for _, name := range order {
 		patch := effectivePatches[name]
-		f := v.FieldByName(name)
+		info := core.GetTypeInfo(v.Type())
+		var f reflect.Value
+		for _, fInfo := range info.Fields {
+			if fInfo.Name == name {
+				f = v.Field(fInfo.Index)
+				break
+			}
+		}
 		if f.IsValid() {
 			if !f.CanSet() {
 				unsafe.DisableRO(&f)
@@ -740,7 +747,14 @@ func (p *structPatch) applyChecked(root, v reflect.Value, strict bool, path stri
 
 	processField := func(name string) {
 		patch := effectivePatches[name]
-		f := v.FieldByName(name)
+		info := core.GetTypeInfo(v.Type())
+		var f reflect.Value
+		for _, fInfo := range info.Fields {
+			if fInfo.Name == name {
+				f = v.Field(fInfo.Index)
+				break
+			}
+		}
 		if !f.IsValid() {
 			errs = append(errs, fmt.Errorf("field %s not found", name))
 			return
@@ -773,7 +787,14 @@ func (p *structPatch) applyResolved(root, v reflect.Value, path string, resolver
 
 	processField := func(name string) error {
 		patch := effectivePatches[name]
-		f := v.FieldByName(name)
+		info := core.GetTypeInfo(v.Type())
+		var f reflect.Value
+		for _, fInfo := range info.Fields {
+			if fInfo.Name == name {
+				f = v.Field(fInfo.Index)
+				break
+			}
+		}
 		if !f.IsValid() {
 			return fmt.Errorf("field %s not found", name)
 		}

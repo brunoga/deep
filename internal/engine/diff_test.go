@@ -498,9 +498,18 @@ func TestRegisterCustomDiff(t *testing.T) {
 		if a.Val == b.Val {
 			return nil, nil
 		}
+/*
 		builder := NewPatchBuilder[Custom]()
 		builder.Field("Val").Put("CUSTOM:" + b.Val)
 		return builder.Build()
+*/
+		return &typedPatch[Custom]{
+			inner: &structPatch{
+				fields: map[string]diffPatch{
+					"Val": &valuePatch{newVal: reflect.ValueOf("CUSTOM:" + b.Val)},
+				},
+			},
+		}, nil
 	})
 
 	c1 := Custom{Val: "old"}

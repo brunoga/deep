@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"reflect"
 	"regexp"
-	"strings"
 
 	"github.com/brunoga/deep/v5/crdt/hlc"
 	"github.com/brunoga/deep/v5/internal/core"
@@ -52,7 +51,7 @@ func Apply[T any](target *T, p Patch[T]) error {
 		// 2. Fallback to reflection
 		// Strict check (Old value verification)
 		if p.Strict && op.Kind == OpReplace {
-			current, err := resolveInternal(v.Elem(), op.Path)
+			current, err := core.DeepPath(op.Path).Resolve(v.Elem())
 			if err == nil && current.IsValid() {
 				if !core.Equal(current.Interface(), op.Old) {
 					errors = append(errors, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, current.Interface()))
@@ -80,9 +79,18 @@ func Apply[T any](target *T, p Patch[T]) error {
 		if v.Elem().Kind() == reflect.Struct {
 			parts := core.ParsePath(op.Path)
 			if len(parts) > 0 {
-				_, sf, ok := findField(v.Elem(), parts[0].Key)
-				if ok {
-					tag := core.ParseTag(sf)
+				info := core.GetTypeInfo(v.Elem().Type())
+				var tag core.StructTag
+				found := false
+				for _, fInfo := range info.Fields {
+					if fInfo.Name == parts[0].Key || (fInfo.JSONTag != "" && fInfo.JSONTag == parts[0].Key) {
+						tag = fInfo.Tag
+						found = true
+						break
+					}
+				}
+				
+				if found {
 					if tag.Ignore {
 						continue
 					}
@@ -101,10 +109,17 @@ func Apply[T any](target *T, p Patch[T]) error {
 
 			// LWW logic
 			if op.Timestamp.WallTime != 0 {
-				current, err := resolveInternal(v.Elem(), op.Path)
+				current, err := core.DeepPath(op.Path).Resolve(v.Elem())
 				if err == nil && current.IsValid() {
 					if current.Kind() == reflect.Struct {
-						tsField := current.FieldByName("Timestamp")
+						info := core.GetTypeInfo(current.Type())
+						var tsField reflect.Value
+						for _, fInfo := range info.Fields {
+							if fInfo.Name == "Timestamp" {
+								tsField = current.Field(fInfo.Index)
+								break
+							}
+						}
 						if tsField.IsValid() {
 							if currentTS, ok := tsField.Interface().(hlc.HLC); ok {
 								if !op.Timestamp.After(currentTS) {
@@ -116,25 +131,25 @@ func Apply[T any](target *T, p Patch[T]) error {
 				}
 			}
 
-			// We use a custom set logic that uses findField internally
-			err = setValueInternal(v.Elem(), op.Path, newVal)
+			// We use core.DeepPath for set logic
+			err = core.DeepPath(op.Path).Set(v.Elem(), newVal)
 		case OpRemove:
-			err = deleteValueInternal(v.Elem(), op.Path)
+			err = core.DeepPath(op.Path).Delete(v.Elem())
 		case OpMove:
 			fromPath := op.Old.(string)
 			var val reflect.Value
-			val, err = resolveInternal(v.Elem(), fromPath)
+			val, err = core.DeepPath(fromPath).Resolve(v.Elem())
 			if err == nil {
-				if err = deleteValueInternal(v.Elem(), fromPath); err == nil {
-					err = setValueInternal(v.Elem(), op.Path, val)
+				if err = core.DeepPath(fromPath).Delete(v.Elem()); err == nil {
+					err = core.DeepPath(op.Path).Set(v.Elem(), val)
 				}
 			}
 		case OpCopy:
 			fromPath := op.Old.(string)
 			var val reflect.Value
-			val, err = resolveInternal(v.Elem(), fromPath)
+			val, err = core.DeepPath(fromPath).Resolve(v.Elem())
 			if err == nil {
-				err = setValueInternal(v.Elem(), op.Path, val)
+				err = core.DeepPath(op.Path).Set(v.Elem(), val)
 			}
 		case OpLog:
 			fmt.Printf("DEEP LOG: %s (at %s)\n", op.New, op.Path)
@@ -245,7 +260,7 @@ func evaluateCondition(root reflect.Value, c *Condition) (bool, error) {
 		}
 	}
 
-	val, err := resolveInternal(root, c.Path)
+	val, err := core.DeepPath(c.Path).Resolve(root)
 	if err != nil {
 		if c.Op == "exists" {
 			return false, nil
@@ -307,243 +322,3 @@ func checkType(v any, typeName string) bool {
 	return false
 }
 
-func findField(v reflect.Value, name string) (reflect.Value, reflect.StructField, bool) {
-	typ := v.Type()
-	if typ.Kind() == reflect.Pointer {
-		typ = typ.Elem()
-	}
-	if typ.Kind() != reflect.Struct {
-		return reflect.Value{}, reflect.StructField{}, false
-	}
-
-	// 1. Match by name
-	f := v.FieldByName(name)
-	if f.IsValid() {
-		sf, _ := typ.FieldByName(name)
-		return f, sf, true
-	}
-
-	// 2. Match by JSON tag
-	for i := 0; i < typ.NumField(); i++ {
-		sf := typ.Field(i)
-		tag := sf.Tag.Get("json")
-		if tag == "" {
-			continue
-		}
-		tagParts := strings.Split(tag, ",")
-		if tagParts[0] == name {
-			return v.Field(i), sf, true
-		}
-	}
-
-	return reflect.Value{}, reflect.StructField{}, false
-}
-
-func resolveInternal(root reflect.Value, path string) (reflect.Value, error) {
-	parts := core.ParsePath(path)
-	current := root
-	var err error
-
-	for _, part := range parts {
-		current, err = core.Dereference(current)
-		if err != nil {
-			return reflect.Value{}, err
-		}
-
-		if part.IsIndex && (current.Kind() == reflect.Slice || current.Kind() == reflect.Array) {
-			if part.Index < 0 || part.Index >= current.Len() {
-				return reflect.Value{}, fmt.Errorf("index out of bounds: %d", part.Index)
-			}
-			current = current.Index(part.Index)
-		} else if current.Kind() == reflect.Map {
-			// Map logic from core
-			keyType := current.Type().Key()
-			var keyVal reflect.Value
-			key := part.Key
-			if key == "" && part.IsIndex {
-				key = fmt.Sprintf("%d", part.Index)
-			}
-			if keyType.Kind() == reflect.String {
-				keyVal = reflect.ValueOf(key)
-			} else {
-				return reflect.Value{}, fmt.Errorf("unsupported map key type")
-			}
-			val := current.MapIndex(keyVal)
-			if !val.IsValid() {
-				return reflect.Value{}, nil
-			}
-			current = val
-		} else if current.Kind() == reflect.Struct {
-			key := part.Key
-			if key == "" && part.IsIndex {
-				key = fmt.Sprintf("%d", part.Index)
-			}
-			f, _, ok := findField(current, key)
-			if !ok {
-				return reflect.Value{}, fmt.Errorf("field %s not found", key)
-			}
-			current = f
-		} else {
-			return reflect.Value{}, fmt.Errorf("cannot access %s on %v", part.Key, current.Type())
-		}
-	}
-	return current, nil
-}
-
-func setValueInternal(v reflect.Value, path string, val reflect.Value) error {
-	parts := core.ParsePath(path)
-	if len(parts) == 0 {
-		if !v.CanSet() {
-			return fmt.Errorf("cannot set root")
-		}
-		v.Set(val)
-		return nil
-	}
-
-	parentPath := ""
-	if len(parts) > 1 {
-		parentParts := parts[:len(parts)-1]
-		var b strings.Builder
-		for _, p := range parentParts {
-			b.WriteByte('/')
-			if p.IsIndex {
-				b.WriteString(fmt.Sprintf("%d", p.Index))
-			} else {
-				b.WriteString(core.EscapeKey(p.Key))
-			}
-		}
-		parentPath = b.String()
-	}
-
-	parent, err := resolveInternal(v, parentPath)
-	if err != nil {
-		return err
-	}
-
-	lastPart := parts[len(parts)-1]
-
-	switch parent.Kind() {
-	case reflect.Map:
-		if parent.IsNil() {
-			return fmt.Errorf("cannot set in nil map")
-		}
-		keyType := parent.Type().Key()
-		var keyVal reflect.Value
-		key := lastPart.Key
-		if key == "" && lastPart.IsIndex {
-			key = fmt.Sprintf("%d", lastPart.Index)
-		}
-		if keyType.Kind() == reflect.String {
-			keyVal = reflect.ValueOf(key)
-		}
-		parent.SetMapIndex(keyVal, core.ConvertValue(val, parent.Type().Elem()))
-		return nil
-	case reflect.Slice:
-		if !parent.CanSet() {
-			return fmt.Errorf("cannot set in un-settable slice at %s", path)
-		}
-		idx := lastPart.Index
-		if idx < 0 || idx > parent.Len() {
-			return fmt.Errorf("index out of bounds")
-		}
-		if idx == parent.Len() {
-			parent.Set(reflect.Append(parent, core.ConvertValue(val, parent.Type().Elem())))
-		} else {
-			parent.Index(idx).Set(core.ConvertValue(val, parent.Type().Elem()))
-		}
-		return nil
-	case reflect.Struct:
-		key := lastPart.Key
-		if key == "" && lastPart.IsIndex {
-			key = fmt.Sprintf("%d", lastPart.Index)
-		}
-		f, _, ok := findField(parent, key)
-		if !ok {
-			return fmt.Errorf("field %s not found", key)
-		}
-		if !f.CanSet() {
-			return fmt.Errorf("cannot set un-settable field %s", key)
-		}
-		f.Set(core.ConvertValue(val, f.Type()))
-		return nil
-	}
-	return fmt.Errorf("cannot set value in %v", parent.Kind())
-}
-
-func deleteValueInternal(v reflect.Value, path string) error {
-	parts := core.ParsePath(path)
-	if len(parts) == 0 {
-		return fmt.Errorf("cannot delete root")
-	}
-
-	parentPath := ""
-	if len(parts) > 1 {
-		parentParts := parts[:len(parts)-1]
-		var b strings.Builder
-		for _, p := range parentParts {
-			b.WriteByte('/')
-			if p.IsIndex {
-				b.WriteString(fmt.Sprintf("%d", p.Index))
-			} else {
-				b.WriteString(core.EscapeKey(p.Key))
-			}
-		}
-		parentPath = b.String()
-	}
-
-	parent, err := resolveInternal(v, parentPath)
-	if err != nil {
-		return err
-	}
-
-	lastPart := parts[len(parts)-1]
-
-	switch parent.Kind() {
-	case reflect.Map:
-		if parent.IsNil() {
-			return nil
-		}
-		keyType := parent.Type().Key()
-		var keyVal reflect.Value
-		key := lastPart.Key
-		if key == "" && lastPart.IsIndex {
-			key = fmt.Sprintf("%d", lastPart.Index)
-		}
-		if keyType.Kind() == reflect.String {
-			keyVal = reflect.ValueOf(key)
-		}
-		parent.SetMapIndex(keyVal, reflect.Value{})
-		return nil
-	case reflect.Slice:
-		if !parent.CanSet() {
-			return fmt.Errorf("cannot delete from un-settable slice at %s", path)
-		}
-		idx := lastPart.Index
-		if idx < 0 || idx >= parent.Len() {
-			return fmt.Errorf("index out of bounds")
-		}
-		newSlice := reflect.AppendSlice(parent.Slice(0, idx), parent.Slice(idx+1, parent.Len()))
-		parent.Set(newSlice)
-		return nil
-	case reflect.Struct:
-		key := lastPart.Key
-		if key == "" && lastPart.IsIndex {
-			key = fmt.Sprintf("%d", lastPart.Index)
-		}
-		f, _, ok := findField(parent, key)
-		if !ok {
-			return fmt.Errorf("field %s not found", key)
-		}
-		if !f.CanSet() {
-			return fmt.Errorf("cannot delete from un-settable field %s", key)
-		}
-		f.Set(reflect.Zero(f.Type()))
-		return nil
-	}
-	return fmt.Errorf("cannot delete from %v", parent.Kind())
-}
-
-func contains[M ~map[K]V, K comparable, V any](m M, k K) bool {
-	_, ok := m[k]
-	return ok
-}
