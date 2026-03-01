@@ -48,7 +48,17 @@ func (g *Generator) header(fields []FieldInfo) {
 	}
 
 	if g.pkgName != "deep" {
-		g.buf.WriteString("\t\"github.com/brunoga/deep/v5\"\n")
+		g.buf.WriteString("\tdeep \"github.com/brunoga/deep/v5\"\n")
+	}
+	needsCrdt := false
+	for _, f := range fields {
+		if f.IsText {
+			needsCrdt = true
+			break
+		}
+	}
+	if needsCrdt && g.pkgName != "deep" {
+		g.buf.WriteString("\tcrdt \"github.com/brunoga/deep/v5/crdt\"\n")
 	}
 	g.buf.WriteString(")\n\n")
 }
@@ -56,7 +66,7 @@ func (g *Generator) header(fields []FieldInfo) {
 func (g *Generator) generate(typeName string, fields []FieldInfo) {
 	pkgPrefix := ""
 	if g.pkgName != "deep" {
-		pkgPrefix = "v5."
+		pkgPrefix = "deep."
 	}
 
 	g.buf.WriteString(fmt.Sprintf("// ApplyOperation applies a single operation to %s efficiently.\n", typeName))
@@ -435,6 +445,35 @@ func (g *Generator) generate(typeName string, fields []FieldInfo) {
 			g.buf.WriteString("\t}\n")
 		} else if f.IsCollection {
 			g.buf.WriteString(fmt.Sprintf("\tif len(t.%s) != len(other.%s) { return false }\n", f.Name, f.Name))
+			if strings.HasPrefix(f.Type, "[]") {
+				elemType := f.Type[2:]
+				isPtr := strings.HasPrefix(elemType, "*")
+				g.buf.WriteString(fmt.Sprintf("\tfor i := range t.%s {\n", f.Name))
+				if isPtr {
+					g.buf.WriteString(fmt.Sprintf("\t\tif (t.%s[i] == nil) != (other.%s[i] == nil) { return false }\n", f.Name, f.Name))
+					g.buf.WriteString(fmt.Sprintf("\t\tif t.%s[i] != nil && !t.%s[i].Equal(other.%s[i]) { return false }\n", f.Name, f.Name, f.Name))
+				} else if f.IsStruct {
+					g.buf.WriteString(fmt.Sprintf("\t\tif !t.%s[i].Equal(&other.%s[i]) { return false }\n", f.Name, f.Name))
+				} else {
+					g.buf.WriteString(fmt.Sprintf("\t\tif t.%s[i] != other.%s[i] { return false }\n", f.Name, f.Name))
+				}
+				g.buf.WriteString("\t}\n")
+			} else if strings.HasPrefix(f.Type, "map[") {
+				valType := f.Type[strings.Index(f.Type, "]")+1:]
+				isPtr := strings.HasPrefix(valType, "*")
+				g.buf.WriteString(fmt.Sprintf("\tfor k, v := range t.%s {\n", f.Name))
+				g.buf.WriteString(fmt.Sprintf("\t\tvOther, ok := other.%s[k]\n", f.Name))
+				g.buf.WriteString("\t\tif !ok { return false }\n")
+				if isPtr {
+					g.buf.WriteString("\t\tif (v == nil) != (vOther == nil) { return false }\n")
+					g.buf.WriteString("\t\tif v != nil && !v.Equal(vOther) { return false }\n")
+				} else if f.IsStruct {
+					g.buf.WriteString("\t\tif !v.Equal(&vOther) { return false }\n")
+				} else {
+					g.buf.WriteString("\t\tif v != vOther { return false }\n")
+				}
+				g.buf.WriteString("\t}\n")
+			}
 		} else {
 			g.buf.WriteString(fmt.Sprintf("\tif t.%s != other.%s { return false }\n", f.Name, f.Name))
 		}
@@ -456,7 +495,15 @@ func (g *Generator) generate(typeName string, fields []FieldInfo) {
 			g.buf.WriteString(fmt.Sprintf("\t\t%s: append(%s(nil), t.%s...),\n", f.Name, f.Type, f.Name))
 		} else if f.IsCollection {
 			if strings.HasPrefix(f.Type, "[]") {
-				g.buf.WriteString(fmt.Sprintf("\t\t%s: append(%s(nil), t.%s...),\n", f.Name, f.Type, f.Name))
+				elemType := f.Type[2:]
+				isPtr := strings.HasPrefix(elemType, "*")
+				if isPtr {
+					g.buf.WriteString(fmt.Sprintf("\t\t%s: make(%s, len(t.%s)),\n", f.Name, f.Type, f.Name))
+				} else if f.IsStruct {
+					g.buf.WriteString(fmt.Sprintf("\t\t%s: make(%s, len(t.%s)),\n", f.Name, f.Type, f.Name))
+				} else {
+					g.buf.WriteString(fmt.Sprintf("\t\t%s: append(%s(nil), t.%s...),\n", f.Name, f.Type, f.Name))
+				}
 			}
 		} else {
 			g.buf.WriteString(fmt.Sprintf("\t\t%s: t.%s,\n", f.Name, f.Name))
@@ -482,18 +529,35 @@ func (g *Generator) generate(typeName string, fields []FieldInfo) {
 				g.buf.WriteString(fmt.Sprintf("\tres.%s = *%s.Copy()\n", f.Name, selfArg))
 			}
 		}
-		if f.IsCollection && strings.HasPrefix(f.Type, "map[") {
-			g.buf.WriteString(fmt.Sprintf("\tif t.%s != nil {\n", f.Name))
-			g.buf.WriteString(fmt.Sprintf("\t\tres.%s = make(%s)\n", f.Name, f.Type))
-			g.buf.WriteString(fmt.Sprintf("\t\tfor k, v := range t.%s {\n", f.Name))
-			valType := f.Type[strings.Index(f.Type, "]")+1:]
-			if strings.HasPrefix(valType, "*") {
-				g.buf.WriteString(fmt.Sprintf("\t\t\tif v != nil { res.%s[k] = v.Copy() }\n", f.Name))
-			} else {
-				g.buf.WriteString(fmt.Sprintf("\t\tres.%s[k] = v\n", f.Name))
+		if f.IsCollection {
+			if strings.HasPrefix(f.Type, "[]") {
+				elemType := f.Type[2:]
+				isPtr := strings.HasPrefix(elemType, "*")
+				if isPtr {
+					g.buf.WriteString(fmt.Sprintf("\tfor i, v := range t.%s {\n", f.Name))
+					g.buf.WriteString(fmt.Sprintf("\t\tif v != nil { res.%s[i] = v.Copy() }\n", f.Name))
+					g.buf.WriteString("\t}\n")
+				} else if f.IsStruct {
+					g.buf.WriteString(fmt.Sprintf("\tfor i := range t.%s {\n", f.Name))
+					g.buf.WriteString(fmt.Sprintf("\t\tres.%s[i] = *t.%s[i].Copy()\n", f.Name, f.Name))
+					g.buf.WriteString("\t}\n")
+				}
+			} else if strings.HasPrefix(f.Type, "map[") {
+				g.buf.WriteString(fmt.Sprintf("\tif t.%s != nil {\n", f.Name))
+				g.buf.WriteString(fmt.Sprintf("\t\tres.%s = make(%s)\n", f.Name, f.Type))
+				g.buf.WriteString(fmt.Sprintf("\t\tfor k, v := range t.%s {\n", f.Name))
+				valType := f.Type[strings.Index(f.Type, "]")+1:]
+				isPtr := strings.HasPrefix(valType, "*")
+				if isPtr {
+					g.buf.WriteString(fmt.Sprintf("\t\t\tif v != nil { res.%s[k] = v.Copy() }\n", f.Name))
+				} else if f.IsStruct {
+					g.buf.WriteString(fmt.Sprintf("\t\t\tres.%s[k] = *v.Copy()\n", f.Name))
+				} else {
+					g.buf.WriteString(fmt.Sprintf("\t\tres.%s[k] = v\n", f.Name))
+				}
+				g.buf.WriteString("\t\t}\n")
+				g.buf.WriteString("\t}\n")
 			}
-			g.buf.WriteString("\t\t}\n")
-			g.buf.WriteString("\t}\n")
 		}
 	}
 
@@ -632,6 +696,7 @@ func main() {
 						typeName = typ.Name
 						if typeName == "Text" {
 							isText = true
+							typeName = "crdt.Text"
 						} else if len(typeName) > 0 && typeName[0] >= 'A' && typeName[0] <= 'Z' {
 							switch typeName {
 							case "String", "Int", "Bool", "Float64":
@@ -645,10 +710,14 @@ func main() {
 							isStruct = true
 						}
 					case *ast.SelectorExpr:
-						if ident, ok := typ.X.(*ast.Ident); ok && ident.Name == "deep" {
+						if ident, ok := typ.X.(*ast.Ident); ok {
 							if typ.Sel.Name == "Text" {
 								isText = true
-								typeName = "v5.Text"
+								typeName = "crdt.Text"
+							} else if ident.Name == "deep" {
+								typeName = "deep." + typ.Sel.Name
+							} else {
+								typeName = ident.Name + "." + typ.Sel.Name
 							}
 						}
 					case *ast.ArrayType:

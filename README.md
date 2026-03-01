@@ -1,6 +1,6 @@
 # Deep v5: The High-Performance Type-Safe Synchronization Toolkit
 
-`deep` is a comprehensive Go library for comparing, cloning, and synchronizing complex data structures. v5 introduces a revolutionary architecture centered on **Code Generation** and **Type-Safe Selectors**, delivering up to **26x** performance improvements over traditional reflection-based libraries.
+`deep` is a comprehensive Go library for comparing, cloning, and synchronizing complex data structures. Deep introduces a revolutionary architecture centered on **Code Generation** and **Type-Safe Selectors**, delivering up to **26x** performance improvements over traditional reflection-based libraries.
 
 ## Key Features
 
@@ -12,11 +12,11 @@
 - **🤝 Standard Compliant**: Export to RFC 6902 JSON Patch with advanced predicate extensions.
 - **🎛️ Hybrid Architecture**: Optimized generated paths with a robust reflection safety net.
 
-## Performance Comparison (v5 Generated vs v4 Reflection)
+## Performance Comparison (Deep Generated vs v4 Reflection)
 
 Benchmarks performed on typical struct models (`User` with IDs, Names, Slices):
 
-| Operation | v4 (Reflection) | v5 (Generated) | Speedup |
+| Operation | v4 (Reflection) | Deep (Generated) | Speedup |
 | :--- | :--- | :--- | :--- |
 | **Apply Patch** | 726 ns/op | **50 ns/op** | **14.5x** |
 | **Diff + Apply** | 2,391 ns/op | **270 ns/op** | **8.8x** |
@@ -42,21 +42,22 @@ go run github.com/brunoga/deep/v5/cmd/deep-gen -type=User .
 
 ### 3. Use the Type-Safe API
 ```go
-import "github.com/brunoga/deep/v5"
+import deep "github.com/brunoga/deep/v5"
+```
 
 u1 := User{ID: 1, Name: "Alice", Roles: []string{"user"}}
 u2 := User{ID: 1, Name: "Bob", Roles: []string{"user", "admin"}}
 
 // State-based Diffing
-patch := v5.Diff(u1, u2)
+patch := deep.Diff(u1, u2)
 
 // Operation-based Building (Fluent API)
-builder := v5.Edit(&u1)
-v5.Set(builder, v5.Field(func(u *User) *string { return &u.Name }), "Alice Smith")
+builder := deep.Edit(&u1)
+deep.Set(builder, deep.Field(func(u *User) *string { return &u.Name }), "Alice Smith")
 patch2 := builder.Build()
 
 // Application
-v5.Apply(&u1, patch)
+deep.Apply(&u1, patch)
 ```
 
 ## Advanced Features
@@ -65,20 +66,20 @@ v5.Apply(&u1, patch)
 Convert any field into a convergent register:
 ```go
 type Document struct {
-    Title   v5.LWW[string] // Native Last-Write-Wins
-    Content v5.Text        // Collaborative Text CRDT
+    Title   deep.LWW[string] // Native Last-Write-Wins
+    Content deep.Text        // Collaborative Text CRDT
 }
 ```
 
 ### Conditional Patching
 Apply changes only if specific business rules are met:
 ```go
-builder.Set(v5.Field(func(u *User) *string { return &u.Name }), "New Name").
-    If(v5.Eq(v5.Field(func(u *User) *int { return &u.ID }), 1))
+builder.Set(deep.Field(func(u *User) *string { return &u.Name }), "New Name").
+    If(deep.Eq(deep.Field(func(u *User) *int { return &u.ID }), 1))
 ```
 
 ### Standard Interop
-Export your v5 patches to standard RFC 6902 JSON Patch format:
+Export your Deep patches to standard RFC 6902 JSON Patch format:
 ```go
 jsonData, _ := patch.ToJSONPatch()
 // Output: [{"op":"replace","path":"/name","value":"Bob"}]
@@ -88,7 +89,7 @@ jsonData, _ := patch.ToJSONPatch()
 
 v4 used a **Recursive Tree Patch** model. Every field was a nested patch object. While flexible, this caused high memory allocations and made serialization difficult.
 
-v5 uses a **Flat Operation Model**. A patch is a simple slice of `Operations`. This makes patches:
+Deep uses a **Flat Operation Model**. A patch is a simple slice of `Operations`. This makes patches:
 1. **Portable**: Trivially serializable to any format.
 2. **Fast**: Iterating a slice is much faster than traversing a tree.
 3. **Composable**: Merging two patches is a stateless operation.
