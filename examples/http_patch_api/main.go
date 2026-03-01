@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 
-	"github.com/brunoga/deep/v5"
+	v5 "github.com/brunoga/deep/v5"
 )
 
 type Resource struct {

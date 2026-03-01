@@ -1,4 +1,4 @@
-package v5
+package deep
 
 import (
 	"fmt"
@@ -6,16 +6,22 @@ import (
 )
 
 // Diff compares two values and returns a pure data Patch.
-// In v5, this would delegate to generated code if available.
 func Diff[T any](a, b T) Patch[T] {
-	// 1. Try generated optimized path
-	if differ, ok := any(&a).(interface {
-		Diff(*T) Patch[T]
+	// 1. Try generated optimized path (Value)
+	if differ, ok := any(a).(interface {
+		Diff(T) Patch[T]
 	}); ok {
-		return differ.Diff(&b)
+		return differ.Diff(b)
 	}
 
-	// 2. Fallback to v4 reflection engine
+	// 2. Try generated optimized path (Pointer)
+	if differ, ok := any(&a).(interface {
+		Diff(T) Patch[T]
+	}); ok {
+		return differ.Diff(b)
+	}
+
+	// 3. Fallback to v4 reflection engine
 	p, err := engine.Diff(a, b)
 	if err != nil || p == nil {
 		return Patch[T]{}

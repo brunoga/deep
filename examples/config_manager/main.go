@@ -3,7 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/brunoga/deep/v5"
+	v5 "github.com/brunoga/deep/v5"
 )
 
 type Config struct {

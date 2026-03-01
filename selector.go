@@ -1,4 +1,4 @@
-package v5
+package deep
 
 import (
 	"fmt"
@@ -115,4 +115,3 @@ func scanStructInternal(prefix string, typ reflect.Type, baseOffset uintptr, cac
 		}
 	}
 }
-

@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"github.com/brunoga/deep/v5"
+	v5 "github.com/brunoga/deep/v5"
 )
 
 type Item struct {

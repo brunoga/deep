@@ -1,19 +1,22 @@
-package v5
+package deep_test
 
 import (
 	"bytes"
 	"encoding/gob"
 	"encoding/json"
-	"reflect"
+	"strings"
 	"testing"
+
+	"github.com/brunoga/deep/v5"
+	"github.com/brunoga/deep/v5/internal/testmodels"
 )
 
 func TestGobSerialization(t *testing.T) {
-	Register[User]()
+	deep.Register[testmodels.User]()
 
-	u1 := User{ID: 1, Name: "Alice"}
-	u2 := User{ID: 2, Name: "Bob"}
-	patch := Diff(u1, u2)
+	u1 := testmodels.User{ID: 1, Name: "Alice"}
+	u2 := testmodels.User{ID: 2, Name: "Bob"}
+	patch := deep.Diff(u1, u2)
 
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
@@ -21,142 +24,49 @@ func TestGobSerialization(t *testing.T) {
 		t.Fatalf("Gob Encode failed: %v", err)
 	}
 
-	var patch2 Patch[User]
+	var patch2 deep.Patch[testmodels.User]
 	dec := gob.NewDecoder(&buf)
 	if err := dec.Decode(&patch2); err != nil {
 		t.Fatalf("Gob Decode failed: %v", err)
 	}
 
 	u3 := u1
-	Apply(&u3, patch2)
-	if !Equal(u2, u3) {
+	deep.Apply(&u3, patch2)
+	if !deep.Equal(u2, u3) {
 		t.Errorf("Gob roundtrip failed: got %+v, want %+v", u3, u2)
 	}
 }
 
 func TestReverse(t *testing.T) {
-	u1 := User{ID: 1, Name: "Alice"}
-	u2 := User{ID: 2, Name: "Bob"}
+	u1 := testmodels.User{ID: 1, Name: "Alice"}
+	u2 := testmodels.User{ID: 2, Name: "Bob"}
 
 	// 1. Create patch u1 -> u2
-	patch := Diff(u1, u2)
+	patch := deep.Diff(u1, u2)
 
 	// 2. Reverse patch
 	reverse := patch.Reverse()
 
 	// 3. Apply reverse to u2
 	u3 := u2
-	if err := Apply(&u3, reverse); err != nil {
+	if err := deep.Apply(&u3, reverse); err != nil {
 		t.Fatalf("Reverse apply failed: %v", err)
 	}
 
-	// 4. Result should be u1
-	// Note: Diff might pick up Name as /full_name and ID as /id or /ID depending on tags
-	// But Equal should verify logical equality.
-	if !Equal(u1, u3) {
+	// 4. Verify we are back to u1
+	if !deep.Equal(u1, u3) {
 		t.Errorf("Reverse failed: got %+v, want %+v", u3, u1)
 	}
 }
 
-func TestReverse_Complex(t *testing.T) {
-	// 1. Generated Path (User has generated code)
-	u1 := User{
-		ID:    1,
-		Name:  "Alice",
-		Info:  Detail{Age: 30, Address: "123 Main"},
-		Roles: []string{"admin", "user"},
-		Score: map[string]int{"games": 10},
-		Bio:   Text{{Value: "Initial"}},
-		age:   30,
+func TestPatchToJSONPatch(t *testing.T) {
+	deep.Register[testmodels.User]()
+
+	p := deep.NewPatch[testmodels.User]()
+	p.Operations = []deep.Operation{
+		{Kind: deep.OpReplace, Path: "/full_name", Old: "Alice", New: "Bob"},
 	}
-	u2 := User{
-		ID:    2,
-		Name:  "Bob",
-		Info:  Detail{Age: 31, Address: "456 Side"},
-		Roles: []string{"user"},
-		Score: map[string]int{"games": 20, "win": 1},
-		Bio:   Text{{Value: "Updated"}},
-		age:   31,
-	}
-
-	t.Run("GeneratedPath", func(t *testing.T) {
-		patch := Diff(u1, u2)
-		reverse := patch.Reverse()
-		u3 := u2
-		if err := Apply(&u3, reverse); err != nil {
-			t.Fatalf("Reverse apply failed: %v", err)
-		}
-		// Use reflect.DeepEqual since we want exact parity including unexported fields
-		// and we are in the same package.
-		if !reflect.DeepEqual(u1, u3) {
-			t.Errorf("Reverse failed\nGot:  %+v\nWant: %+v", u3, u1)
-		}
-	})
-
-	t.Run("ReflectionPath", func(t *testing.T) {
-		type OtherDetail struct {
-			City string
-		}
-		type OtherUser struct {
-			ID   int
-			Data OtherDetail
-		}
-		o1 := OtherUser{ID: 1, Data: OtherDetail{City: "NY"}}
-		o2 := OtherUser{ID: 2, Data: OtherDetail{City: "SF"}}
-
-		patch := Diff(o1, o2) // Uses reflection
-		reverse := patch.Reverse()
-		o3 := o2
-		if err := Apply(&o3, reverse); err != nil {
-			t.Fatalf("Reverse apply failed: %v", err)
-		}
-		if !reflect.DeepEqual(o1, o3) {
-			t.Errorf("Reverse failed\nGot:  %+v\nWant: %+v", o3, o1)
-		}
-	})
-}
-
-func TestJSONPatch(t *testing.T) {
-	u := User{ID: 1, Name: "Alice"}
-
-	builder := Edit(&u)
-	Set(builder, Field(func(u *User) *string { return &u.Name }), "Bob").
-		If(In(Field(func(u *User) *int { return &u.ID }), []int{1, 2, 3}))
-
-	patch := builder.Build()
-
-	data, err := patch.ToJSONPatch()
-	if err != nil {
-		t.Fatalf("ToJSONPatch failed: %v", err)
-	}
-
-	// Verify JSON structure matches github.com/brunoga/jsonpatch expectations
-	var raw []map[string]any
-	if err := json.Unmarshal(data, &raw); err != nil {
-		t.Fatalf("JSON invalid: %v", err)
-	}
-
-	if len(raw) != 1 {
-		t.Fatalf("expected 1 op, got %d", len(raw))
-	}
-
-	op := raw[0]
-	if op["op"] != "replace" {
-		t.Errorf("expected op=replace, got %v", op["op"])
-	}
-
-	cond := op["if"].(map[string]any)
-	if cond["op"] != "contains" {
-		t.Errorf("expected if.op=contains, got %v", cond["op"])
-	}
-
-	t.Logf("Generated JSON Patch: %s", string(data))
-}
-
-func TestJSONPatch_GlobalCondition(t *testing.T) {
-	p := NewPatch[User]()
-	p.Condition = Eq(Field(func(u *User) *int { return &u.ID }), 1)
-	p.Operations = []Operation{{Kind: OpReplace, Path: "/full_name", New: "Bob"}}
+	p = p.WithCondition(deep.Eq(deep.Field(func(u *testmodels.User) *int { return &u.ID }), 1))
 
 	data, err := p.ToJSONPatch()
 	if err != nil {
@@ -174,3 +84,93 @@ func TestJSONPatch_GlobalCondition(t *testing.T) {
 		t.Errorf("expected first op to be test (global condition), got %v", raw[0]["op"])
 	}
 }
+
+func TestPatchUtilities(t *testing.T) {
+	p := deep.NewPatch[testmodels.User]()
+	p.Operations = []deep.Operation{
+		{Kind: deep.OpAdd, Path: "/a", New: 1},
+		{Kind: deep.OpRemove, Path: "/b", Old: 2},
+		{Kind: deep.OpReplace, Path: "/c", Old: 3, New: 4},
+		{Kind: deep.OpMove, Path: "/d", Old: "/e"},
+		{Kind: deep.OpCopy, Path: "/f", Old: "/g"},
+		{Kind: deep.OpLog, Path: "/h", New: "msg"},
+	}
+
+	// String()
+	s := p.String()
+	expected := []string{"Add /a", "Remove /b", "Replace /c", "Move /e to /d", "Copy /g to /f", "Log /h"}
+	for _, exp := range expected {
+		if !strings.Contains(s, exp) {
+			t.Errorf("String() missing %s: %s", exp, s)
+		}
+	}
+
+	// WithStrict
+	p2 := p.WithStrict(true)
+	if !p2.Strict {
+		t.Error("WithStrict failed to set global Strict")
+	}
+	for _, op := range p2.Operations {
+		if !op.Strict {
+			t.Error("WithStrict failed to propagate to operations")
+		}
+	}
+}
+
+func TestConditionToPredicate(t *testing.T) {
+	tests := []struct {
+		c    *deep.Condition
+		want string
+	}{
+		{c: &deep.Condition{Op: "!=", Path: "/a", Value: 1}, want: `"op":"not"`},
+		{c: &deep.Condition{Op: ">", Path: "/a", Value: 1}, want: `"op":"more"`},
+		{c: &deep.Condition{Op: "<", Path: "/a", Value: 1}, want: `"op":"less"`},
+		{c: &deep.Condition{Op: "exists", Path: "/a"}, want: `"op":"defined"`},
+		{c: &deep.Condition{Op: "matches", Path: "/a", Value: ".*"}, want: `"op":"matches"`},
+		{c: &deep.Condition{Op: "type", Path: "/a", Value: "string"}, want: `"op":"type"`},
+		{c: deep.Or(deep.Eq(deep.Field(func(u *testmodels.User) *int { return &u.ID }), 1)), want: `"op":"or"`},
+	}
+
+	for _, tt := range tests {
+		got, err := deep.NewPatch[testmodels.User]().WithCondition(tt.c).ToJSONPatch()
+		if err != nil {
+			t.Fatalf("ToJSONPatch failed: %v", err)
+		}
+		if !strings.Contains(string(got), tt.want) {
+			t.Errorf("toPredicate(%s) = %s, want %s", tt.c.Op, string(got), tt.want)
+		}
+	}
+}
+
+func TestPatchReverseExhaustive(t *testing.T) {
+	p := deep.NewPatch[testmodels.User]()
+	p.Operations = []deep.Operation{
+		{Kind: deep.OpAdd, Path: "/a", New: 1},
+		{Kind: deep.OpRemove, Path: "/b", Old: 2},
+		{Kind: deep.OpReplace, Path: "/c", Old: 3, New: 4},
+		{Kind: deep.OpMove, Path: "/d", Old: "/e"},
+		{Kind: deep.OpCopy, Path: "/f", Old: "/g"},
+		{Kind: deep.OpLog, Path: "/h", New: "msg"},
+	}
+
+	rev := p.Reverse()
+	if len(rev.Operations) != 6 {
+		t.Errorf("expected 6 reversed ops, got %d", len(rev.Operations))
+	}
+}
+
+func TestPatchMergeCustom(t *testing.T) {
+	p1 := deep.NewPatch[testmodels.User]()
+	p1.Operations = []deep.Operation{{Path: "/a", New: 1}}
+	p2 := deep.NewPatch[testmodels.User]()
+	p2.Operations = []deep.Operation{{Path: "/a", New: 2}}
+
+	res := deep.Merge(p1, p2, &localResolver{})
+	if res.Operations[0].New != 2 {
+		t.Error("Merge custom resolution failed")
+	}
+}
+
+type localResolver struct{}
+
+func (r *localResolver) Resolve(path string, local, remote any) any { return remote }

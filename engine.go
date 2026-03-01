@@ -1,4 +1,4 @@
-package v5
+package deep
 
 import (
 	"fmt"
@@ -547,5 +547,3 @@ func contains[M ~map[K]V, K comparable, V any](m M, k K) bool {
 	_, ok := m[k]
 	return ok
 }
-
-

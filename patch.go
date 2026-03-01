@@ -1,4 +1,4 @@
-package v5
+package deep
 
 import (
 	"encoding/gob"
@@ -13,7 +13,6 @@ func init() {
 	gob.Register(&Condition{})
 	gob.Register(Operation{})
 	gob.Register(hlc.HLC{})
-	gob.Register(Text{})
 }
 
 // Register registers the Patch implementation for type T with the gob package.
@@ -275,4 +274,3 @@ type LWW[T any] struct {
 	Value     T       `json:"v"`
 	Timestamp hlc.HLC `json:"t"`
 }
-

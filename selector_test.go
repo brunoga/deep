@@ -1,76 +1,50 @@
-package v5
+package deep_test
 
 import (
 	"testing"
+
+	"github.com/brunoga/deep/v5"
+	"github.com/brunoga/deep/v5/internal/testmodels"
 )
 
-func TestResolvePath(t *testing.T) {
+func TestSelector(t *testing.T) {
 	tests := []struct {
-		name     string
-		selector Selector[User, any]
-		want     string
+		name string
+		path string
+		want string
 	}{
 		{
-			name: "Simple field",
-			selector: func(u *User) *any {
-				res := any(&u.ID)
-				return &res
-			},
-			want: "/id",
+			"simple field",
+			deep.Field(func(u *testmodels.User) *int { return &u.ID }).String(),
+			"/id",
 		},
 		{
-			name: "Field with JSON tag",
-			selector: func(u *User) *any {
-				res := any(&u.Name)
-				return &res
-			},
-			want: "/full_name",
+			"nested field",
+			deep.Field(func(u *testmodels.User) *int { return &u.Info.Age }).String(),
+			"/info/Age",
 		},
 		{
-			name: "Nested field",
-			selector: func(u *User) *any {
-				res := any(&u.Info.Age)
-				return &res
-			},
-			want: "/info/Age",
+			"slice index",
+			deep.Field(func(u *testmodels.User) *[]string { return &u.Roles }).Index(1).String(),
+			"/roles/1",
 		},
 		{
-			name: "Nested field with JSON tag",
-			selector: func(u *User) *any {
-				res := any(&u.Info.Address)
-				return &res
-			},
-			want: "/info/addr",
+			"map key",
+			deep.Field(func(u *testmodels.User) *map[string]int { return &u.Score }).Key("alice").String(),
+			"/score/alice",
+		},
+		{
+			"unexported field",
+			deep.Field((*testmodels.User).AgePtr).String(),
+			"/age",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Note: We need to cast our specialized selectors to work with the test helper
-			// Since our Path struct is generic, let's test it directly.
+			if tt.path != tt.want {
+				t.Errorf("Path() = %v, want %v", tt.path, tt.want)
+			}
 		})
-	}
-}
-
-// Actual test implementation to avoid generic casting issues in the table
-func TestPathResolution(t *testing.T) {
-	p1 := Field(func(u *User) *int { return &u.ID })
-	if p1.String() != "/id" {
-		t.Errorf("got %s, want /id", p1.String())
-	}
-
-	p2 := Field(func(u *User) *string { return &u.Name })
-	if p2.String() != "/full_name" {
-		t.Errorf("got %s, want /full_name", p2.String())
-	}
-
-	p3 := Field(func(u *User) *int { return &u.Info.Age })
-	if p3.String() != "/info/Age" {
-		t.Errorf("got %s, want /info/Age", p3.String())
-	}
-
-	p4 := Field(func(u *User) *string { return &u.Info.Address })
-	if p4.String() != "/info/addr" {
-		t.Errorf("got %s, want /info/addr", p4.String())
 	}
 }

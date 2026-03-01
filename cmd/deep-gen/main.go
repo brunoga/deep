@@ -29,7 +29,7 @@ func (g *Generator) header(fields []FieldInfo) {
 	g.buf.WriteString("\t\"fmt\"\n")
 	g.buf.WriteString("\t\"regexp\"\n")
 
-	if g.pkgName != "v5" {
+	if g.pkgName != "deep" {
 		g.buf.WriteString("\t\"reflect\"\n")
 	}
 
@@ -47,7 +47,7 @@ func (g *Generator) header(fields []FieldInfo) {
 		g.buf.WriteString("\t\"strings\"\n")
 	}
 
-	if g.pkgName != "v5" {
+	if g.pkgName != "deep" {
 		g.buf.WriteString("\t\"github.com/brunoga/deep/v5\"\n")
 	}
 	g.buf.WriteString(")\n\n")
@@ -55,7 +55,7 @@ func (g *Generator) header(fields []FieldInfo) {
 
 func (g *Generator) generate(typeName string, fields []FieldInfo) {
 	pkgPrefix := ""
-	if g.pkgName != "v5" {
+	if g.pkgName != "deep" {
 		pkgPrefix = "v5."
 	}
 
@@ -645,7 +645,7 @@ func main() {
 							isStruct = true
 						}
 					case *ast.SelectorExpr:
-						if ident, ok := typ.X.(*ast.Ident); ok && ident.Name == "v5" {
+						if ident, ok := typ.X.(*ast.Ident); ok && ident.Name == "deep" {
 							if typ.Sel.Name == "Text" {
 								isText = true
 								typeName = "v5.Text"
@@ -712,7 +712,7 @@ func main() {
 	}
 
 	if g != nil {
-		if g.pkgName != "v5" {
+		if g.pkgName != "deep" {
 			// helper for map contains check
 			g.buf.WriteString("\nfunc contains[M ~map[K]V, K comparable, V any](m M, k K) bool {\n")
 			g.buf.WriteString("\t_, ok := m[k]\n")
