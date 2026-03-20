@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/brunoga/deep/v5"
+	"github.com/brunoga/deep/v5/crdt/hlc"
 	"github.com/brunoga/deep/v5/internal/testmodels"
 )
 
@@ -110,9 +111,11 @@ func TestPatchUtilities(t *testing.T) {
 	if !p2.Strict {
 		t.Error("WithStrict failed to set global Strict")
 	}
+	// Operation.Strict is stamped from Patch.Strict at apply time, not at build time.
+	// Verify ops in the built patch do not carry the flag (it's runtime-only).
 	for _, op := range p2.Operations {
-		if !op.Strict {
-			t.Error("WithStrict failed to propagate to operations")
+		if op.Strict {
+			t.Error("WithStrict should not pre-stamp Strict onto operations before Apply")
 		}
 	}
 }
@@ -174,3 +177,118 @@ func TestPatchMergeCustom(t *testing.T) {
 type localResolver struct{}
 
 func (r *localResolver) Resolve(path string, local, remote any) any { return remote }
+
+func TestPatchIsEmpty(t *testing.T) {
+	p := deep.NewPatch[testmodels.User]()
+	if !p.IsEmpty() {
+		t.Error("new patch should be empty")
+	}
+	p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpAdd, Path: "/name", New: "x"})
+	if p.IsEmpty() {
+		t.Error("patch with operations should not be empty")
+	}
+}
+
+func TestFromJSONPatchRoundTrip(t *testing.T) {
+	type Doc struct {
+		Name string `json:"name"`
+		Age  int    `json:"age"`
+	}
+
+	// Build a patch with all supported op types and conditions.
+	namePath := deep.Field[Doc, string](func(d *Doc) *string { return &d.Name })
+	agePath := deep.Field[Doc, int](func(d *Doc) *int { return &d.Age })
+
+	original := deep.Edit(&Doc{}).
+		Set(namePath, "Alice").
+		Add(agePath, 30).
+		Remove(namePath).
+		Move(namePath, agePath).
+		Copy(namePath, agePath).
+		If(deep.Eq(namePath, "Alice")).
+		Log("done").
+		Where(deep.Gt(agePath, 18)).
+		Build()
+
+	data, err := original.ToJSONPatch()
+	if err != nil {
+		t.Fatalf("ToJSONPatch: %v", err)
+	}
+
+	rt, err := deep.FromJSONPatch[Doc](data)
+	if err != nil {
+		t.Fatalf("FromJSONPatch: %v", err)
+	}
+
+	if len(rt.Operations) != len(original.Operations) {
+		t.Errorf("op count: got %d, want %d", len(rt.Operations), len(original.Operations))
+	}
+	if rt.Condition == nil {
+		t.Error("global condition not round-tripped")
+	}
+	if rt.Condition != nil && rt.Condition.Op != ">" {
+		t.Errorf("global condition op: got %q, want \">\"", rt.Condition.Op)
+	}
+}
+
+func TestGeLeConditions(t *testing.T) {
+	type S struct{ X int }
+	xPath := deep.Field[S, int](func(s *S) *int { return &s.X })
+
+	s := S{X: 5}
+	if err := deep.Apply(&s, deep.Edit(&s).Set(xPath, 10).Unless(deep.Ge(xPath, 5)).Build()); err != nil {
+		t.Fatal(err)
+	}
+	// Ge(X, 5) is true when X==5, so Unless fires and op is skipped → X stays 5.
+	if s.X != 5 {
+		t.Errorf("Ge condition: got %d, want 5", s.X)
+	}
+
+	if err := deep.Apply(&s, deep.Edit(&s).Set(xPath, 10).Unless(deep.Le(xPath, 4)).Build()); err != nil {
+		t.Fatal(err)
+	}
+	// Le(X, 4) is false when X==5, so Unless does not fire → X becomes 10.
+	if s.X != 10 {
+		t.Errorf("Le condition: got %d, want 10", s.X)
+	}
+}
+
+func TestBuilderMoveCopy(t *testing.T) {
+	type S struct {
+		A string `json:"a"`
+		B string `json:"b"`
+	}
+	aPath := deep.Field[S, string](func(s *S) *string { return &s.A })
+	bPath := deep.Field[S, string](func(s *S) *string { return &s.B })
+
+	p := deep.Edit(&S{}).Move(aPath, bPath).Build()
+	if len(p.Operations) != 1 || p.Operations[0].Kind != deep.OpMove {
+		t.Error("Move not added correctly")
+	}
+	if p.Operations[0].Old != aPath.String() || p.Operations[0].Path != bPath.String() {
+		t.Errorf("Move paths wrong: from=%v to=%v", p.Operations[0].Old, p.Operations[0].Path)
+	}
+
+	p2 := deep.Edit(&S{}).Copy(aPath, bPath).Build()
+	if len(p2.Operations) != 1 || p2.Operations[0].Kind != deep.OpCopy {
+		t.Error("Copy not added correctly")
+	}
+}
+
+func TestLWWSet(t *testing.T) {
+	deep.Register[string]()
+	clock := hlc.NewClock("test")
+	ts1 := clock.Now()
+	ts2 := clock.Now()
+
+	var reg deep.LWW[string]
+	if reg.Set("first", ts1); reg.Value != "first" {
+		t.Error("LWW.Set should accept first value")
+	}
+	if reg.Set("second", ts2); reg.Value != "second" {
+		t.Error("LWW.Set should accept newer timestamp")
+	}
+	if accepted := reg.Set("old", ts1); accepted || reg.Value != "second" {
+		t.Error("LWW.Set should reject older timestamp")
+	}
+}

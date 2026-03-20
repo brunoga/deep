@@ -99,6 +99,24 @@ func TestApplyError(t *testing.T) {
 	}
 }
 
+func TestNilMapDiff(t *testing.T) {
+	type S struct {
+		M map[string]int
+	}
+	// nil source map → all keys should produce OpAdd, not OpReplace
+	a := S{M: nil}
+	b := S{M: map[string]int{"x": 1, "y": 2}}
+	p := deep.Diff(a, b)
+	for _, op := range p.Operations {
+		if op.Kind != deep.OpReplace && op.Kind != deep.OpAdd {
+			continue
+		}
+		if op.Kind == deep.OpReplace {
+			t.Errorf("Diff with nil source map should emit OpAdd, got OpReplace at %s", op.Path)
+		}
+	}
+}
+
 func TestReflectionEngineAdvanced(t *testing.T) {
 	type Data struct {
 		A int
