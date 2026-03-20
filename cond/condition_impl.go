@@ -2,6 +2,7 @@ package cond
 
 import (
 	"fmt"
+	"log/slog"
 	"reflect"
 	"regexp"
 	"strings"
@@ -193,7 +194,7 @@ type rawLogCondition struct {
 }
 
 func (c *rawLogCondition) EvaluateAny(v any) (bool, error) {
-	fmt.Printf("DEEP LOG CONDITION: %s (value: %v)\n", c.Message, v)
+	slog.Default().Info("deep condition log", "message", c.Message, "value", v)
 	return true, nil
 }
 
