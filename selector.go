@@ -18,11 +18,16 @@ type Path[T, V any] struct {
 }
 
 // String returns the string representation of the path.
+// Paths built from a selector resolve lazily; the result is cached in a global
+// table so repeated calls are O(1) after the first.
 func (p Path[T, V]) String() string {
-	if p.path == "" && p.selector != nil {
-		p.path = resolvePathInternal(p.selector)
+	if p.path != "" {
+		return p.path
 	}
-	return p.path
+	if p.selector != nil {
+		return resolvePathInternal(p.selector)
+	}
+	return ""
 }
 
 // Index returns a new path to the element at the given index.
@@ -76,9 +81,16 @@ func resolvePathInternal[T, V any](s Selector[T, V]) string {
 		}
 	}
 
-	// Cache miss: Scan the struct for offsets
+	// Cache miss: acquire write lock and re-check before scanning (TOCTOU fix).
 	pathCacheMu.Lock()
 	defer pathCacheMu.Unlock()
+
+	// Another goroutine may have scanned this type between our read and write lock.
+	if cache, ok := pathCache[typ]; ok {
+		if p, ok := cache[offset]; ok {
+			return p
+		}
+	}
 
 	if pathCache[typ] == nil {
 		pathCache[typ] = make(map[uintptr]string)
@@ -93,10 +105,14 @@ func scanStructInternal(prefix string, typ reflect.Type, baseOffset uintptr, cac
 	for i := 0; i < typ.NumField(); i++ {
 		field := typ.Field(i)
 
-		// Use JSON tag if available, otherwise field name
+		// Use JSON tag if available, otherwise field name.
+		// Skip fields tagged json:"-" — they have no JSON path.
 		name := field.Name
 		if tag := field.Tag.Get("json"); tag != "" {
 			name = strings.Split(tag, ",")[0]
+			if name == "-" {
+				continue
+			}
 		}
 
 		fieldPath := prefix + "/" + name

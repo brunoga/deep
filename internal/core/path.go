@@ -390,15 +390,8 @@ func (p DeepPath) StripParts(prefix []PathPart) DeepPath {
 	return DeepPath(res.String())
 }
 
-// ParsePath parses a JSON Pointer path.
-// It assumes the path starts with "/" or is empty.
+// ParsePath parses a JSON Pointer path (RFC 6901).
 func ParsePath(path string) []PathPart {
-	if path == "" {
-		return nil
-	}
-	if !strings.HasPrefix(path, "/") {
-		return ParseJSONPointer(path)
-	}
 	return ParseJSONPointer(path)
 }
 
