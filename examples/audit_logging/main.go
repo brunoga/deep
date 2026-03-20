@@ -18,13 +18,14 @@ func main() {
 		Roles: []string{"user"},
 	}
 
-	// Create a patch using the type-safe builder
-	builder := v5.Edit(&u1)
-	v5.Set(builder, v5.Field(func(u *User) *string { return &u.Name }), "Alice Smith")
-	v5.Set(builder, v5.Field(func(u *User) *string { return &u.Email }), "alice.smith@example.com")
-	v5.Add(builder, v5.Field(func(u *User) *[]string { return &u.Roles }).Index(1), "admin")
+	u2 := User{
+		Name:  "Alice Smith",
+		Email: "alice.smith@example.com",
+		Roles: []string{"user", "admin"},
+	}
 
-	patch := builder.Build()
+	// Diff captures old and new values for every changed field.
+	patch := v5.Diff(u1, u2)
 
 	fmt.Println("AUDIT LOG (v5):")
 	fmt.Println("----------")

@@ -21,8 +21,12 @@ func main() {
 		Features:    map[string]bool{"billing": false},
 	}
 
-	// 1. Propose Changes
+	// 1. Propose Changes (deep-copy the map so v1 is not aliased by v2)
 	v2 := v1
+	v2.Features = make(map[string]bool, len(v1.Features))
+	for k, val := range v1.Features {
+		v2.Features[k] = val
+	}
 	v2.Version = 2
 	v2.Timeout = 45
 	v2.Features["billing"] = true
@@ -31,14 +35,17 @@ func main() {
 
 	fmt.Printf("[Version 2] PROPOSING %d CHANGES:\n%v\n", len(patch.Operations), patch)
 
-	// 2. Synchronize (Apply)
+	// 2. Synchronize (Apply) — copy the map so v1 is not aliased
 	state := v1
+	state.Features = make(map[string]bool, len(v1.Features))
+	for k, val := range v1.Features {
+		state.Features[k] = val
+	}
 	v5.Apply(&state, patch)
 	fmt.Printf("System synchronized to Version %d\n", state.Version)
 
-	// 3. Rollback
-	// In v5, we can just Diff again to get the inverse if we have history
-	rollback := v5.Diff(state, v1)
+	// 3. Rollback using the patch's own reverse
+	rollback := patch.Reverse()
 	v5.Apply(&state, rollback)
 	fmt.Printf("[ROLLBACK] System reverted to Version %d\n", state.Version)
 
