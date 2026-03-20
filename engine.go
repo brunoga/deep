@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"reflect"
 	"regexp"
+	"sort"
 
 	"github.com/brunoga/deep/v5/crdt/hlc"
 	"github.com/brunoga/deep/v5/internal/core"
@@ -12,9 +13,25 @@ import (
 // Apply applies a Patch to a target pointer.
 // v5 prioritizes generated Apply methods but falls back to reflection if needed.
 func Apply[T any](target *T, p Patch[T]) error {
-	// 1. Global Condition check
+	v := reflect.ValueOf(target)
+	if v.Kind() != reflect.Pointer || v.IsNil() {
+		return fmt.Errorf("target must be a non-nil pointer")
+	}
+
+	// Global condition check — prefer generated EvaluateCondition, fall back to reflection.
 	if p.Condition != nil {
-		ok, err := evaluateCondition(reflect.ValueOf(target).Elem(), p.Condition)
+		type condEvaluator interface {
+			EvaluateCondition(Condition) (bool, error)
+		}
+		var (
+			ok  bool
+			err error
+		)
+		if ce, hasGenCond := any(target).(condEvaluator); hasGenCond {
+			ok, err = ce.EvaluateCondition(*p.Condition)
+		} else {
+			ok, err = evaluateCondition(v.Elem(), p.Condition)
+		}
 		if err != nil {
 			return fmt.Errorf("global condition evaluation failed: %w", err)
 		}
@@ -29,14 +46,11 @@ func Apply[T any](target *T, p Patch[T]) error {
 		ApplyOperation(Operation) (bool, error)
 	})
 
-	// 2. Fallback to reflection
-	v := reflect.ValueOf(target)
-	if v.Kind() != reflect.Pointer || v.IsNil() {
-		return fmt.Errorf("target must be a non-nil pointer")
-	}
-
 	for _, op := range p.Operations {
-		// 1. Try generated path
+		// Stamp strict from the patch onto each operation before dispatch.
+		op.Strict = p.Strict
+
+		// Try generated path first.
 		if hasGenerated {
 			handled, err := applier.ApplyOperation(op)
 			if err != nil {
@@ -48,7 +62,7 @@ func Apply[T any](target *T, p Patch[T]) error {
 			}
 		}
 
-		// 2. Fallback to reflection
+		// Fallback to reflection.
 		// Strict check (Old value verification)
 		if p.Strict && op.Kind == OpReplace {
 			current, err := core.DeepPath(op.Path).Resolve(v.Elem())
@@ -152,7 +166,7 @@ func Apply[T any](target *T, p Patch[T]) error {
 				err = core.DeepPath(op.Path).Set(v.Elem(), val)
 			}
 		case OpLog:
-			fmt.Printf("DEEP LOG: %s (at %s)\n", op.New, op.Path)
+			Logger.Info("deep log", "message", op.New, "path", op.Path)
 		}
 
 		if err != nil {
@@ -172,35 +186,42 @@ type ConflictResolver interface {
 }
 
 // Merge combines two patches into a single patch, resolving conflicts.
+// When both patches touch the same path, r is consulted if non-nil; otherwise
+// the operation with the later HLC timestamp wins. If timestamps are equal or
+// zero (e.g. manually built patches), other wins over base.
+// The output operations are sorted by path for deterministic ordering.
 func Merge[T any](base, other Patch[T], r ConflictResolver) Patch[T] {
-	res := Patch[T]{}
-	latest := make(map[string]Operation)
+	latest := make(map[string]Operation, len(base.Operations)+len(other.Operations))
 
-	mergeOps := func(ops []Operation) {
+	mergeOps := func(ops []Operation, isOther bool) {
 		for _, op := range ops {
 			existing, ok := latest[op.Path]
 			if !ok {
 				latest[op.Path] = op
 				continue
 			}
-
 			if r != nil {
 				resolvedVal := r.Resolve(op.Path, existing.New, op.New)
 				op.New = resolvedVal
 				latest[op.Path] = op
-			} else if op.Timestamp.After(existing.Timestamp) {
+			} else if op.Timestamp.After(existing.Timestamp) || (isOther && !existing.Timestamp.After(op.Timestamp)) {
+				// Newer timestamp wins; on tie (equal or zero) other wins over base.
 				latest[op.Path] = op
 			}
 		}
 	}
 
-	mergeOps(base.Operations)
-	mergeOps(other.Operations)
+	mergeOps(base.Operations, false)
+	mergeOps(other.Operations, true)
 
+	res := Patch[T]{}
+	res.Operations = make([]Operation, 0, len(latest))
 	for _, op := range latest {
 		res.Operations = append(res.Operations, op)
 	}
-
+	sort.Slice(res.Operations, func(i, j int) bool {
+		return res.Operations[i].Path < res.Operations[j].Path
+	})
 	return res
 }
 
@@ -273,7 +294,7 @@ func evaluateCondition(root reflect.Value, c *Condition) (bool, error) {
 	}
 
 	if c.Op == "log" {
-		fmt.Printf("DEEP LOG CONDITION: %s (at %s, value: %v)\n", c.Value, c.Path, val.Interface())
+		Logger.Info("deep condition log", "message", c.Value, "path", c.Path, "value", val.Interface())
 		return true, nil
 	}
 

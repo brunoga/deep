@@ -7,21 +7,14 @@ import (
 
 // Diff compares two values and returns a pure data Patch.
 func Diff[T any](a, b T) Patch[T] {
-	// 1. Try generated optimized path (Value)
-	if differ, ok := any(a).(interface {
-		Diff(T) Patch[T]
-	}); ok {
-		return differ.Diff(b)
-	}
-
-	// 2. Try generated optimized path (Pointer)
+	// 1. Try generated optimized path (pointer receiver, pointer arg)
 	if differ, ok := any(&a).(interface {
-		Diff(T) Patch[T]
+		Diff(*T) Patch[T]
 	}); ok {
-		return differ.Diff(b)
+		return differ.Diff(&b)
 	}
 
-	// 3. Fallback to v4 reflection engine
+	// 2. Fallback to reflection engine
 	p, err := engine.Diff(a, b)
 	if err != nil || p == nil {
 		return Patch[T]{}
@@ -46,14 +39,15 @@ func Diff[T any](a, b T) Patch[T] {
 	return res
 }
 
-// Edit provides a fluent, type-safe builder for creating patches.
-func Edit[T any](target *T) *Builder[T] {
-	return &Builder[T]{target: target}
+// Edit returns a Builder for constructing a Patch[T]. The target argument is
+// used only for type inference and is not stored; the builder produces a
+// standalone Patch, not a live view of the target.
+func Edit[T any](_ *T) *Builder[T] {
+	return &Builder[T]{}
 }
 
 // Builder allows for type-safe manual patch construction.
 type Builder[T any] struct {
-	target *T
 	global *Condition
 	ops    []Operation
 }
@@ -64,7 +58,8 @@ func (b *Builder[T]) Where(c *Condition) *Builder[T] {
 	return b
 }
 
-// If adds a condition to the last operation.
+// If attaches a condition to the most recently added operation.
+// It is a no-op if no operations have been added yet.
 func (b *Builder[T]) If(c *Condition) *Builder[T] {
 	if len(b.ops) > 0 {
 		b.ops[len(b.ops)-1].If = c
@@ -72,7 +67,8 @@ func (b *Builder[T]) If(c *Condition) *Builder[T] {
 	return b
 }
 
-// Unless adds a negative condition to the last operation.
+// Unless attaches a negative condition to the most recently added operation.
+// It is a no-op if no operations have been added yet.
 func (b *Builder[T]) Unless(c *Condition) *Builder[T] {
 	if len(b.ops) > 0 {
 		b.ops[len(b.ops)-1].Unless = c
@@ -80,7 +76,8 @@ func (b *Builder[T]) Unless(c *Condition) *Builder[T] {
 	return b
 }
 
-// Set adds a set operation to the builder (method for fluent chaining).
+// Set adds a replace operation. For compile-time type checking, prefer the
+// package-level Set[T, V] function.
 func (b *Builder[T]) Set(p fmt.Stringer, val any) *Builder[T] {
 	b.ops = append(b.ops, Operation{
 		Kind: OpReplace,
@@ -90,7 +87,8 @@ func (b *Builder[T]) Set(p fmt.Stringer, val any) *Builder[T] {
 	return b
 }
 
-// Add adds an add operation to the builder (method for fluent chaining).
+// Add adds an insert operation. For compile-time type checking, prefer the
+// package-level Add[T, V] function.
 func (b *Builder[T]) Add(p fmt.Stringer, val any) *Builder[T] {
 	b.ops = append(b.ops, Operation{
 		Kind: OpAdd,
@@ -100,7 +98,8 @@ func (b *Builder[T]) Add(p fmt.Stringer, val any) *Builder[T] {
 	return b
 }
 
-// Remove adds a remove operation to the builder (method for fluent chaining).
+// Remove adds a delete operation. For compile-time type checking, prefer the
+// package-level Remove[T, V] function.
 func (b *Builder[T]) Remove(p fmt.Stringer) *Builder[T] {
 	b.ops = append(b.ops, Operation{
 		Kind: OpRemove,
@@ -122,6 +121,26 @@ func Add[T, V any](b *Builder[T], p Path[T, V], val V) *Builder[T] {
 // Remove adds a type-safe remove operation to the builder.
 func Remove[T, V any](b *Builder[T], p Path[T, V]) *Builder[T] {
 	return b.Remove(p)
+}
+
+// Move adds a move operation that relocates the value at from to the destination path.
+func (b *Builder[T]) Move(from, to fmt.Stringer) *Builder[T] {
+	b.ops = append(b.ops, Operation{
+		Kind: OpMove,
+		Path: to.String(),
+		Old:  from.String(),
+	})
+	return b
+}
+
+// Copy adds a copy operation that duplicates the value at from to the destination path.
+func (b *Builder[T]) Copy(from, to fmt.Stringer) *Builder[T] {
+	b.ops = append(b.ops, Operation{
+		Kind: OpCopy,
+		Path: to.String(),
+		Old:  from.String(),
+	})
+	return b
 }
 
 // Log adds a log operation to the builder.
@@ -156,9 +175,19 @@ func Gt[T, V any](p Path[T, V], val V) *Condition {
 	return &Condition{Path: p.String(), Op: ">", Value: val}
 }
 
+// Ge creates a greater-than-or-equal condition.
+func Ge[T, V any](p Path[T, V], val V) *Condition {
+	return &Condition{Path: p.String(), Op: ">=", Value: val}
+}
+
 // Lt creates a less-than condition.
 func Lt[T, V any](p Path[T, V], val V) *Condition {
 	return &Condition{Path: p.String(), Op: "<", Value: val}
+}
+
+// Le creates a less-than-or-equal condition.
+func Le[T, V any](p Path[T, V], val V) *Condition {
+	return &Condition{Path: p.String(), Op: "<=", Value: val}
 }
 
 // Exists creates a condition that checks if a path exists.

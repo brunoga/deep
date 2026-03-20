@@ -76,21 +76,41 @@ type Patch[T any] struct {
 // Operation represents a single change.
 type Operation struct {
 	Kind      OpKind     `json:"k"`
-	Path      string     `json:"p"` // Still uses string path for serialization, but created via Selectors.
+	Path      string     `json:"p"` // JSON Pointer path; created via Field selectors.
 	Old       any        `json:"o,omitempty"`
 	New       any        `json:"n,omitempty"`
-	Timestamp hlc.HLC    `json:"t,omitempty"` // Integrated causality
+	Timestamp hlc.HLC    `json:"t,omitempty"` // Integrated causality via HLC.
 	If        *Condition `json:"if,omitempty"`
 	Unless    *Condition `json:"un,omitempty"`
-	Strict    bool       `json:"s,omitempty"` // Propagated from Patch
+
+	// Strict is stamped from Patch.Strict at apply time; not serialized.
+	Strict bool `json:"-"`
 }
+
+// Condition operator constants. Use these instead of raw strings to avoid typos.
+const (
+	OpEq      = "=="
+	OpNe      = "!="
+	OpGt      = ">"
+	OpLt      = "<"
+	OpGe      = ">="
+	OpLe      = "<="
+	OpExists  = "exists"
+	OpIn      = "in"
+	OpMatches = "matches"
+	OpType    = "type"
+	OpLogCond = "log"
+	OpAnd     = "and"
+	OpOr      = "or"
+	OpNot     = "not"
+)
 
 // Condition represents a serializable predicate for conditional application.
 type Condition struct {
 	Path  string       `json:"p,omitempty"`
-	Op    string       `json:"o"` // "eq", "ne", "gt", "lt", "exists", "in", "log", "matches", "type", "and", "or", "not"
+	Op    string       `json:"o"` // see Op* constants above
 	Value any          `json:"v,omitempty"`
-	Apply []*Condition `json:"apply,omitempty"` // For logical operators
+	Apply []*Condition `json:"apply,omitempty"` // For logical operators (and, or, not)
 }
 
 // NewPatch returns a new, empty patch for type T.
@@ -98,12 +118,14 @@ func NewPatch[T any]() Patch[T] {
 	return Patch[T]{}
 }
 
+// IsEmpty reports whether the patch contains no operations.
+func (p Patch[T]) IsEmpty() bool {
+	return len(p.Operations) == 0
+}
+
 // WithStrict returns a new patch with the strict flag set.
 func (p Patch[T]) WithStrict(strict bool) Patch[T] {
 	p.Strict = strict
-	for i := range p.Operations {
-		p.Operations[i].Strict = strict
-	}
 	return p
 }
 
@@ -204,6 +226,8 @@ func (p Patch[T]) ToJSONPatch() ([]byte, error) {
 			m["value"] = op.New
 		case OpMove, OpCopy:
 			m["from"] = op.Old
+		case OpLog:
+			m["value"] = op.New // log message
 		}
 
 		if op.If != nil {
@@ -238,8 +262,12 @@ func (c *Condition) toPredicateInternal() map[string]any {
 		}
 	case ">":
 		op = "more"
+	case ">=":
+		op = "more-or-equal"
 	case "<":
 		op = "less"
+	case "<=":
+		op = "less-or-equal"
 	case "exists":
 		op = "defined"
 	case "in":
@@ -269,8 +297,135 @@ func (c *Condition) toPredicateInternal() map[string]any {
 	}
 }
 
+// fromPredicateInternal is the inverse of toPredicateInternal.
+func fromPredicateInternal(m map[string]any) *Condition {
+	if m == nil {
+		return nil
+	}
+	op, _ := m["op"].(string)
+	path, _ := m["path"].(string)
+	value := m["value"]
+
+	switch op {
+	case "test":
+		return &Condition{Path: path, Op: "==", Value: value}
+	case "not":
+		// Could be encoded != or a logical not.
+		// If it wraps a single test on the same path, treat as !=.
+		if apply, ok := m["apply"].([]any); ok && len(apply) == 1 {
+			if inner, ok := apply[0].(map[string]any); ok {
+				if inner["op"] == "test" {
+					return &Condition{Path: inner["path"].(string), Op: "!=", Value: inner["value"]}
+				}
+			}
+		}
+		return &Condition{Op: "not", Apply: parseApply(m["apply"])}
+	case "more":
+		return &Condition{Path: path, Op: ">", Value: value}
+	case "more-or-equal":
+		return &Condition{Path: path, Op: ">=", Value: value}
+	case "less":
+		return &Condition{Path: path, Op: "<", Value: value}
+	case "less-or-equal":
+		return &Condition{Path: path, Op: "<=", Value: value}
+	case "defined":
+		return &Condition{Path: path, Op: "exists"}
+	case "contains":
+		return &Condition{Path: path, Op: "in", Value: value}
+	case "and", "or":
+		return &Condition{Op: op, Apply: parseApply(m["apply"])}
+	default:
+		// log, matches, type — same op name, pass through
+		return &Condition{Path: path, Op: op, Value: value}
+	}
+}
+
+func parseApply(raw any) []*Condition {
+	items, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]*Condition, 0, len(items))
+	for _, item := range items {
+		if m, ok := item.(map[string]any); ok {
+			if c := fromPredicateInternal(m); c != nil {
+				out = append(out, c)
+			}
+		}
+	}
+	return out
+}
+
+// FromJSONPatch parses a JSON Patch document (RFC 6902 plus deep extensions)
+// back into a Patch[T]. This is the inverse of Patch.ToJSONPatch().
+func FromJSONPatch[T any](data []byte) (Patch[T], error) {
+	var ops []map[string]any
+	if err := json.Unmarshal(data, &ops); err != nil {
+		return Patch[T]{}, fmt.Errorf("FromJSONPatch: %w", err)
+	}
+	res := Patch[T]{}
+	for _, m := range ops {
+		opStr, _ := m["op"].(string)
+		path, _ := m["path"].(string)
+
+		// Global condition is encoded as a test op on "/" with an "if" predicate.
+		if opStr == "test" && path == "/" {
+			if ifPred, ok := m["if"].(map[string]any); ok {
+				res.Condition = fromPredicateInternal(ifPred)
+			}
+			continue
+		}
+
+		op := Operation{Path: path}
+
+		// Per-op conditions
+		if ifPred, ok := m["if"].(map[string]any); ok {
+			op.If = fromPredicateInternal(ifPred)
+		}
+		if unlessPred, ok := m["unless"].(map[string]any); ok {
+			op.Unless = fromPredicateInternal(unlessPred)
+		}
+
+		switch opStr {
+		case "add":
+			op.Kind = OpAdd
+			op.New = m["value"]
+		case "remove":
+			op.Kind = OpRemove
+		case "replace":
+			op.Kind = OpReplace
+			op.New = m["value"]
+		case "move":
+			op.Kind = OpMove
+			op.Old = m["from"]
+		case "copy":
+			op.Kind = OpCopy
+			op.Old = m["from"]
+		case "log":
+			op.Kind = OpLog
+			op.New = m["value"]
+		default:
+			continue // unknown op, skip
+		}
+
+		res.Operations = append(res.Operations, op)
+	}
+	return res, nil
+}
+
 // LWW represents a Last-Write-Wins register for type T.
 type LWW[T any] struct {
 	Value     T       `json:"v"`
 	Timestamp hlc.HLC `json:"t"`
+}
+
+// Set updates the register's value and timestamp if ts is after the current
+// timestamp. Returns true if the update was accepted.
+func (l *LWW[T]) Set(v T, ts hlc.HLC) bool {
+	if ts.After(l.Timestamp) {
+		l.Value = v
+		l.Timestamp = ts
+		return true
+	}
+	return false
 }

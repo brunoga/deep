@@ -3,6 +3,7 @@ package engine
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"reflect"
 	"strconv"
 	"strings"
@@ -170,9 +171,9 @@ func (p *valuePatch) reverse() diffPatch {
 
 func (p *valuePatch) walk(path string, fn func(path string, op OpKind, old, new any) error) error {
 	op := OpReplace
-	if !p.newVal.IsValid() {
+	if isNilValue(p.newVal) {
 		op = OpRemove
-	} else if !p.oldVal.IsValid() {
+	} else if isNilValue(p.oldVal) {
 		op = OpAdd
 	}
 	return fn(path, op, core.ValueToInterface(p.oldVal), core.ValueToInterface(p.newVal))
@@ -473,7 +474,7 @@ type logPatch struct {
 }
 
 func (p *logPatch) apply(root, v reflect.Value, path string) {
-	fmt.Printf("DEEP LOG: %s (value: %v)\n", p.message, v.Interface())
+	slog.Default().Info("deep log", "message", p.message, "value", v.Interface())
 }
 
 func (p *logPatch) applyChecked(root, v reflect.Value, strict bool, path string) error {
