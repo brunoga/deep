@@ -14,7 +14,14 @@ func Diff[T any](a, b T) Patch[T] {
 		return differ.Diff(&b)
 	}
 
-	// 2. Fallback to reflection engine
+	// 2. Try hand-written Diff with value arg (e.g. crdt.Text)
+	if differ, ok := any(a).(interface {
+		Diff(T) Patch[T]
+	}); ok {
+		return differ.Diff(b)
+	}
+
+	// 3. Fallback to reflection engine
 	p, err := engine.Diff(a, b)
 	if err != nil || p == nil {
 		return Patch[T]{}
