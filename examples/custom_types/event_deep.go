@@ -3,23 +3,22 @@ package main
 
 import (
 	"fmt"
+	deep "github.com/brunoga/deep/v5"
 	"reflect"
 	"regexp"
 	"strings"
-
-	v5 "github.com/brunoga/deep/v5"
 )
 
 // ApplyOperation applies a single operation to Event efficiently.
-func (t *Event) ApplyOperation(op v5.Operation) (bool, error) {
+func (t *Event) ApplyOperation(op deep.Operation) (bool, error) {
 	if op.If != nil {
-		ok, err := t.evaluateCondition(*op.If)
+		ok, err := t.EvaluateCondition(*op.If)
 		if err != nil || !ok {
 			return true, err
 		}
 	}
 	if op.Unless != nil {
-		ok, err := t.evaluateCondition(*op.Unless)
+		ok, err := t.EvaluateCondition(*op.Unless)
 		if err == nil && ok {
 			return true, nil
 		}
@@ -32,7 +31,7 @@ func (t *Event) ApplyOperation(op v5.Operation) (bool, error) {
 		}
 		if m, ok := op.New.(map[string]any); ok {
 			for k, v := range m {
-				t.ApplyOperation(v5.Operation{Kind: op.Kind, Path: "/" + k, New: v})
+				t.ApplyOperation(deep.Operation{Kind: op.Kind, Path: "/" + k, New: v})
 			}
 			return true, nil
 		}
@@ -40,11 +39,11 @@ func (t *Event) ApplyOperation(op v5.Operation) (bool, error) {
 
 	switch op.Path {
 	case "/name", "/Name":
-		if op.Kind == v5.OpLog {
-			fmt.Printf("DEEP LOG: %v (at %s, field value: %v)\n", op.New, op.Path, t.Name)
+		if op.Kind == deep.OpLog {
+			deep.Logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Name)
 			return true, nil
 		}
-		if op.Kind == v5.OpReplace && op.Strict {
+		if op.Kind == deep.OpReplace && op.Strict {
 			if t.Name != op.Old.(string) {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Name)
 			}
@@ -54,12 +53,14 @@ func (t *Event) ApplyOperation(op v5.Operation) (bool, error) {
 			return true, nil
 		}
 	case "/when", "/When":
-		if op.Kind == v5.OpLog {
-			fmt.Printf("DEEP LOG: %v (at %s, field value: %v)\n", op.New, op.Path, t.When)
+		if op.Kind == deep.OpLog {
+			deep.Logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.When)
 			return true, nil
 		}
-		if op.Kind == v5.OpReplace && op.Strict {
-			// Complex strict check skipped in prototype
+		if op.Kind == deep.OpReplace && op.Strict {
+			if old, ok := op.Old.(CustomTime); !ok || !deep.Equal(t.When, old) {
+				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.When)
+			}
 		}
 		if v, ok := op.New.(CustomTime); ok {
 			t.When = v
@@ -75,15 +76,10 @@ func (t *Event) ApplyOperation(op v5.Operation) (bool, error) {
 }
 
 // Diff compares t with other and returns a Patch.
-func (t *Event) Diff(other *Event) v5.Patch[Event] {
-	p := v5.NewPatch[Event]()
+func (t *Event) Diff(other *Event) deep.Patch[Event] {
+	p := deep.NewPatch[Event]()
 	if t.Name != other.Name {
-		p.Operations = append(p.Operations, v5.Operation{
-			Kind: v5.OpReplace,
-			Path: "/name",
-			Old:  t.Name,
-			New:  other.Name,
-		})
+		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/name", Old: t.Name, New: other.Name})
 	}
 	subWhen := (&t.When).Diff(&other.When)
 	for _, op := range subWhen.Operations {
@@ -94,14 +90,15 @@ func (t *Event) Diff(other *Event) v5.Patch[Event] {
 		}
 		p.Operations = append(p.Operations, op)
 	}
+
 	return p
 }
 
-func (t *Event) evaluateCondition(c v5.Condition) (bool, error) {
+func (t *Event) EvaluateCondition(c deep.Condition) (bool, error) {
 	switch c.Op {
 	case "and":
 		for _, sub := range c.Apply {
-			ok, err := t.evaluateCondition(*sub)
+			ok, err := t.EvaluateCondition(*sub)
 			if err != nil || !ok {
 				return false, err
 			}
@@ -109,7 +106,7 @@ func (t *Event) evaluateCondition(c v5.Condition) (bool, error) {
 		return true, nil
 	case "or":
 		for _, sub := range c.Apply {
-			ok, err := t.evaluateCondition(*sub)
+			ok, err := t.EvaluateCondition(*sub)
 			if err == nil && ok {
 				return true, nil
 			}
@@ -117,7 +114,7 @@ func (t *Event) evaluateCondition(c v5.Condition) (bool, error) {
 		return false, nil
 	case "not":
 		if len(c.Apply) > 0 {
-			ok, err := t.evaluateCondition(*c.Apply[0])
+			ok, err := t.EvaluateCondition(*c.Apply[0])
 			if err != nil {
 				return false, err
 			}
@@ -128,18 +125,52 @@ func (t *Event) evaluateCondition(c v5.Condition) (bool, error) {
 
 	switch c.Path {
 	case "/name", "/Name":
+		if c.Op == "exists" {
+			return true, nil
+		}
+		if c.Op == "type" {
+			return checkType(t.Name, c.Value.(string)), nil
+		}
+		if c.Op == "log" {
+			deep.Logger.Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Name)
+			return true, nil
+		}
+		if c.Op == "matches" {
+			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Name))
+		}
+		_sv, _ok := c.Value.(string)
+		if !_ok {
+			return false, fmt.Errorf("condition value type mismatch for field Name")
+		}
 		switch c.Op {
 		case "==":
-			return t.Name == c.Value.(string), nil
+			return t.Name == _sv, nil
 		case "!=":
-			return t.Name != c.Value.(string), nil
-		case "log":
-			fmt.Printf("DEEP LOG CONDITION: %v (at %s, value: %v)\n", c.Value, c.Path, t.Name)
-			return true, nil
-		case "matches":
-			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Name))
-		case "type":
-			return checkType(t.Name, c.Value.(string)), nil
+			return t.Name != _sv, nil
+		case ">":
+			return t.Name > _sv, nil
+		case "<":
+			return t.Name < _sv, nil
+		case ">=":
+			return t.Name >= _sv, nil
+		case "<=":
+			return t.Name <= _sv, nil
+		case "in":
+			switch vals := c.Value.(type) {
+			case []string:
+				for _, v := range vals {
+					if t.Name == v {
+						return true, nil
+					}
+				}
+			case []any:
+				for _, v := range vals {
+					if sv, ok := v.(string); ok && t.Name == sv {
+						return true, nil
+					}
+				}
+			}
+			return false, nil
 		}
 	}
 	return false, fmt.Errorf("unsupported condition path or op: %s", c.Path)
@@ -194,7 +225,8 @@ func checkType(v any, typeName string) bool {
 			return true
 		}
 		rv := reflect.ValueOf(v)
-		return (rv.Kind() == reflect.Pointer || rv.Kind() == reflect.Interface || rv.Kind() == reflect.Slice || rv.Kind() == reflect.Map) && rv.IsNil()
+		return (rv.Kind() == reflect.Pointer || rv.Kind() == reflect.Interface ||
+			rv.Kind() == reflect.Slice || rv.Kind() == reflect.Map) && rv.IsNil()
 	}
 	return false
 }

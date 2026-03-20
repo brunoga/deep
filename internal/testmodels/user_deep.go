@@ -3,22 +3,26 @@ package testmodels
 
 import (
 	"fmt"
-	"regexp"
-	"reflect"
-	"strings"
 	deep "github.com/brunoga/deep/v5"
 	crdt "github.com/brunoga/deep/v5/crdt"
+	"reflect"
+	"regexp"
+	"strings"
 )
 
 // ApplyOperation applies a single operation to User efficiently.
 func (t *User) ApplyOperation(op deep.Operation) (bool, error) {
 	if op.If != nil {
-		ok, err := t.evaluateCondition(*op.If)
-		if err != nil || !ok { return true, err }
+		ok, err := t.EvaluateCondition(*op.If)
+		if err != nil || !ok {
+			return true, err
+		}
 	}
 	if op.Unless != nil {
-		ok, err := t.evaluateCondition(*op.Unless)
-		if err == nil && ok { return true, nil }
+		ok, err := t.EvaluateCondition(*op.Unless)
+		if err == nil && ok {
+			return true, nil
+		}
 	}
 
 	if op.Path == "" || op.Path == "/" {
@@ -37,7 +41,7 @@ func (t *User) ApplyOperation(op deep.Operation) (bool, error) {
 	switch op.Path {
 	case "/id", "/ID":
 		if op.Kind == deep.OpLog {
-			fmt.Printf("DEEP LOG: %v (at %s, field value: %v)\n", op.New, op.Path, t.ID)
+			deep.Logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.ID)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
@@ -55,7 +59,7 @@ func (t *User) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 	case "/full_name", "/Name":
 		if op.Kind == deep.OpLog {
-			fmt.Printf("DEEP LOG: %v (at %s, field value: %v)\n", op.New, op.Path, t.Name)
+			deep.Logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Name)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
@@ -69,11 +73,13 @@ func (t *User) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 	case "/info", "/Info":
 		if op.Kind == deep.OpLog {
-			fmt.Printf("DEEP LOG: %v (at %s, field value: %v)\n", op.New, op.Path, t.Info)
+			deep.Logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Info)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
-			// Complex strict check skipped in prototype
+			if old, ok := op.Old.(Detail); !ok || !deep.Equal(t.Info, old) {
+				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Info)
+			}
 		}
 		if v, ok := op.New.(Detail); ok {
 			t.Info = v
@@ -81,11 +87,13 @@ func (t *User) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 	case "/roles", "/Roles":
 		if op.Kind == deep.OpLog {
-			fmt.Printf("DEEP LOG: %v (at %s, field value: %v)\n", op.New, op.Path, t.Roles)
+			deep.Logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Roles)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
-			// Complex strict check skipped in prototype
+			if old, ok := op.Old.([]string); !ok || !deep.Equal(t.Roles, old) {
+				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Roles)
+			}
 		}
 		if v, ok := op.New.([]string); ok {
 			t.Roles = v
@@ -93,11 +101,13 @@ func (t *User) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 	case "/score", "/Score":
 		if op.Kind == deep.OpLog {
-			fmt.Printf("DEEP LOG: %v (at %s, field value: %v)\n", op.New, op.Path, t.Score)
+			deep.Logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Score)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
-			// Complex strict check skipped in prototype
+			if old, ok := op.Old.(map[string]int); !ok || !deep.Equal(t.Score, old) {
+				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Score)
+			}
 		}
 		if v, ok := op.New.(map[string]int); ok {
 			t.Score = v
@@ -105,11 +115,13 @@ func (t *User) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 	case "/bio", "/Bio":
 		if op.Kind == deep.OpLog {
-			fmt.Printf("DEEP LOG: %v (at %s, field value: %v)\n", op.New, op.Path, t.Bio)
+			deep.Logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Bio)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
-			// Complex strict check skipped in prototype
+			if old, ok := op.Old.(crdt.Text); !ok || !deep.Equal(t.Bio, old) {
+				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Bio)
+			}
 		}
 		if v, ok := op.New.(crdt.Text); ok {
 			t.Bio = v
@@ -117,7 +129,7 @@ func (t *User) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 	case "/age":
 		if op.Kind == deep.OpLog {
-			fmt.Printf("DEEP LOG: %v (at %s, field value: %v)\n", op.New, op.Path, t.age)
+			deep.Logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.age)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
@@ -144,12 +156,13 @@ func (t *User) ApplyOperation(op deep.Operation) (bool, error) {
 			if op.Kind == deep.OpRemove {
 				delete(t.Score, key)
 				return true, nil
-			} else {
-				if t.Score == nil { t.Score = make(map[string]int) }
-				if v, ok := op.New.(int); ok {
-					t.Score[key] = v
-					return true, nil
-				}
+			}
+			if t.Score == nil {
+				t.Score = make(map[string]int)
+			}
+			if v, ok := op.New.(int); ok {
+				t.Score[key] = v
+				return true, nil
 			}
 		}
 	}
@@ -160,83 +173,52 @@ func (t *User) ApplyOperation(op deep.Operation) (bool, error) {
 func (t *User) Diff(other *User) deep.Patch[User] {
 	p := deep.NewPatch[User]()
 	if t.ID != other.ID {
-		p.Operations = append(p.Operations, deep.Operation{
-			Kind: deep.OpReplace,
-			Path: "/id",
-			Old:  t.ID,
-			New:  other.ID,
-		})
+		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/id", Old: t.ID, New: other.ID})
 	}
 	if t.Name != other.Name {
-		p.Operations = append(p.Operations, deep.Operation{
-			Kind: deep.OpReplace,
-			Path: "/full_name",
-			Old:  t.Name,
-			New:  other.Name,
-		})
+		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/full_name", Old: t.Name, New: other.Name})
 	}
-		subInfo := (&t.Info).Diff(&other.Info)
-		for _, op := range subInfo.Operations {
-			if op.Path == "" || op.Path == "/" {
-				op.Path = "/info"
-			} else {
-				op.Path = "/info" + op.Path
-			}
-			p.Operations = append(p.Operations, op)
+	subInfo := (&t.Info).Diff(&other.Info)
+	for _, op := range subInfo.Operations {
+		if op.Path == "" || op.Path == "/" {
+			op.Path = "/info"
+		} else {
+			op.Path = "/info" + op.Path
 		}
+		p.Operations = append(p.Operations, op)
+	}
 	if len(t.Roles) != len(other.Roles) {
-		p.Operations = append(p.Operations, deep.Operation{
-			Kind: deep.OpReplace,
-			Path: "/roles",
-			Old:  t.Roles,
-			New:  other.Roles,
-		})
+		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/roles", Old: t.Roles, New: other.Roles})
 	} else {
 		for i := range t.Roles {
 			if t.Roles[i] != other.Roles[i] {
-				p.Operations = append(p.Operations, deep.Operation{
-					Kind: deep.OpReplace,
-					Path: fmt.Sprintf("/roles/%d", i),
-					Old:  t.Roles[i],
-					New:  other.Roles[i],
-				})
+				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: fmt.Sprintf("/roles/%d", i), Old: t.Roles[i], New: other.Roles[i]})
 			}
 		}
 	}
 	if other.Score != nil {
-	for k, v := range other.Score {
-		if t.Score == nil { 
-			p.Operations = append(p.Operations, deep.Operation{
-				Kind: deep.OpReplace,
-				Path: fmt.Sprintf("/score/%v", k),
-				New:  v,
-			})
-			continue
+		for k, v := range other.Score {
+			if t.Score == nil {
+				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: fmt.Sprintf("/score/%v", k), New: v})
+				continue
+			}
+			if oldV, ok := t.Score[k]; !ok || v != oldV {
+				kind := deep.OpReplace
+				if !ok {
+					kind = deep.OpAdd
+				}
+				p.Operations = append(p.Operations, deep.Operation{Kind: kind, Path: fmt.Sprintf("/score/%v", k), Old: oldV, New: v})
+			}
 		}
-		if oldV, ok := t.Score[k]; !ok || v != oldV {
-			kind := deep.OpReplace
-			if !ok { kind = deep.OpAdd }
-			p.Operations = append(p.Operations, deep.Operation{
-				Kind: kind,
-				Path: fmt.Sprintf("/score/%v", k),
-				Old:  oldV,
-				New:  v,
-			})
-		}
-	}
 	}
 	if t.Score != nil {
-	for k, v := range t.Score {
-		if other.Score == nil || !contains(other.Score, k) {
-			p.Operations = append(p.Operations, deep.Operation{
-				Kind: deep.OpRemove,
-				Path: fmt.Sprintf("/score/%v", k),
-				Old:  v,
-			})
+		for k, v := range t.Score {
+			if other.Score == nil || !contains(other.Score, k) {
+				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: fmt.Sprintf("/score/%v", k), Old: v})
+			}
 		}
 	}
-	}
-	if t.Bio != nil && other.Bio != nil {
+	if (&t.Bio) != nil && other.Bio != nil {
 		subBio := (&t.Bio).Diff(other.Bio)
 		for _, op := range subBio.Operations {
 			if op.Path == "" || op.Path == "/" {
@@ -248,34 +230,36 @@ func (t *User) Diff(other *User) deep.Patch[User] {
 		}
 	}
 	if t.age != other.age {
-		p.Operations = append(p.Operations, deep.Operation{
-			Kind: deep.OpReplace,
-			Path: "/age",
-			Old:  t.age,
-			New:  other.age,
-		})
+		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/age", Old: t.age, New: other.age})
 	}
+
 	return p
 }
 
-func (t *User) evaluateCondition(c deep.Condition) (bool, error) {
+func (t *User) EvaluateCondition(c deep.Condition) (bool, error) {
 	switch c.Op {
 	case "and":
 		for _, sub := range c.Apply {
-			ok, err := t.evaluateCondition(*sub)
-			if err != nil || !ok { return false, err }
+			ok, err := t.EvaluateCondition(*sub)
+			if err != nil || !ok {
+				return false, err
+			}
 		}
 		return true, nil
 	case "or":
 		for _, sub := range c.Apply {
-			ok, err := t.evaluateCondition(*sub)
-			if err == nil && ok { return true, nil }
+			ok, err := t.EvaluateCondition(*sub)
+			if err == nil && ok {
+				return true, nil
+			}
 		}
 		return false, nil
 	case "not":
 		if len(c.Apply) > 0 {
-			ok, err := t.evaluateCondition(*c.Apply[0])
-			if err != nil { return false, err }
+			ok, err := t.EvaluateCondition(*c.Apply[0])
+			if err != nil {
+				return false, err
+			}
 			return !ok, nil
 		}
 		return true, nil
@@ -283,28 +267,174 @@ func (t *User) evaluateCondition(c deep.Condition) (bool, error) {
 
 	switch c.Path {
 	case "/id", "/ID":
+		if c.Op == "exists" {
+			return true, nil
+		}
+		if c.Op == "type" {
+			return checkType(t.ID, c.Value.(string)), nil
+		}
+		if c.Op == "log" {
+			deep.Logger.Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.ID)
+			return true, nil
+		}
+		if c.Op == "matches" {
+			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.ID))
+		}
+		var _cv float64
+		switch v := c.Value.(type) {
+		case int:
+			_cv = float64(v)
+		case float64:
+			_cv = v
+		default:
+			return false, fmt.Errorf("condition value type mismatch for field ID")
+		}
+		_fv := float64(t.ID)
 		switch c.Op {
-		case "==": return t.ID == c.Value.(int), nil
-		case "!=": return t.ID != c.Value.(int), nil
-		case "log": fmt.Printf("DEEP LOG CONDITION: %v (at %s, value: %v)\n", c.Value, c.Path, t.ID); return true, nil
-		case "matches": return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.ID))
-		case "type": return checkType(t.ID, c.Value.(string)), nil
+		case "==":
+			return _fv == _cv, nil
+		case "!=":
+			return _fv != _cv, nil
+		case ">":
+			return _fv > _cv, nil
+		case "<":
+			return _fv < _cv, nil
+		case ">=":
+			return _fv >= _cv, nil
+		case "<=":
+			return _fv <= _cv, nil
+		case "in":
+			switch vals := c.Value.(type) {
+			case []int:
+				for _, v := range vals {
+					if t.ID == v {
+						return true, nil
+					}
+				}
+			case []any:
+				for _, v := range vals {
+					switch iv := v.(type) {
+					case int:
+						if t.ID == iv {
+							return true, nil
+						}
+					case float64:
+						if float64(t.ID) == iv {
+							return true, nil
+						}
+					}
+				}
+			}
+			return false, nil
 		}
 	case "/full_name", "/Name":
+		if c.Op == "exists" {
+			return true, nil
+		}
+		if c.Op == "type" {
+			return checkType(t.Name, c.Value.(string)), nil
+		}
+		if c.Op == "log" {
+			deep.Logger.Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Name)
+			return true, nil
+		}
+		if c.Op == "matches" {
+			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Name))
+		}
+		_sv, _ok := c.Value.(string)
+		if !_ok {
+			return false, fmt.Errorf("condition value type mismatch for field Name")
+		}
 		switch c.Op {
-		case "==": return t.Name == c.Value.(string), nil
-		case "!=": return t.Name != c.Value.(string), nil
-		case "log": fmt.Printf("DEEP LOG CONDITION: %v (at %s, value: %v)\n", c.Value, c.Path, t.Name); return true, nil
-		case "matches": return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Name))
-		case "type": return checkType(t.Name, c.Value.(string)), nil
+		case "==":
+			return t.Name == _sv, nil
+		case "!=":
+			return t.Name != _sv, nil
+		case ">":
+			return t.Name > _sv, nil
+		case "<":
+			return t.Name < _sv, nil
+		case ">=":
+			return t.Name >= _sv, nil
+		case "<=":
+			return t.Name <= _sv, nil
+		case "in":
+			switch vals := c.Value.(type) {
+			case []string:
+				for _, v := range vals {
+					if t.Name == v {
+						return true, nil
+					}
+				}
+			case []any:
+				for _, v := range vals {
+					if sv, ok := v.(string); ok && t.Name == sv {
+						return true, nil
+					}
+				}
+			}
+			return false, nil
 		}
 	case "/age":
+		if c.Op == "exists" {
+			return true, nil
+		}
+		if c.Op == "type" {
+			return checkType(t.age, c.Value.(string)), nil
+		}
+		if c.Op == "log" {
+			deep.Logger.Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.age)
+			return true, nil
+		}
+		if c.Op == "matches" {
+			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.age))
+		}
+		var _cv float64
+		switch v := c.Value.(type) {
+		case int:
+			_cv = float64(v)
+		case float64:
+			_cv = v
+		default:
+			return false, fmt.Errorf("condition value type mismatch for field age")
+		}
+		_fv := float64(t.age)
 		switch c.Op {
-		case "==": return t.age == c.Value.(int), nil
-		case "!=": return t.age != c.Value.(int), nil
-		case "log": fmt.Printf("DEEP LOG CONDITION: %v (at %s, value: %v)\n", c.Value, c.Path, t.age); return true, nil
-		case "matches": return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.age))
-		case "type": return checkType(t.age, c.Value.(string)), nil
+		case "==":
+			return _fv == _cv, nil
+		case "!=":
+			return _fv != _cv, nil
+		case ">":
+			return _fv > _cv, nil
+		case "<":
+			return _fv < _cv, nil
+		case ">=":
+			return _fv >= _cv, nil
+		case "<=":
+			return _fv <= _cv, nil
+		case "in":
+			switch vals := c.Value.(type) {
+			case []int:
+				for _, v := range vals {
+					if t.age == v {
+						return true, nil
+					}
+				}
+			case []any:
+				for _, v := range vals {
+					switch iv := v.(type) {
+					case int:
+						if t.age == iv {
+							return true, nil
+						}
+					case float64:
+						if float64(t.age) == iv {
+							return true, nil
+						}
+					}
+				}
+			}
+			return false, nil
 		}
 	}
 	return false, fmt.Errorf("unsupported condition path or op: %s", c.Path)
@@ -312,54 +442,81 @@ func (t *User) evaluateCondition(c deep.Condition) (bool, error) {
 
 // Equal returns true if t and other are deeply equal.
 func (t *User) Equal(other *User) bool {
-	if t.ID != other.ID { return false }
-	if t.Name != other.Name { return false }
-	if !(&t.Info).Equal((&other.Info)) { return false }
-	if len(t.Roles) != len(other.Roles) { return false }
-	for i := range t.Roles {
-		if t.Roles[i] != other.Roles[i] { return false }
+	if t.ID != other.ID {
+		return false
 	}
-	if len(t.Score) != len(other.Score) { return false }
+	if t.Name != other.Name {
+		return false
+	}
+	if !(&t.Info).Equal((&other.Info)) {
+		return false
+	}
+	if len(t.Roles) != len(other.Roles) {
+		return false
+	}
+	for i := range t.Roles {
+		if t.Roles[i] != other.Roles[i] {
+			return false
+		}
+	}
+	if len(t.Score) != len(other.Score) {
+		return false
+	}
 	for k, v := range t.Score {
 		vOther, ok := other.Score[k]
-		if !ok { return false }
-		if v != vOther { return false }
+		if !ok {
+			return false
+		}
+		if v != vOther {
+			return false
+		}
 	}
-	if len(t.Bio) != len(other.Bio) { return false }
+	if len(t.Bio) != len(other.Bio) {
+		return false
+	}
 	for i := range t.Bio {
-		if t.Bio[i] != other.Bio[i] { return false }
+		if t.Bio[i] != other.Bio[i] {
+			return false
+		}
 	}
-	if t.age != other.age { return false }
+	if t.age != other.age {
+		return false
+	}
 	return true
 }
 
 // Copy returns a deep copy of t.
 func (t *User) Copy() *User {
 	res := &User{
-		ID: t.ID,
-		Name: t.Name,
+		ID:    t.ID,
+		Name:  t.Name,
 		Roles: append([]string(nil), t.Roles...),
-		Bio: append(crdt.Text(nil), t.Bio...),
-		age: t.age,
+		Bio:   append(crdt.Text(nil), t.Bio...),
+		age:   t.age,
 	}
 	res.Info = *(&t.Info).Copy()
 	if t.Score != nil {
 		res.Score = make(map[string]int)
 		for k, v := range t.Score {
-		res.Score[k] = v
+			res.Score[k] = v
 		}
 	}
 	return res
 }
+
 // ApplyOperation applies a single operation to Detail efficiently.
 func (t *Detail) ApplyOperation(op deep.Operation) (bool, error) {
 	if op.If != nil {
-		ok, err := t.evaluateCondition(*op.If)
-		if err != nil || !ok { return true, err }
+		ok, err := t.EvaluateCondition(*op.If)
+		if err != nil || !ok {
+			return true, err
+		}
 	}
 	if op.Unless != nil {
-		ok, err := t.evaluateCondition(*op.Unless)
-		if err == nil && ok { return true, nil }
+		ok, err := t.EvaluateCondition(*op.Unless)
+		if err == nil && ok {
+			return true, nil
+		}
 	}
 
 	if op.Path == "" || op.Path == "/" {
@@ -378,7 +535,7 @@ func (t *Detail) ApplyOperation(op deep.Operation) (bool, error) {
 	switch op.Path {
 	case "/Age":
 		if op.Kind == deep.OpLog {
-			fmt.Printf("DEEP LOG: %v (at %s, field value: %v)\n", op.New, op.Path, t.Age)
+			deep.Logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Age)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
@@ -396,7 +553,7 @@ func (t *Detail) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 	case "/addr", "/Address":
 		if op.Kind == deep.OpLog {
-			fmt.Printf("DEEP LOG: %v (at %s, field value: %v)\n", op.New, op.Path, t.Address)
+			deep.Logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Address)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
@@ -417,42 +574,39 @@ func (t *Detail) ApplyOperation(op deep.Operation) (bool, error) {
 func (t *Detail) Diff(other *Detail) deep.Patch[Detail] {
 	p := deep.NewPatch[Detail]()
 	if t.Age != other.Age {
-		p.Operations = append(p.Operations, deep.Operation{
-			Kind: deep.OpReplace,
-			Path: "/Age",
-			Old:  t.Age,
-			New:  other.Age,
-		})
+		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/Age", Old: t.Age, New: other.Age})
 	}
 	if t.Address != other.Address {
-		p.Operations = append(p.Operations, deep.Operation{
-			Kind: deep.OpReplace,
-			Path: "/addr",
-			Old:  t.Address,
-			New:  other.Address,
-		})
+		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/addr", Old: t.Address, New: other.Address})
 	}
+
 	return p
 }
 
-func (t *Detail) evaluateCondition(c deep.Condition) (bool, error) {
+func (t *Detail) EvaluateCondition(c deep.Condition) (bool, error) {
 	switch c.Op {
 	case "and":
 		for _, sub := range c.Apply {
-			ok, err := t.evaluateCondition(*sub)
-			if err != nil || !ok { return false, err }
+			ok, err := t.EvaluateCondition(*sub)
+			if err != nil || !ok {
+				return false, err
+			}
 		}
 		return true, nil
 	case "or":
 		for _, sub := range c.Apply {
-			ok, err := t.evaluateCondition(*sub)
-			if err == nil && ok { return true, nil }
+			ok, err := t.EvaluateCondition(*sub)
+			if err == nil && ok {
+				return true, nil
+			}
 		}
 		return false, nil
 	case "not":
 		if len(c.Apply) > 0 {
-			ok, err := t.evaluateCondition(*c.Apply[0])
-			if err != nil { return false, err }
+			ok, err := t.EvaluateCondition(*c.Apply[0])
+			if err != nil {
+				return false, err
+			}
 			return !ok, nil
 		}
 		return true, nil
@@ -460,20 +614,113 @@ func (t *Detail) evaluateCondition(c deep.Condition) (bool, error) {
 
 	switch c.Path {
 	case "/Age":
+		if c.Op == "exists" {
+			return true, nil
+		}
+		if c.Op == "type" {
+			return checkType(t.Age, c.Value.(string)), nil
+		}
+		if c.Op == "log" {
+			deep.Logger.Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Age)
+			return true, nil
+		}
+		if c.Op == "matches" {
+			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Age))
+		}
+		var _cv float64
+		switch v := c.Value.(type) {
+		case int:
+			_cv = float64(v)
+		case float64:
+			_cv = v
+		default:
+			return false, fmt.Errorf("condition value type mismatch for field Age")
+		}
+		_fv := float64(t.Age)
 		switch c.Op {
-		case "==": return t.Age == c.Value.(int), nil
-		case "!=": return t.Age != c.Value.(int), nil
-		case "log": fmt.Printf("DEEP LOG CONDITION: %v (at %s, value: %v)\n", c.Value, c.Path, t.Age); return true, nil
-		case "matches": return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Age))
-		case "type": return checkType(t.Age, c.Value.(string)), nil
+		case "==":
+			return _fv == _cv, nil
+		case "!=":
+			return _fv != _cv, nil
+		case ">":
+			return _fv > _cv, nil
+		case "<":
+			return _fv < _cv, nil
+		case ">=":
+			return _fv >= _cv, nil
+		case "<=":
+			return _fv <= _cv, nil
+		case "in":
+			switch vals := c.Value.(type) {
+			case []int:
+				for _, v := range vals {
+					if t.Age == v {
+						return true, nil
+					}
+				}
+			case []any:
+				for _, v := range vals {
+					switch iv := v.(type) {
+					case int:
+						if t.Age == iv {
+							return true, nil
+						}
+					case float64:
+						if float64(t.Age) == iv {
+							return true, nil
+						}
+					}
+				}
+			}
+			return false, nil
 		}
 	case "/addr", "/Address":
+		if c.Op == "exists" {
+			return true, nil
+		}
+		if c.Op == "type" {
+			return checkType(t.Address, c.Value.(string)), nil
+		}
+		if c.Op == "log" {
+			deep.Logger.Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Address)
+			return true, nil
+		}
+		if c.Op == "matches" {
+			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Address))
+		}
+		_sv, _ok := c.Value.(string)
+		if !_ok {
+			return false, fmt.Errorf("condition value type mismatch for field Address")
+		}
 		switch c.Op {
-		case "==": return t.Address == c.Value.(string), nil
-		case "!=": return t.Address != c.Value.(string), nil
-		case "log": fmt.Printf("DEEP LOG CONDITION: %v (at %s, value: %v)\n", c.Value, c.Path, t.Address); return true, nil
-		case "matches": return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Address))
-		case "type": return checkType(t.Address, c.Value.(string)), nil
+		case "==":
+			return t.Address == _sv, nil
+		case "!=":
+			return t.Address != _sv, nil
+		case ">":
+			return t.Address > _sv, nil
+		case "<":
+			return t.Address < _sv, nil
+		case ">=":
+			return t.Address >= _sv, nil
+		case "<=":
+			return t.Address <= _sv, nil
+		case "in":
+			switch vals := c.Value.(type) {
+			case []string:
+				for _, v := range vals {
+					if t.Address == v {
+						return true, nil
+					}
+				}
+			case []any:
+				for _, v := range vals {
+					if sv, ok := v.(string); ok && t.Address == sv {
+						return true, nil
+					}
+				}
+			}
+			return false, nil
 		}
 	}
 	return false, fmt.Errorf("unsupported condition path or op: %s", c.Path)
@@ -481,15 +728,19 @@ func (t *Detail) evaluateCondition(c deep.Condition) (bool, error) {
 
 // Equal returns true if t and other are deeply equal.
 func (t *Detail) Equal(other *Detail) bool {
-	if t.Age != other.Age { return false }
-	if t.Address != other.Address { return false }
+	if t.Age != other.Age {
+		return false
+	}
+	if t.Address != other.Address {
+		return false
+	}
 	return true
 }
 
 // Copy returns a deep copy of t.
 func (t *Detail) Copy() *Detail {
 	res := &Detail{
-		Age: t.Age,
+		Age:     t.Age,
 		Address: t.Address,
 	}
 	return res
@@ -520,9 +771,12 @@ func checkType(v any, typeName string) bool {
 		rv := reflect.ValueOf(v)
 		return rv.Kind() == reflect.Slice || rv.Kind() == reflect.Array
 	case "null":
-		if v == nil { return true }
+		if v == nil {
+			return true
+		}
 		rv := reflect.ValueOf(v)
-		return (rv.Kind() == reflect.Pointer || rv.Kind() == reflect.Interface || rv.Kind() == reflect.Slice || rv.Kind() == reflect.Map) && rv.IsNil()
+		return (rv.Kind() == reflect.Pointer || rv.Kind() == reflect.Interface ||
+			rv.Kind() == reflect.Slice || rv.Kind() == reflect.Map) && rv.IsNil()
 	}
 	return false
 }

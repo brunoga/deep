@@ -1,5 +1,7 @@
 package testmodels
 
+//go:generate go run github.com/brunoga/deep/v5/cmd/deep-gen -type=User,Detail -output user_deep.go .
+
 import (
 	"github.com/brunoga/deep/v5/crdt"
 )

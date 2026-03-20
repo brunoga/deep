@@ -3,22 +3,21 @@ package main
 
 import (
 	"fmt"
+	deep "github.com/brunoga/deep/v5"
 	"reflect"
 	"strings"
-
-	v5 "github.com/brunoga/deep/v5"
 )
 
 // ApplyOperation applies a single operation to Workspace efficiently.
-func (t *Workspace) ApplyOperation(op v5.Operation) (bool, error) {
+func (t *Workspace) ApplyOperation(op deep.Operation) (bool, error) {
 	if op.If != nil {
-		ok, err := t.evaluateCondition(*op.If)
+		ok, err := t.EvaluateCondition(*op.If)
 		if err != nil || !ok {
 			return true, err
 		}
 	}
 	if op.Unless != nil {
-		ok, err := t.evaluateCondition(*op.Unless)
+		ok, err := t.EvaluateCondition(*op.Unless)
 		if err == nil && ok {
 			return true, nil
 		}
@@ -31,7 +30,7 @@ func (t *Workspace) ApplyOperation(op v5.Operation) (bool, error) {
 		}
 		if m, ok := op.New.(map[string]any); ok {
 			for k, v := range m {
-				t.ApplyOperation(v5.Operation{Kind: op.Kind, Path: "/" + k, New: v})
+				t.ApplyOperation(deep.Operation{Kind: op.Kind, Path: "/" + k, New: v})
 			}
 			return true, nil
 		}
@@ -39,24 +38,28 @@ func (t *Workspace) ApplyOperation(op v5.Operation) (bool, error) {
 
 	switch op.Path {
 	case "/drafts", "/Drafts":
-		if op.Kind == v5.OpLog {
-			fmt.Printf("DEEP LOG: %v (at %s, field value: %v)\n", op.New, op.Path, t.Drafts)
+		if op.Kind == deep.OpLog {
+			deep.Logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Drafts)
 			return true, nil
 		}
-		if op.Kind == v5.OpReplace && op.Strict {
-			// Complex strict check skipped in prototype
+		if op.Kind == deep.OpReplace && op.Strict {
+			if old, ok := op.Old.([]string); !ok || !deep.Equal(t.Drafts, old) {
+				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Drafts)
+			}
 		}
 		if v, ok := op.New.([]string); ok {
 			t.Drafts = v
 			return true, nil
 		}
 	case "/archive", "/Archive":
-		if op.Kind == v5.OpLog {
-			fmt.Printf("DEEP LOG: %v (at %s, field value: %v)\n", op.New, op.Path, t.Archive)
+		if op.Kind == deep.OpLog {
+			deep.Logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Archive)
 			return true, nil
 		}
-		if op.Kind == v5.OpReplace && op.Strict {
-			// Complex strict check skipped in prototype
+		if op.Kind == deep.OpReplace && op.Strict {
+			if old, ok := op.Old.(map[string]string); !ok || !deep.Equal(t.Archive, old) {
+				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Archive)
+			}
 		}
 		if v, ok := op.New.(map[string]string); ok {
 			t.Archive = v
@@ -66,17 +69,16 @@ func (t *Workspace) ApplyOperation(op v5.Operation) (bool, error) {
 		if strings.HasPrefix(op.Path, "/archive/") {
 			parts := strings.Split(op.Path[len("/archive/"):], "/")
 			key := parts[0]
-			if op.Kind == v5.OpRemove {
+			if op.Kind == deep.OpRemove {
 				delete(t.Archive, key)
 				return true, nil
-			} else {
-				if t.Archive == nil {
-					t.Archive = make(map[string]string)
-				}
-				if v, ok := op.New.(string); ok {
-					t.Archive[key] = v
-					return true, nil
-				}
+			}
+			if t.Archive == nil {
+				t.Archive = make(map[string]string)
+			}
+			if v, ok := op.New.(string); ok {
+				t.Archive[key] = v
+				return true, nil
 			}
 		}
 	}
@@ -84,70 +86,48 @@ func (t *Workspace) ApplyOperation(op v5.Operation) (bool, error) {
 }
 
 // Diff compares t with other and returns a Patch.
-func (t *Workspace) Diff(other *Workspace) v5.Patch[Workspace] {
-	p := v5.NewPatch[Workspace]()
+func (t *Workspace) Diff(other *Workspace) deep.Patch[Workspace] {
+	p := deep.NewPatch[Workspace]()
 	if len(t.Drafts) != len(other.Drafts) {
-		p.Operations = append(p.Operations, v5.Operation{
-			Kind: v5.OpReplace,
-			Path: "/drafts",
-			Old:  t.Drafts,
-			New:  other.Drafts,
-		})
+		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/drafts", Old: t.Drafts, New: other.Drafts})
 	} else {
 		for i := range t.Drafts {
 			if t.Drafts[i] != other.Drafts[i] {
-				p.Operations = append(p.Operations, v5.Operation{
-					Kind: v5.OpReplace,
-					Path: fmt.Sprintf("/drafts/%d", i),
-					Old:  t.Drafts[i],
-					New:  other.Drafts[i],
-				})
+				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: fmt.Sprintf("/drafts/%d", i), Old: t.Drafts[i], New: other.Drafts[i]})
 			}
 		}
 	}
 	if other.Archive != nil {
 		for k, v := range other.Archive {
 			if t.Archive == nil {
-				p.Operations = append(p.Operations, v5.Operation{
-					Kind: v5.OpReplace,
-					Path: fmt.Sprintf("/archive/%v", k),
-					New:  v,
-				})
+				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: fmt.Sprintf("/archive/%v", k), New: v})
 				continue
 			}
 			if oldV, ok := t.Archive[k]; !ok || v != oldV {
-				kind := v5.OpReplace
+				kind := deep.OpReplace
 				if !ok {
-					kind = v5.OpAdd
+					kind = deep.OpAdd
 				}
-				p.Operations = append(p.Operations, v5.Operation{
-					Kind: kind,
-					Path: fmt.Sprintf("/archive/%v", k),
-					Old:  oldV,
-					New:  v,
-				})
+				p.Operations = append(p.Operations, deep.Operation{Kind: kind, Path: fmt.Sprintf("/archive/%v", k), Old: oldV, New: v})
 			}
 		}
 	}
 	if t.Archive != nil {
 		for k, v := range t.Archive {
 			if other.Archive == nil || !contains(other.Archive, k) {
-				p.Operations = append(p.Operations, v5.Operation{
-					Kind: v5.OpRemove,
-					Path: fmt.Sprintf("/archive/%v", k),
-					Old:  v,
-				})
+				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: fmt.Sprintf("/archive/%v", k), Old: v})
 			}
 		}
 	}
+
 	return p
 }
 
-func (t *Workspace) evaluateCondition(c v5.Condition) (bool, error) {
+func (t *Workspace) EvaluateCondition(c deep.Condition) (bool, error) {
 	switch c.Op {
 	case "and":
 		for _, sub := range c.Apply {
-			ok, err := t.evaluateCondition(*sub)
+			ok, err := t.EvaluateCondition(*sub)
 			if err != nil || !ok {
 				return false, err
 			}
@@ -155,7 +135,7 @@ func (t *Workspace) evaluateCondition(c v5.Condition) (bool, error) {
 		return true, nil
 	case "or":
 		for _, sub := range c.Apply {
-			ok, err := t.evaluateCondition(*sub)
+			ok, err := t.EvaluateCondition(*sub)
 			if err == nil && ok {
 				return true, nil
 			}
@@ -163,7 +143,7 @@ func (t *Workspace) evaluateCondition(c v5.Condition) (bool, error) {
 		return false, nil
 	case "not":
 		if len(c.Apply) > 0 {
-			ok, err := t.evaluateCondition(*c.Apply[0])
+			ok, err := t.EvaluateCondition(*c.Apply[0])
 			if err != nil {
 				return false, err
 			}
@@ -182,8 +162,22 @@ func (t *Workspace) Equal(other *Workspace) bool {
 	if len(t.Drafts) != len(other.Drafts) {
 		return false
 	}
+	for i := range t.Drafts {
+		if t.Drafts[i] != other.Drafts[i] {
+			return false
+		}
+	}
 	if len(t.Archive) != len(other.Archive) {
 		return false
+	}
+	for k, v := range t.Archive {
+		vOther, ok := other.Archive[k]
+		if !ok {
+			return false
+		}
+		if v != vOther {
+			return false
+		}
 	}
 	return true
 }
@@ -231,7 +225,8 @@ func checkType(v any, typeName string) bool {
 			return true
 		}
 		rv := reflect.ValueOf(v)
-		return (rv.Kind() == reflect.Pointer || rv.Kind() == reflect.Interface || rv.Kind() == reflect.Slice || rv.Kind() == reflect.Map) && rv.IsNil()
+		return (rv.Kind() == reflect.Pointer || rv.Kind() == reflect.Interface ||
+			rv.Kind() == reflect.Slice || rv.Kind() == reflect.Map) && rv.IsNil()
 	}
 	return false
 }

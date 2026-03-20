@@ -3,23 +3,22 @@ package main
 
 import (
 	"fmt"
+	deep "github.com/brunoga/deep/v5"
 	"reflect"
 	"regexp"
 	"strings"
-
-	v5 "github.com/brunoga/deep/v5"
 )
 
 // ApplyOperation applies a single operation to DocState efficiently.
-func (t *DocState) ApplyOperation(op v5.Operation) (bool, error) {
+func (t *DocState) ApplyOperation(op deep.Operation) (bool, error) {
 	if op.If != nil {
-		ok, err := t.evaluateCondition(*op.If)
+		ok, err := t.EvaluateCondition(*op.If)
 		if err != nil || !ok {
 			return true, err
 		}
 	}
 	if op.Unless != nil {
-		ok, err := t.evaluateCondition(*op.Unless)
+		ok, err := t.EvaluateCondition(*op.Unless)
 		if err == nil && ok {
 			return true, nil
 		}
@@ -32,7 +31,7 @@ func (t *DocState) ApplyOperation(op v5.Operation) (bool, error) {
 		}
 		if m, ok := op.New.(map[string]any); ok {
 			for k, v := range m {
-				t.ApplyOperation(v5.Operation{Kind: op.Kind, Path: "/" + k, New: v})
+				t.ApplyOperation(deep.Operation{Kind: op.Kind, Path: "/" + k, New: v})
 			}
 			return true, nil
 		}
@@ -40,11 +39,11 @@ func (t *DocState) ApplyOperation(op v5.Operation) (bool, error) {
 
 	switch op.Path {
 	case "/title", "/Title":
-		if op.Kind == v5.OpLog {
-			fmt.Printf("DEEP LOG: %v (at %s, field value: %v)\n", op.New, op.Path, t.Title)
+		if op.Kind == deep.OpLog {
+			deep.Logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Title)
 			return true, nil
 		}
-		if op.Kind == v5.OpReplace && op.Strict {
+		if op.Kind == deep.OpReplace && op.Strict {
 			if t.Title != op.Old.(string) {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Title)
 			}
@@ -54,11 +53,11 @@ func (t *DocState) ApplyOperation(op v5.Operation) (bool, error) {
 			return true, nil
 		}
 	case "/content", "/Content":
-		if op.Kind == v5.OpLog {
-			fmt.Printf("DEEP LOG: %v (at %s, field value: %v)\n", op.New, op.Path, t.Content)
+		if op.Kind == deep.OpLog {
+			deep.Logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Content)
 			return true, nil
 		}
-		if op.Kind == v5.OpReplace && op.Strict {
+		if op.Kind == deep.OpReplace && op.Strict {
 			if t.Content != op.Old.(string) {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Content)
 			}
@@ -68,12 +67,14 @@ func (t *DocState) ApplyOperation(op v5.Operation) (bool, error) {
 			return true, nil
 		}
 	case "/metadata", "/Metadata":
-		if op.Kind == v5.OpLog {
-			fmt.Printf("DEEP LOG: %v (at %s, field value: %v)\n", op.New, op.Path, t.Metadata)
+		if op.Kind == deep.OpLog {
+			deep.Logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Metadata)
 			return true, nil
 		}
-		if op.Kind == v5.OpReplace && op.Strict {
-			// Complex strict check skipped in prototype
+		if op.Kind == deep.OpReplace && op.Strict {
+			if old, ok := op.Old.(map[string]string); !ok || !deep.Equal(t.Metadata, old) {
+				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Metadata)
+			}
 		}
 		if v, ok := op.New.(map[string]string); ok {
 			t.Metadata = v
@@ -83,17 +84,16 @@ func (t *DocState) ApplyOperation(op v5.Operation) (bool, error) {
 		if strings.HasPrefix(op.Path, "/metadata/") {
 			parts := strings.Split(op.Path[len("/metadata/"):], "/")
 			key := parts[0]
-			if op.Kind == v5.OpRemove {
+			if op.Kind == deep.OpRemove {
 				delete(t.Metadata, key)
 				return true, nil
-			} else {
-				if t.Metadata == nil {
-					t.Metadata = make(map[string]string)
-				}
-				if v, ok := op.New.(string); ok {
-					t.Metadata[key] = v
-					return true, nil
-				}
+			}
+			if t.Metadata == nil {
+				t.Metadata = make(map[string]string)
+			}
+			if v, ok := op.New.(string); ok {
+				t.Metadata[key] = v
+				return true, nil
 			}
 		}
 	}
@@ -101,67 +101,45 @@ func (t *DocState) ApplyOperation(op v5.Operation) (bool, error) {
 }
 
 // Diff compares t with other and returns a Patch.
-func (t *DocState) Diff(other *DocState) v5.Patch[DocState] {
-	p := v5.NewPatch[DocState]()
+func (t *DocState) Diff(other *DocState) deep.Patch[DocState] {
+	p := deep.NewPatch[DocState]()
 	if t.Title != other.Title {
-		p.Operations = append(p.Operations, v5.Operation{
-			Kind: v5.OpReplace,
-			Path: "/title",
-			Old:  t.Title,
-			New:  other.Title,
-		})
+		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/title", Old: t.Title, New: other.Title})
 	}
 	if t.Content != other.Content {
-		p.Operations = append(p.Operations, v5.Operation{
-			Kind: v5.OpReplace,
-			Path: "/content",
-			Old:  t.Content,
-			New:  other.Content,
-		})
+		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/content", Old: t.Content, New: other.Content})
 	}
 	if other.Metadata != nil {
 		for k, v := range other.Metadata {
 			if t.Metadata == nil {
-				p.Operations = append(p.Operations, v5.Operation{
-					Kind: v5.OpReplace,
-					Path: fmt.Sprintf("/metadata/%v", k),
-					New:  v,
-				})
+				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: fmt.Sprintf("/metadata/%v", k), New: v})
 				continue
 			}
 			if oldV, ok := t.Metadata[k]; !ok || v != oldV {
-				kind := v5.OpReplace
+				kind := deep.OpReplace
 				if !ok {
-					kind = v5.OpAdd
+					kind = deep.OpAdd
 				}
-				p.Operations = append(p.Operations, v5.Operation{
-					Kind: kind,
-					Path: fmt.Sprintf("/metadata/%v", k),
-					Old:  oldV,
-					New:  v,
-				})
+				p.Operations = append(p.Operations, deep.Operation{Kind: kind, Path: fmt.Sprintf("/metadata/%v", k), Old: oldV, New: v})
 			}
 		}
 	}
 	if t.Metadata != nil {
 		for k, v := range t.Metadata {
 			if other.Metadata == nil || !contains(other.Metadata, k) {
-				p.Operations = append(p.Operations, v5.Operation{
-					Kind: v5.OpRemove,
-					Path: fmt.Sprintf("/metadata/%v", k),
-					Old:  v,
-				})
+				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: fmt.Sprintf("/metadata/%v", k), Old: v})
 			}
 		}
 	}
+
 	return p
 }
 
-func (t *DocState) evaluateCondition(c v5.Condition) (bool, error) {
+func (t *DocState) EvaluateCondition(c deep.Condition) (bool, error) {
 	switch c.Op {
 	case "and":
 		for _, sub := range c.Apply {
-			ok, err := t.evaluateCondition(*sub)
+			ok, err := t.EvaluateCondition(*sub)
 			if err != nil || !ok {
 				return false, err
 			}
@@ -169,7 +147,7 @@ func (t *DocState) evaluateCondition(c v5.Condition) (bool, error) {
 		return true, nil
 	case "or":
 		for _, sub := range c.Apply {
-			ok, err := t.evaluateCondition(*sub)
+			ok, err := t.EvaluateCondition(*sub)
 			if err == nil && ok {
 				return true, nil
 			}
@@ -177,7 +155,7 @@ func (t *DocState) evaluateCondition(c v5.Condition) (bool, error) {
 		return false, nil
 	case "not":
 		if len(c.Apply) > 0 {
-			ok, err := t.evaluateCondition(*c.Apply[0])
+			ok, err := t.EvaluateCondition(*c.Apply[0])
 			if err != nil {
 				return false, err
 			}
@@ -188,32 +166,100 @@ func (t *DocState) evaluateCondition(c v5.Condition) (bool, error) {
 
 	switch c.Path {
 	case "/title", "/Title":
-		switch c.Op {
-		case "==":
-			return t.Title == c.Value.(string), nil
-		case "!=":
-			return t.Title != c.Value.(string), nil
-		case "log":
-			fmt.Printf("DEEP LOG CONDITION: %v (at %s, value: %v)\n", c.Value, c.Path, t.Title)
+		if c.Op == "exists" {
 			return true, nil
-		case "matches":
-			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Title))
-		case "type":
+		}
+		if c.Op == "type" {
 			return checkType(t.Title, c.Value.(string)), nil
 		}
-	case "/content", "/Content":
+		if c.Op == "log" {
+			deep.Logger.Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Title)
+			return true, nil
+		}
+		if c.Op == "matches" {
+			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Title))
+		}
+		_sv, _ok := c.Value.(string)
+		if !_ok {
+			return false, fmt.Errorf("condition value type mismatch for field Title")
+		}
 		switch c.Op {
 		case "==":
-			return t.Content == c.Value.(string), nil
+			return t.Title == _sv, nil
 		case "!=":
-			return t.Content != c.Value.(string), nil
-		case "log":
-			fmt.Printf("DEEP LOG CONDITION: %v (at %s, value: %v)\n", c.Value, c.Path, t.Content)
+			return t.Title != _sv, nil
+		case ">":
+			return t.Title > _sv, nil
+		case "<":
+			return t.Title < _sv, nil
+		case ">=":
+			return t.Title >= _sv, nil
+		case "<=":
+			return t.Title <= _sv, nil
+		case "in":
+			switch vals := c.Value.(type) {
+			case []string:
+				for _, v := range vals {
+					if t.Title == v {
+						return true, nil
+					}
+				}
+			case []any:
+				for _, v := range vals {
+					if sv, ok := v.(string); ok && t.Title == sv {
+						return true, nil
+					}
+				}
+			}
+			return false, nil
+		}
+	case "/content", "/Content":
+		if c.Op == "exists" {
 			return true, nil
-		case "matches":
-			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Content))
-		case "type":
+		}
+		if c.Op == "type" {
 			return checkType(t.Content, c.Value.(string)), nil
+		}
+		if c.Op == "log" {
+			deep.Logger.Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Content)
+			return true, nil
+		}
+		if c.Op == "matches" {
+			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Content))
+		}
+		_sv, _ok := c.Value.(string)
+		if !_ok {
+			return false, fmt.Errorf("condition value type mismatch for field Content")
+		}
+		switch c.Op {
+		case "==":
+			return t.Content == _sv, nil
+		case "!=":
+			return t.Content != _sv, nil
+		case ">":
+			return t.Content > _sv, nil
+		case "<":
+			return t.Content < _sv, nil
+		case ">=":
+			return t.Content >= _sv, nil
+		case "<=":
+			return t.Content <= _sv, nil
+		case "in":
+			switch vals := c.Value.(type) {
+			case []string:
+				for _, v := range vals {
+					if t.Content == v {
+						return true, nil
+					}
+				}
+			case []any:
+				for _, v := range vals {
+					if sv, ok := v.(string); ok && t.Content == sv {
+						return true, nil
+					}
+				}
+			}
+			return false, nil
 		}
 	}
 	return false, fmt.Errorf("unsupported condition path or op: %s", c.Path)
@@ -229,6 +275,15 @@ func (t *DocState) Equal(other *DocState) bool {
 	}
 	if len(t.Metadata) != len(other.Metadata) {
 		return false
+	}
+	for k, v := range t.Metadata {
+		vOther, ok := other.Metadata[k]
+		if !ok {
+			return false
+		}
+		if v != vOther {
+			return false
+		}
 	}
 	return true
 }
@@ -277,7 +332,8 @@ func checkType(v any, typeName string) bool {
 			return true
 		}
 		rv := reflect.ValueOf(v)
-		return (rv.Kind() == reflect.Pointer || rv.Kind() == reflect.Interface || rv.Kind() == reflect.Slice || rv.Kind() == reflect.Map) && rv.IsNil()
+		return (rv.Kind() == reflect.Pointer || rv.Kind() == reflect.Interface ||
+			rv.Kind() == reflect.Slice || rv.Kind() == reflect.Map) && rv.IsNil()
 	}
 	return false
 }

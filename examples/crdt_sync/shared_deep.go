@@ -3,23 +3,22 @@ package main
 
 import (
 	"fmt"
+	deep "github.com/brunoga/deep/v5"
 	"reflect"
 	"regexp"
 	"strings"
-
-	v5 "github.com/brunoga/deep/v5"
 )
 
 // ApplyOperation applies a single operation to SharedState efficiently.
-func (t *SharedState) ApplyOperation(op v5.Operation) (bool, error) {
+func (t *SharedState) ApplyOperation(op deep.Operation) (bool, error) {
 	if op.If != nil {
-		ok, err := t.evaluateCondition(*op.If)
+		ok, err := t.EvaluateCondition(*op.If)
 		if err != nil || !ok {
 			return true, err
 		}
 	}
 	if op.Unless != nil {
-		ok, err := t.evaluateCondition(*op.Unless)
+		ok, err := t.EvaluateCondition(*op.Unless)
 		if err == nil && ok {
 			return true, nil
 		}
@@ -32,7 +31,7 @@ func (t *SharedState) ApplyOperation(op v5.Operation) (bool, error) {
 		}
 		if m, ok := op.New.(map[string]any); ok {
 			for k, v := range m {
-				t.ApplyOperation(v5.Operation{Kind: op.Kind, Path: "/" + k, New: v})
+				t.ApplyOperation(deep.Operation{Kind: op.Kind, Path: "/" + k, New: v})
 			}
 			return true, nil
 		}
@@ -40,11 +39,11 @@ func (t *SharedState) ApplyOperation(op v5.Operation) (bool, error) {
 
 	switch op.Path {
 	case "/title", "/Title":
-		if op.Kind == v5.OpLog {
-			fmt.Printf("DEEP LOG: %v (at %s, field value: %v)\n", op.New, op.Path, t.Title)
+		if op.Kind == deep.OpLog {
+			deep.Logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Title)
 			return true, nil
 		}
-		if op.Kind == v5.OpReplace && op.Strict {
+		if op.Kind == deep.OpReplace && op.Strict {
 			if t.Title != op.Old.(string) {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Title)
 			}
@@ -54,12 +53,14 @@ func (t *SharedState) ApplyOperation(op v5.Operation) (bool, error) {
 			return true, nil
 		}
 	case "/options", "/Options":
-		if op.Kind == v5.OpLog {
-			fmt.Printf("DEEP LOG: %v (at %s, field value: %v)\n", op.New, op.Path, t.Options)
+		if op.Kind == deep.OpLog {
+			deep.Logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Options)
 			return true, nil
 		}
-		if op.Kind == v5.OpReplace && op.Strict {
-			// Complex strict check skipped in prototype
+		if op.Kind == deep.OpReplace && op.Strict {
+			if old, ok := op.Old.(map[string]string); !ok || !deep.Equal(t.Options, old) {
+				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Options)
+			}
 		}
 		if v, ok := op.New.(map[string]string); ok {
 			t.Options = v
@@ -69,17 +70,16 @@ func (t *SharedState) ApplyOperation(op v5.Operation) (bool, error) {
 		if strings.HasPrefix(op.Path, "/options/") {
 			parts := strings.Split(op.Path[len("/options/"):], "/")
 			key := parts[0]
-			if op.Kind == v5.OpRemove {
+			if op.Kind == deep.OpRemove {
 				delete(t.Options, key)
 				return true, nil
-			} else {
-				if t.Options == nil {
-					t.Options = make(map[string]string)
-				}
-				if v, ok := op.New.(string); ok {
-					t.Options[key] = v
-					return true, nil
-				}
+			}
+			if t.Options == nil {
+				t.Options = make(map[string]string)
+			}
+			if v, ok := op.New.(string); ok {
+				t.Options[key] = v
+				return true, nil
 			}
 		}
 	}
@@ -87,59 +87,42 @@ func (t *SharedState) ApplyOperation(op v5.Operation) (bool, error) {
 }
 
 // Diff compares t with other and returns a Patch.
-func (t *SharedState) Diff(other *SharedState) v5.Patch[SharedState] {
-	p := v5.NewPatch[SharedState]()
+func (t *SharedState) Diff(other *SharedState) deep.Patch[SharedState] {
+	p := deep.NewPatch[SharedState]()
 	if t.Title != other.Title {
-		p.Operations = append(p.Operations, v5.Operation{
-			Kind: v5.OpReplace,
-			Path: "/title",
-			Old:  t.Title,
-			New:  other.Title,
-		})
+		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/title", Old: t.Title, New: other.Title})
 	}
 	if other.Options != nil {
 		for k, v := range other.Options {
 			if t.Options == nil {
-				p.Operations = append(p.Operations, v5.Operation{
-					Kind: v5.OpReplace,
-					Path: fmt.Sprintf("/options/%v", k),
-					New:  v,
-				})
+				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: fmt.Sprintf("/options/%v", k), New: v})
 				continue
 			}
 			if oldV, ok := t.Options[k]; !ok || v != oldV {
-				kind := v5.OpReplace
+				kind := deep.OpReplace
 				if !ok {
-					kind = v5.OpAdd
+					kind = deep.OpAdd
 				}
-				p.Operations = append(p.Operations, v5.Operation{
-					Kind: kind,
-					Path: fmt.Sprintf("/options/%v", k),
-					Old:  oldV,
-					New:  v,
-				})
+				p.Operations = append(p.Operations, deep.Operation{Kind: kind, Path: fmt.Sprintf("/options/%v", k), Old: oldV, New: v})
 			}
 		}
 	}
 	if t.Options != nil {
 		for k, v := range t.Options {
 			if other.Options == nil || !contains(other.Options, k) {
-				p.Operations = append(p.Operations, v5.Operation{
-					Kind: v5.OpRemove,
-					Path: fmt.Sprintf("/options/%v", k),
-					Old:  v,
-				})
+				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: fmt.Sprintf("/options/%v", k), Old: v})
 			}
 		}
 	}
+
 	return p
 }
 
-func (t *SharedState) evaluateCondition(c v5.Condition) (bool, error) {
+func (t *SharedState) EvaluateCondition(c deep.Condition) (bool, error) {
 	switch c.Op {
 	case "and":
 		for _, sub := range c.Apply {
-			ok, err := t.evaluateCondition(*sub)
+			ok, err := t.EvaluateCondition(*sub)
 			if err != nil || !ok {
 				return false, err
 			}
@@ -147,7 +130,7 @@ func (t *SharedState) evaluateCondition(c v5.Condition) (bool, error) {
 		return true, nil
 	case "or":
 		for _, sub := range c.Apply {
-			ok, err := t.evaluateCondition(*sub)
+			ok, err := t.EvaluateCondition(*sub)
 			if err == nil && ok {
 				return true, nil
 			}
@@ -155,7 +138,7 @@ func (t *SharedState) evaluateCondition(c v5.Condition) (bool, error) {
 		return false, nil
 	case "not":
 		if len(c.Apply) > 0 {
-			ok, err := t.evaluateCondition(*c.Apply[0])
+			ok, err := t.EvaluateCondition(*c.Apply[0])
 			if err != nil {
 				return false, err
 			}
@@ -166,18 +149,52 @@ func (t *SharedState) evaluateCondition(c v5.Condition) (bool, error) {
 
 	switch c.Path {
 	case "/title", "/Title":
+		if c.Op == "exists" {
+			return true, nil
+		}
+		if c.Op == "type" {
+			return checkType(t.Title, c.Value.(string)), nil
+		}
+		if c.Op == "log" {
+			deep.Logger.Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Title)
+			return true, nil
+		}
+		if c.Op == "matches" {
+			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Title))
+		}
+		_sv, _ok := c.Value.(string)
+		if !_ok {
+			return false, fmt.Errorf("condition value type mismatch for field Title")
+		}
 		switch c.Op {
 		case "==":
-			return t.Title == c.Value.(string), nil
+			return t.Title == _sv, nil
 		case "!=":
-			return t.Title != c.Value.(string), nil
-		case "log":
-			fmt.Printf("DEEP LOG CONDITION: %v (at %s, value: %v)\n", c.Value, c.Path, t.Title)
-			return true, nil
-		case "matches":
-			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Title))
-		case "type":
-			return checkType(t.Title, c.Value.(string)), nil
+			return t.Title != _sv, nil
+		case ">":
+			return t.Title > _sv, nil
+		case "<":
+			return t.Title < _sv, nil
+		case ">=":
+			return t.Title >= _sv, nil
+		case "<=":
+			return t.Title <= _sv, nil
+		case "in":
+			switch vals := c.Value.(type) {
+			case []string:
+				for _, v := range vals {
+					if t.Title == v {
+						return true, nil
+					}
+				}
+			case []any:
+				for _, v := range vals {
+					if sv, ok := v.(string); ok && t.Title == sv {
+						return true, nil
+					}
+				}
+			}
+			return false, nil
 		}
 	}
 	return false, fmt.Errorf("unsupported condition path or op: %s", c.Path)
@@ -190,6 +207,15 @@ func (t *SharedState) Equal(other *SharedState) bool {
 	}
 	if len(t.Options) != len(other.Options) {
 		return false
+	}
+	for k, v := range t.Options {
+		vOther, ok := other.Options[k]
+		if !ok {
+			return false
+		}
+		if v != vOther {
+			return false
+		}
 	}
 	return true
 }
@@ -237,7 +263,8 @@ func checkType(v any, typeName string) bool {
 			return true
 		}
 		rv := reflect.ValueOf(v)
-		return (rv.Kind() == reflect.Pointer || rv.Kind() == reflect.Interface || rv.Kind() == reflect.Slice || rv.Kind() == reflect.Map) && rv.IsNil()
+		return (rv.Kind() == reflect.Pointer || rv.Kind() == reflect.Interface ||
+			rv.Kind() == reflect.Slice || rv.Kind() == reflect.Map) && rv.IsNil()
 	}
 	return false
 }

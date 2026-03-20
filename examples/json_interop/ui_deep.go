@@ -3,22 +3,21 @@ package main
 
 import (
 	"fmt"
+	deep "github.com/brunoga/deep/v5"
 	"reflect"
 	"regexp"
-
-	v5 "github.com/brunoga/deep/v5"
 )
 
 // ApplyOperation applies a single operation to UIState efficiently.
-func (t *UIState) ApplyOperation(op v5.Operation) (bool, error) {
+func (t *UIState) ApplyOperation(op deep.Operation) (bool, error) {
 	if op.If != nil {
-		ok, err := t.evaluateCondition(*op.If)
+		ok, err := t.EvaluateCondition(*op.If)
 		if err != nil || !ok {
 			return true, err
 		}
 	}
 	if op.Unless != nil {
-		ok, err := t.evaluateCondition(*op.Unless)
+		ok, err := t.EvaluateCondition(*op.Unless)
 		if err == nil && ok {
 			return true, nil
 		}
@@ -31,7 +30,7 @@ func (t *UIState) ApplyOperation(op v5.Operation) (bool, error) {
 		}
 		if m, ok := op.New.(map[string]any); ok {
 			for k, v := range m {
-				t.ApplyOperation(v5.Operation{Kind: op.Kind, Path: "/" + k, New: v})
+				t.ApplyOperation(deep.Operation{Kind: op.Kind, Path: "/" + k, New: v})
 			}
 			return true, nil
 		}
@@ -39,11 +38,11 @@ func (t *UIState) ApplyOperation(op v5.Operation) (bool, error) {
 
 	switch op.Path {
 	case "/theme", "/Theme":
-		if op.Kind == v5.OpLog {
-			fmt.Printf("DEEP LOG: %v (at %s, field value: %v)\n", op.New, op.Path, t.Theme)
+		if op.Kind == deep.OpLog {
+			deep.Logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Theme)
 			return true, nil
 		}
-		if op.Kind == v5.OpReplace && op.Strict {
+		if op.Kind == deep.OpReplace && op.Strict {
 			if t.Theme != op.Old.(string) {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Theme)
 			}
@@ -53,11 +52,11 @@ func (t *UIState) ApplyOperation(op v5.Operation) (bool, error) {
 			return true, nil
 		}
 	case "/sidebar_open", "/Open":
-		if op.Kind == v5.OpLog {
-			fmt.Printf("DEEP LOG: %v (at %s, field value: %v)\n", op.New, op.Path, t.Open)
+		if op.Kind == deep.OpLog {
+			deep.Logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Open)
 			return true, nil
 		}
-		if op.Kind == v5.OpReplace && op.Strict {
+		if op.Kind == deep.OpReplace && op.Strict {
 			if t.Open != op.Old.(bool) {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Open)
 			}
@@ -72,32 +71,23 @@ func (t *UIState) ApplyOperation(op v5.Operation) (bool, error) {
 }
 
 // Diff compares t with other and returns a Patch.
-func (t *UIState) Diff(other *UIState) v5.Patch[UIState] {
-	p := v5.NewPatch[UIState]()
+func (t *UIState) Diff(other *UIState) deep.Patch[UIState] {
+	p := deep.NewPatch[UIState]()
 	if t.Theme != other.Theme {
-		p.Operations = append(p.Operations, v5.Operation{
-			Kind: v5.OpReplace,
-			Path: "/theme",
-			Old:  t.Theme,
-			New:  other.Theme,
-		})
+		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/theme", Old: t.Theme, New: other.Theme})
 	}
 	if t.Open != other.Open {
-		p.Operations = append(p.Operations, v5.Operation{
-			Kind: v5.OpReplace,
-			Path: "/sidebar_open",
-			Old:  t.Open,
-			New:  other.Open,
-		})
+		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/sidebar_open", Old: t.Open, New: other.Open})
 	}
+
 	return p
 }
 
-func (t *UIState) evaluateCondition(c v5.Condition) (bool, error) {
+func (t *UIState) EvaluateCondition(c deep.Condition) (bool, error) {
 	switch c.Op {
 	case "and":
 		for _, sub := range c.Apply {
-			ok, err := t.evaluateCondition(*sub)
+			ok, err := t.EvaluateCondition(*sub)
 			if err != nil || !ok {
 				return false, err
 			}
@@ -105,7 +95,7 @@ func (t *UIState) evaluateCondition(c v5.Condition) (bool, error) {
 		return true, nil
 	case "or":
 		for _, sub := range c.Apply {
-			ok, err := t.evaluateCondition(*sub)
+			ok, err := t.EvaluateCondition(*sub)
 			if err == nil && ok {
 				return true, nil
 			}
@@ -113,7 +103,7 @@ func (t *UIState) evaluateCondition(c v5.Condition) (bool, error) {
 		return false, nil
 	case "not":
 		if len(c.Apply) > 0 {
-			ok, err := t.evaluateCondition(*c.Apply[0])
+			ok, err := t.EvaluateCondition(*c.Apply[0])
 			if err != nil {
 				return false, err
 			}
@@ -124,32 +114,76 @@ func (t *UIState) evaluateCondition(c v5.Condition) (bool, error) {
 
 	switch c.Path {
 	case "/theme", "/Theme":
-		switch c.Op {
-		case "==":
-			return t.Theme == c.Value.(string), nil
-		case "!=":
-			return t.Theme != c.Value.(string), nil
-		case "log":
-			fmt.Printf("DEEP LOG CONDITION: %v (at %s, value: %v)\n", c.Value, c.Path, t.Theme)
+		if c.Op == "exists" {
 			return true, nil
-		case "matches":
-			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Theme))
-		case "type":
+		}
+		if c.Op == "type" {
 			return checkType(t.Theme, c.Value.(string)), nil
 		}
-	case "/sidebar_open", "/Open":
+		if c.Op == "log" {
+			deep.Logger.Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Theme)
+			return true, nil
+		}
+		if c.Op == "matches" {
+			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Theme))
+		}
+		_sv, _ok := c.Value.(string)
+		if !_ok {
+			return false, fmt.Errorf("condition value type mismatch for field Theme")
+		}
 		switch c.Op {
 		case "==":
-			return t.Open == c.Value.(bool), nil
+			return t.Theme == _sv, nil
 		case "!=":
-			return t.Open != c.Value.(bool), nil
-		case "log":
-			fmt.Printf("DEEP LOG CONDITION: %v (at %s, value: %v)\n", c.Value, c.Path, t.Open)
+			return t.Theme != _sv, nil
+		case ">":
+			return t.Theme > _sv, nil
+		case "<":
+			return t.Theme < _sv, nil
+		case ">=":
+			return t.Theme >= _sv, nil
+		case "<=":
+			return t.Theme <= _sv, nil
+		case "in":
+			switch vals := c.Value.(type) {
+			case []string:
+				for _, v := range vals {
+					if t.Theme == v {
+						return true, nil
+					}
+				}
+			case []any:
+				for _, v := range vals {
+					if sv, ok := v.(string); ok && t.Theme == sv {
+						return true, nil
+					}
+				}
+			}
+			return false, nil
+		}
+	case "/sidebar_open", "/Open":
+		if c.Op == "exists" {
 			return true, nil
-		case "matches":
-			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Open))
-		case "type":
+		}
+		if c.Op == "type" {
 			return checkType(t.Open, c.Value.(string)), nil
+		}
+		if c.Op == "log" {
+			deep.Logger.Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Open)
+			return true, nil
+		}
+		if c.Op == "matches" {
+			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Open))
+		}
+		_bv, _ok := c.Value.(bool)
+		if !_ok {
+			return false, fmt.Errorf("condition value type mismatch for field Open")
+		}
+		switch c.Op {
+		case "==":
+			return t.Open == _bv, nil
+		case "!=":
+			return t.Open != _bv, nil
 		}
 	}
 	return false, fmt.Errorf("unsupported condition path or op: %s", c.Path)
@@ -204,7 +238,8 @@ func checkType(v any, typeName string) bool {
 			return true
 		}
 		rv := reflect.ValueOf(v)
-		return (rv.Kind() == reflect.Pointer || rv.Kind() == reflect.Interface || rv.Kind() == reflect.Slice || rv.Kind() == reflect.Map) && rv.IsNil()
+		return (rv.Kind() == reflect.Pointer || rv.Kind() == reflect.Interface ||
+			rv.Kind() == reflect.Slice || rv.Kind() == reflect.Map) && rv.IsNil()
 	}
 	return false
 }
