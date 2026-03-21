@@ -17,7 +17,10 @@ func TestGobSerialization(t *testing.T) {
 
 	u1 := testmodels.User{ID: 1, Name: "Alice"}
 	u2 := testmodels.User{ID: 2, Name: "Bob"}
-	patch := deep.Diff(u1, u2)
+	patch, err := deep.Diff(u1, u2)
+	if err != nil {
+		t.Fatalf("Diff failed: %v", err)
+	}
 
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
@@ -43,7 +46,10 @@ func TestReverse(t *testing.T) {
 	u2 := testmodels.User{ID: 2, Name: "Bob"}
 
 	// 1. Create patch u1 -> u2
-	patch := deep.Diff(u1, u2)
+	patch, err := deep.Diff(u1, u2)
+	if err != nil {
+		t.Fatalf("Diff failed: %v", err)
+	}
 
 	// 2. Reverse patch
 	reverse := patch.Reverse()
@@ -67,7 +73,7 @@ func TestPatchToJSONPatch(t *testing.T) {
 	p.Operations = []deep.Operation{
 		{Kind: deep.OpReplace, Path: "/full_name", Old: "Alice", New: "Bob"},
 	}
-	p = p.WithCondition(deep.Eq(deep.Field(func(u *testmodels.User) *int { return &u.ID }), 1))
+	p = p.WithGuard(deep.Eq(deep.Field(func(u *testmodels.User) *int { return &u.ID }), 1))
 
 	data, err := p.ToJSONPatch()
 	if err != nil {
@@ -135,7 +141,7 @@ func TestConditionToPredicate(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		got, err := deep.NewPatch[testmodels.User]().WithCondition(tt.c).ToJSONPatch()
+		got, err := deep.NewPatch[testmodels.User]().WithGuard(tt.c).ToJSONPatch()
 		if err != nil {
 			t.Fatalf("ToJSONPatch failed: %v", err)
 		}
@@ -223,11 +229,11 @@ func TestFromJSONPatchRoundTrip(t *testing.T) {
 	if len(rt.Operations) != len(original.Operations) {
 		t.Errorf("op count: got %d, want %d", len(rt.Operations), len(original.Operations))
 	}
-	if rt.Condition == nil {
+	if rt.Guard == nil {
 		t.Error("global condition not round-tripped")
 	}
-	if rt.Condition != nil && rt.Condition.Op != ">" {
-		t.Errorf("global condition op: got %q, want \">\"", rt.Condition.Op)
+	if rt.Guard != nil && rt.Guard.Op != ">" {
+		t.Errorf("global condition op: got %q, want \">\"", rt.Guard.Op)
 	}
 }
 

@@ -39,11 +39,11 @@ func (t *StrictUser) ApplyOperation(op deep.Operation) (bool, error) {
 	switch op.Path {
 	case "/name", "/Name":
 		if op.Kind == deep.OpLog {
-			deep.Logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Name)
+			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.Name)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
-			if t.Name != op.Old.(string) {
+			if _oldV, ok := op.Old.(string); !ok || t.Name != _oldV {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Name)
 			}
 		}
@@ -53,11 +53,20 @@ func (t *StrictUser) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 	case "/age", "/Age":
 		if op.Kind == deep.OpLog {
-			deep.Logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Age)
+			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.Age)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
-			if t.Age != op.Old.(int) {
+			_oldOK := false
+			if _oldV, ok := op.Old.(int); ok {
+				_oldOK = t.Age == _oldV
+			}
+			if !_oldOK {
+				if _oldF, ok := op.Old.(float64); ok {
+					_oldOK = float64(t.Age) == _oldF
+				}
+			}
+			if !_oldOK {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Age)
 			}
 		}
@@ -125,7 +134,7 @@ func (t *StrictUser) EvaluateCondition(c deep.Condition) (bool, error) {
 			return checkType(t.Name, c.Value.(string)), nil
 		}
 		if c.Op == "log" {
-			deep.Logger.Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Name)
+			deep.Logger().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Name)
 			return true, nil
 		}
 		if c.Op == "matches" {
@@ -173,7 +182,7 @@ func (t *StrictUser) EvaluateCondition(c deep.Condition) (bool, error) {
 			return checkType(t.Age, c.Value.(string)), nil
 		}
 		if c.Op == "log" {
-			deep.Logger.Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Age)
+			deep.Logger().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Age)
 			return true, nil
 		}
 		if c.Op == "matches" {

@@ -1,7 +1,11 @@
+//go:generate go run github.com/brunoga/deep/v5/cmd/deep-gen -type=User .
+
 package main
 
 import (
 	"fmt"
+	"log"
+
 	v5 "github.com/brunoga/deep/v5"
 )
 
@@ -25,7 +29,10 @@ func main() {
 	}
 
 	// Diff captures old and new values for every changed field.
-	patch := v5.Diff(u1, u2)
+	patch, err := v5.Diff(u1, u2)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	fmt.Println("AUDIT LOG (v5):")
 	fmt.Println("----------")

@@ -39,11 +39,11 @@ func (t *User) ApplyOperation(op deep.Operation) (bool, error) {
 	switch op.Path {
 	case "/name", "/Name":
 		if op.Kind == deep.OpLog {
-			deep.Logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Name)
+			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.Name)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
-			if t.Name != op.Old.(string) {
+			if _oldV, ok := op.Old.(string); !ok || t.Name != _oldV {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Name)
 			}
 		}
@@ -53,11 +53,11 @@ func (t *User) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 	case "/email", "/Email":
 		if op.Kind == deep.OpLog {
-			deep.Logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Email)
+			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.Email)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
-			if t.Email != op.Old.(string) {
+			if _oldV, ok := op.Old.(string); !ok || t.Email != _oldV {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Email)
 			}
 		}
@@ -67,7 +67,7 @@ func (t *User) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 	case "/roles", "/Roles":
 		if op.Kind == deep.OpLog {
-			deep.Logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Roles)
+			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.Roles)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
@@ -144,7 +144,7 @@ func (t *User) EvaluateCondition(c deep.Condition) (bool, error) {
 			return checkType(t.Name, c.Value.(string)), nil
 		}
 		if c.Op == "log" {
-			deep.Logger.Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Name)
+			deep.Logger().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Name)
 			return true, nil
 		}
 		if c.Op == "matches" {
@@ -192,7 +192,7 @@ func (t *User) EvaluateCondition(c deep.Condition) (bool, error) {
 			return checkType(t.Email, c.Value.(string)), nil
 		}
 		if c.Op == "log" {
-			deep.Logger.Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Email)
+			deep.Logger().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Email)
 			return true, nil
 		}
 		if c.Op == "matches" {

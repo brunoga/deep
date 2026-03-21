@@ -40,11 +40,20 @@ func (t *Config) ApplyOperation(op deep.Operation) (bool, error) {
 	switch op.Path {
 	case "/version", "/Version":
 		if op.Kind == deep.OpLog {
-			deep.Logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Version)
+			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.Version)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
-			if t.Version != op.Old.(int) {
+			_oldOK := false
+			if _oldV, ok := op.Old.(int); ok {
+				_oldOK = t.Version == _oldV
+			}
+			if !_oldOK {
+				if _oldF, ok := op.Old.(float64); ok {
+					_oldOK = float64(t.Version) == _oldF
+				}
+			}
+			if !_oldOK {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Version)
 			}
 		}
@@ -58,11 +67,11 @@ func (t *Config) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 	case "/env", "/Environment":
 		if op.Kind == deep.OpLog {
-			deep.Logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Environment)
+			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.Environment)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
-			if t.Environment != op.Old.(string) {
+			if _oldV, ok := op.Old.(string); !ok || t.Environment != _oldV {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Environment)
 			}
 		}
@@ -72,11 +81,20 @@ func (t *Config) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 	case "/timeout", "/Timeout":
 		if op.Kind == deep.OpLog {
-			deep.Logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Timeout)
+			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.Timeout)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
-			if t.Timeout != op.Old.(int) {
+			_oldOK := false
+			if _oldV, ok := op.Old.(int); ok {
+				_oldOK = t.Timeout == _oldV
+			}
+			if !_oldOK {
+				if _oldF, ok := op.Old.(float64); ok {
+					_oldOK = float64(t.Timeout) == _oldF
+				}
+			}
+			if !_oldOK {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Timeout)
 			}
 		}
@@ -90,7 +108,7 @@ func (t *Config) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 	case "/features", "/Features":
 		if op.Kind == deep.OpLog {
-			deep.Logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Features)
+			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.Features)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
@@ -198,7 +216,7 @@ func (t *Config) EvaluateCondition(c deep.Condition) (bool, error) {
 			return checkType(t.Version, c.Value.(string)), nil
 		}
 		if c.Op == "log" {
-			deep.Logger.Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Version)
+			deep.Logger().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Version)
 			return true, nil
 		}
 		if c.Op == "matches" {
@@ -259,7 +277,7 @@ func (t *Config) EvaluateCondition(c deep.Condition) (bool, error) {
 			return checkType(t.Environment, c.Value.(string)), nil
 		}
 		if c.Op == "log" {
-			deep.Logger.Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Environment)
+			deep.Logger().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Environment)
 			return true, nil
 		}
 		if c.Op == "matches" {
@@ -307,7 +325,7 @@ func (t *Config) EvaluateCondition(c deep.Condition) (bool, error) {
 			return checkType(t.Timeout, c.Value.(string)), nil
 		}
 		if c.Op == "log" {
-			deep.Logger.Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Timeout)
+			deep.Logger().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Timeout)
 			return true, nil
 		}
 		if c.Op == "matches" {

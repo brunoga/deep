@@ -28,7 +28,7 @@ func main() {
 	)
 
 	patch := v5.NewPatch[Employee]().
-		WithCondition(policy).
+		WithGuard(policy).
 		WithStrict(false)
 
 	// Add operation manually

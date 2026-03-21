@@ -39,7 +39,7 @@ func (t *Workspace) ApplyOperation(op deep.Operation) (bool, error) {
 	switch op.Path {
 	case "/drafts", "/Drafts":
 		if op.Kind == deep.OpLog {
-			deep.Logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Drafts)
+			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.Drafts)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
@@ -53,7 +53,7 @@ func (t *Workspace) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 	case "/archive", "/Archive":
 		if op.Kind == deep.OpLog {
-			deep.Logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Archive)
+			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.Archive)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {

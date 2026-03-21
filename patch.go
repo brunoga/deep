@@ -15,11 +15,14 @@ func init() {
 	gob.Register(hlc.HLC{})
 }
 
-// Register registers the Patch implementation for type T with the gob package.
+// Register registers the Patch and LWW types for T with the gob package.
+// It also registers []T and map[string]T because gob requires concrete types
+// to be registered when they appear inside interface-typed fields (such as
+// Operation.Old / Operation.New). Call Register[T] for every type T that
+// will flow through those fields during gob encoding.
 func Register[T any]() {
 	gob.Register(Patch[T]{})
 	gob.Register(LWW[T]{})
-	// We also register common collection types that might be used in 'any' fields
 	gob.Register([]T{})
 	gob.Register(map[string]T{})
 }
@@ -41,6 +44,12 @@ func (e *ApplyError) Error() string {
 	return b.String()
 }
 
+// Unwrap implements the errors.Join interface, allowing errors.Is and errors.As
+// to inspect individual errors within the ApplyError.
+func (e *ApplyError) Unwrap() []error {
+	return e.Errors
+}
+
 // OpKind represents the type of operation in a patch.
 type OpKind = engine.OpKind
 
@@ -60,8 +69,9 @@ type Patch[T any] struct {
 	// Used for type safety during Apply.
 	_ [0]T
 
-	// Global condition that must be met before applying the patch.
-	Condition *Condition `json:"cond,omitempty"`
+	// Guard is a global Condition that must be satisfied before any operation
+	// in this patch is applied. Set via WithGuard or Builder.Where.
+	Guard *Condition `json:"cond,omitempty"`
 
 	// Operations is a flat list of changes.
 	Operations []Operation `json:"ops"`
@@ -129,9 +139,9 @@ func (p Patch[T]) WithStrict(strict bool) Patch[T] {
 	return p
 }
 
-// WithCondition returns a new patch with the global condition set.
-func (p Patch[T]) WithCondition(c *Condition) Patch[T] {
-	p.Condition = c
+// WithGuard returns a new patch with the global guard condition set.
+func (p Patch[T]) WithGuard(c *Condition) Patch[T] {
+	p.Guard = c
 	return p
 }
 
@@ -207,11 +217,11 @@ func (p Patch[T]) ToJSONPatch() ([]byte, error) {
 
 	// If there is a global condition, we prepend a no-op test operation
 	// that carries the condition. github.com/brunoga/jsonpatch supports this.
-	if p.Condition != nil {
+	if p.Guard != nil {
 		res = append(res, map[string]any{
 			"op":   "test",
 			"path": "/",
-			"if":   p.Condition.toPredicateInternal(),
+			"if":   p.Guard.toPredicateInternal(),
 		})
 	}
 
@@ -315,7 +325,8 @@ func fromPredicateInternal(m map[string]any) *Condition {
 		if apply, ok := m["apply"].([]any); ok && len(apply) == 1 {
 			if inner, ok := apply[0].(map[string]any); ok {
 				if inner["op"] == "test" {
-					return &Condition{Path: inner["path"].(string), Op: "!=", Value: inner["value"]}
+					innerPath, _ := inner["path"].(string)
+					return &Condition{Path: innerPath, Op: "!=", Value: inner["value"]}
 				}
 			}
 		}
@@ -371,7 +382,7 @@ func FromJSONPatch[T any](data []byte) (Patch[T], error) {
 		// Global condition is encoded as a test op on "/" with an "if" predicate.
 		if opStr == "test" && path == "/" {
 			if ifPred, ok := m["if"].(map[string]any); ok {
-				res.Condition = fromPredicateInternal(ifPred)
+				res.Guard = fromPredicateInternal(ifPred)
 			}
 			continue
 		}

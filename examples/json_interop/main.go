@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	v5 "github.com/brunoga/deep/v5"
 )
 
@@ -15,7 +16,10 @@ func main() {
 	s1 := UIState{Theme: "dark", Open: false}
 	s2 := UIState{Theme: "light", Open: true}
 
-	patch := v5.Diff(s1, s2)
+	patch, err := v5.Diff(s1, s2)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// In v5, Patch is a pure struct. JSON interop is native.
 	data, _ := json.MarshalIndent(patch, "", "  ")

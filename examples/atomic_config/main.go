@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	v5 "github.com/brunoga/deep/v5"
 )
 
@@ -40,7 +41,10 @@ func main() {
 	// But let's show how Apply treats it.
 
 	newSettings := ProxyConfig{Host: "proxy.internal", Port: 9000}
-	p2 := v5.Diff(meta, SystemMeta{ClusterID: meta.ClusterID, Settings: newSettings})
+	p2, err := v5.Diff(meta, SystemMeta{ClusterID: meta.ClusterID, Settings: newSettings})
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	fmt.Printf("\nGenerated Patch for Settings (Atomic):\n%v\n", p2)
 

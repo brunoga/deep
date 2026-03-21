@@ -38,7 +38,7 @@ func (t *Fleet) ApplyOperation(op deep.Operation) (bool, error) {
 	switch op.Path {
 	case "/devices", "/Devices":
 		if op.Kind == deep.OpLog {
-			deep.Logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Devices)
+			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.Devices)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {

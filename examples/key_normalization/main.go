@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	v5 "github.com/brunoga/deep/v5"
 )
 
@@ -30,7 +31,10 @@ func main() {
 		},
 	}
 
-	patch := v5.Diff(f1, f2)
+	patch, err := v5.Diff(f1, f2)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	fmt.Println("--- COMPARING MAPS WITH SEMANTIC KEYS ---")
 	for _, op := range patch.Operations {

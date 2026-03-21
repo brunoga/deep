@@ -40,11 +40,11 @@ func (t *DocState) ApplyOperation(op deep.Operation) (bool, error) {
 	switch op.Path {
 	case "/title", "/Title":
 		if op.Kind == deep.OpLog {
-			deep.Logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Title)
+			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.Title)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
-			if t.Title != op.Old.(string) {
+			if _oldV, ok := op.Old.(string); !ok || t.Title != _oldV {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Title)
 			}
 		}
@@ -54,11 +54,11 @@ func (t *DocState) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 	case "/content", "/Content":
 		if op.Kind == deep.OpLog {
-			deep.Logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Content)
+			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.Content)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
-			if t.Content != op.Old.(string) {
+			if _oldV, ok := op.Old.(string); !ok || t.Content != _oldV {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Content)
 			}
 		}
@@ -68,7 +68,7 @@ func (t *DocState) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 	case "/metadata", "/Metadata":
 		if op.Kind == deep.OpLog {
-			deep.Logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Metadata)
+			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.Metadata)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
@@ -173,7 +173,7 @@ func (t *DocState) EvaluateCondition(c deep.Condition) (bool, error) {
 			return checkType(t.Title, c.Value.(string)), nil
 		}
 		if c.Op == "log" {
-			deep.Logger.Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Title)
+			deep.Logger().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Title)
 			return true, nil
 		}
 		if c.Op == "matches" {
@@ -221,7 +221,7 @@ func (t *DocState) EvaluateCondition(c deep.Condition) (bool, error) {
 			return checkType(t.Content, c.Value.(string)), nil
 		}
 		if c.Op == "log" {
-			deep.Logger.Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Content)
+			deep.Logger().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Content)
 			return true, nil
 		}
 		if c.Op == "matches" {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	v5 "github.com/brunoga/deep/v5"
 	"time"
 )
@@ -59,7 +60,10 @@ func main() {
 	e1 := Event{Name: "Meeting", When: CustomTime{now}}
 	e2 := Event{Name: "Meeting", When: CustomTime{now.Add(1 * time.Hour)}}
 
-	patch := v5.Diff(e1, e2)
+	patch, err := v5.Diff(e1, e2)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	fmt.Println("--- COMPARING WITH CUSTOM DIFF LOGIC ---")
 	for _, op := range patch.Operations {

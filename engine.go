@@ -19,7 +19,7 @@ func Apply[T any](target *T, p Patch[T]) error {
 	}
 
 	// Global condition check — prefer generated EvaluateCondition, fall back to reflection.
-	if p.Condition != nil {
+	if p.Guard != nil {
 		type condEvaluator interface {
 			EvaluateCondition(Condition) (bool, error)
 		}
@@ -28,9 +28,9 @@ func Apply[T any](target *T, p Patch[T]) error {
 			err error
 		)
 		if ce, hasGenCond := any(target).(condEvaluator); hasGenCond {
-			ok, err = ce.EvaluateCondition(*p.Condition)
+			ok, err = ce.EvaluateCondition(*p.Guard)
 		} else {
-			ok, err = evaluateCondition(v.Elem(), p.Condition)
+			ok, err = evaluateCondition(v.Elem(), p.Guard)
 		}
 		if err != nil {
 			return fmt.Errorf("global condition evaluation failed: %w", err)
@@ -63,8 +63,8 @@ func Apply[T any](target *T, p Patch[T]) error {
 		}
 
 		// Fallback to reflection.
-		// Strict check (Old value verification)
-		if p.Strict && op.Kind == OpReplace {
+		// Strict check (Old value verification for Replace and Remove).
+		if p.Strict && (op.Kind == OpReplace || op.Kind == OpRemove) {
 			current, err := core.DeepPath(op.Path).Resolve(v.Elem())
 			if err == nil && current.IsValid() {
 				if !core.Equal(current.Interface(), op.Old) {
@@ -166,7 +166,7 @@ func Apply[T any](target *T, p Patch[T]) error {
 				err = core.DeepPath(op.Path).Set(v.Elem(), val)
 			}
 		case OpLog:
-			Logger.Info("deep log", "message", op.New, "path", op.Path)
+			Logger().Info("deep log", "message", op.New, "path", op.Path)
 		}
 
 		if err != nil {
@@ -294,7 +294,7 @@ func evaluateCondition(root reflect.Value, c *Condition) (bool, error) {
 	}
 
 	if c.Op == "log" {
-		Logger.Info("deep condition log", "message", c.Value, "path", c.Path, "value", val.Interface())
+		Logger().Info("deep condition log", "message", c.Value, "path", c.Path, "value", val.Interface())
 		return true, nil
 	}
 

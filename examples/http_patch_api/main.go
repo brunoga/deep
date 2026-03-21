@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"log"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -51,7 +52,10 @@ func main() {
 	c2.Data = "Network Modified Data"
 	c2.Value = 250
 
-	patch := v5.Diff(c1, c2)
+	patch, err := v5.Diff(c1, c2)
+	if err != nil {
+		log.Fatal(err)
+	}
 	data, _ := json.Marshal(patch)
 
 	fmt.Printf("Client: Sending patch to server (%d bytes)\n", len(data))

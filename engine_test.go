@@ -106,7 +106,10 @@ func TestNilMapDiff(t *testing.T) {
 	// nil source map → all keys should produce OpAdd, not OpReplace
 	a := S{M: nil}
 	b := S{M: map[string]int{"x": 1, "y": 2}}
-	p := deep.Diff(a, b)
+	p, err := deep.Diff(a, b)
+	if err != nil {
+		t.Fatalf("Diff failed: %v", err)
+	}
 	for _, op := range p.Operations {
 		if op.Kind != deep.OpReplace && op.Kind != deep.OpAdd {
 			continue
@@ -212,14 +215,37 @@ func TestTextAdvanced(t *testing.T) {
 	text2.ApplyOperation(op)
 }
 
-func BenchmarkApply(b *testing.B) {
+func BenchmarkApplyGenerated(b *testing.B) {
 	u1 := testmodels.User{ID: 1, Name: "Alice"}
 	u2 := testmodels.User{ID: 1, Name: "Bob"}
-	p := deep.Diff(u1, u2)
+	p, err := deep.Diff(u1, u2)
+	if err != nil {
+		b.Fatal(err)
+	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		u3 := u1
 		deep.Apply(&u3, p)
+	}
+}
+
+func BenchmarkApplyReflection(b *testing.B) {
+	// SimpleData has no generated code, forcing the reflection engine path.
+	type SimpleData struct {
+		A int
+		B string
+	}
+	a := SimpleData{A: 1, B: "hello"}
+	c := SimpleData{A: 2, B: "world"}
+	p, err := deep.Diff(a, c)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		d := a
+		deep.Apply(&d, p)
 	}
 }

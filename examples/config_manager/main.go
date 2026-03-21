@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	v5 "github.com/brunoga/deep/v5"
 )
 
@@ -31,7 +32,10 @@ func main() {
 	v2.Timeout = 45
 	v2.Features["billing"] = true
 
-	patch := v5.Diff(v1, v2)
+	patch, err := v5.Diff(v1, v2)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	fmt.Printf("[Version 2] PROPOSING %d CHANGES:\n%v\n", len(patch.Operations), patch)
 

@@ -39,11 +39,11 @@ func (t *ProxyConfig) ApplyOperation(op deep.Operation) (bool, error) {
 	switch op.Path {
 	case "/host", "/Host":
 		if op.Kind == deep.OpLog {
-			deep.Logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Host)
+			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.Host)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
-			if t.Host != op.Old.(string) {
+			if _oldV, ok := op.Old.(string); !ok || t.Host != _oldV {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Host)
 			}
 		}
@@ -53,11 +53,20 @@ func (t *ProxyConfig) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 	case "/port", "/Port":
 		if op.Kind == deep.OpLog {
-			deep.Logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Port)
+			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.Port)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
-			if t.Port != op.Old.(int) {
+			_oldOK := false
+			if _oldV, ok := op.Old.(int); ok {
+				_oldOK = t.Port == _oldV
+			}
+			if !_oldOK {
+				if _oldF, ok := op.Old.(float64); ok {
+					_oldOK = float64(t.Port) == _oldF
+				}
+			}
+			if !_oldOK {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Port)
 			}
 		}
@@ -125,7 +134,7 @@ func (t *ProxyConfig) EvaluateCondition(c deep.Condition) (bool, error) {
 			return checkType(t.Host, c.Value.(string)), nil
 		}
 		if c.Op == "log" {
-			deep.Logger.Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Host)
+			deep.Logger().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Host)
 			return true, nil
 		}
 		if c.Op == "matches" {
@@ -173,7 +182,7 @@ func (t *ProxyConfig) EvaluateCondition(c deep.Condition) (bool, error) {
 			return checkType(t.Port, c.Value.(string)), nil
 		}
 		if c.Op == "log" {
-			deep.Logger.Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Port)
+			deep.Logger().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Port)
 			return true, nil
 		}
 		if c.Op == "matches" {
@@ -283,7 +292,7 @@ func (t *SystemMeta) ApplyOperation(op deep.Operation) (bool, error) {
 		return true, fmt.Errorf("field %s is read-only", op.Path)
 	case "/proxy", "/Settings":
 		if op.Kind == deep.OpLog {
-			deep.Logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Settings)
+			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.Settings)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
@@ -351,7 +360,7 @@ func (t *SystemMeta) EvaluateCondition(c deep.Condition) (bool, error) {
 			return checkType(t.ClusterID, c.Value.(string)), nil
 		}
 		if c.Op == "log" {
-			deep.Logger.Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.ClusterID)
+			deep.Logger().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.ClusterID)
 			return true, nil
 		}
 		if c.Op == "matches" {

@@ -5,26 +5,32 @@ import (
 	"github.com/brunoga/deep/v5/internal/engine"
 )
 
-// Diff compares two values and returns a pure data Patch.
-func Diff[T any](a, b T) Patch[T] {
+// Diff compares two values and returns a Patch describing the changes from a to b.
+// Generated types (produced by deep-gen) dispatch to a reflection-free implementation.
+// For other types, Diff falls back to the reflection engine which may return an error
+// for unsupported kinds (chan, func, etc.).
+func Diff[T any](a, b T) (Patch[T], error) {
 	// 1. Try generated optimized path (pointer receiver, pointer arg)
 	if differ, ok := any(&a).(interface {
 		Diff(*T) Patch[T]
 	}); ok {
-		return differ.Diff(&b)
+		return differ.Diff(&b), nil
 	}
 
 	// 2. Try hand-written Diff with value arg (e.g. crdt.Text)
 	if differ, ok := any(a).(interface {
 		Diff(T) Patch[T]
 	}); ok {
-		return differ.Diff(b)
+		return differ.Diff(b), nil
 	}
 
 	// 3. Fallback to reflection engine
 	p, err := engine.Diff(a, b)
-	if err != nil || p == nil {
-		return Patch[T]{}
+	if err != nil {
+		return Patch[T]{}, fmt.Errorf("deep.Diff: %w", err)
+	}
+	if p == nil {
+		return Patch[T]{}, nil
 	}
 
 	res := Patch[T]{}
@@ -43,7 +49,7 @@ func Diff[T any](a, b T) Patch[T] {
 		return nil
 	})
 
-	return res
+	return res, nil
 }
 
 // Edit returns a Builder for constructing a Patch[T]. The target argument is
@@ -59,9 +65,15 @@ type Builder[T any] struct {
 	ops    []Operation
 }
 
-// Where adds a global condition to the patch.
+// Where sets the global guard condition on the patch. If Where has already been
+// called, the new condition is ANDed with the existing one rather than
+// replacing it — calling Where twice is equivalent to Where(And(c1, c2)).
 func (b *Builder[T]) Where(c *Condition) *Builder[T] {
-	b.global = c
+	if b.global == nil {
+		b.global = c
+	} else {
+		b.global = And(b.global, c)
+	}
 	return b
 }
 
@@ -162,7 +174,7 @@ func (b *Builder[T]) Log(msg string) *Builder[T] {
 
 func (b *Builder[T]) Build() Patch[T] {
 	return Patch[T]{
-		Condition:  b.global,
+		Guard:      b.global,
 		Operations: b.ops,
 	}
 }

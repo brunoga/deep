@@ -93,7 +93,7 @@ func fieldApplyCase(f FieldInfo, p string) string {
 	}
 	// OpLog
 	fmt.Fprintf(&b, "\t\tif op.Kind == %sOpLog {\n", p)
-	fmt.Fprintf(&b, "\t\t\t%sLogger.Info(\"deep log\", \"message\", op.New, \"path\", op.Path, \"field\", t.%s)\n", p, f.Name)
+	fmt.Fprintf(&b, "\t\t\t%sLogger().Info(\"deep log\", \"message\", op.New, \"path\", op.Path, \"field\", t.%s)\n", p, f.Name)
 	b.WriteString("\t\t\treturn true, nil\n\t\t}\n")
 	// Strict check
 	fmt.Fprintf(&b, "\t\tif op.Kind == %sOpReplace && op.Strict {\n", p)
@@ -101,8 +101,16 @@ func fieldApplyCase(f FieldInfo, p string) string {
 		fmt.Fprintf(&b, "\t\t\tif old, ok := op.Old.(%s); !ok || !%sEqual(t.%s, old) {\n", f.Type, p, f.Name)
 		fmt.Fprintf(&b, "\t\t\t\treturn true, fmt.Errorf(\"strict check failed at %%s: expected %%v, got %%v\", op.Path, op.Old, t.%s)\n", f.Name)
 		b.WriteString("\t\t\t}\n")
+	} else if isNumericType(f.Type) {
+		// Numeric types: op.Old may be float64 after JSON roundtrip.
+		fmt.Fprintf(&b, "\t\t\t_oldOK := false\n")
+		fmt.Fprintf(&b, "\t\t\tif _oldV, ok := op.Old.(%s); ok { _oldOK = t.%s == _oldV }\n", f.Type, f.Name)
+		fmt.Fprintf(&b, "\t\t\tif !_oldOK { if _oldF, ok := op.Old.(float64); ok { _oldOK = %s(t.%s) == _oldF } }\n", "float64", f.Name)
+		fmt.Fprintf(&b, "\t\t\tif !_oldOK {\n")
+		fmt.Fprintf(&b, "\t\t\t\treturn true, fmt.Errorf(\"strict check failed at %%s: expected %%v, got %%v\", op.Path, op.Old, t.%s)\n", f.Name)
+		b.WriteString("\t\t\t}\n")
 	} else {
-		fmt.Fprintf(&b, "\t\t\tif t.%s != op.Old.(%s) {\n", f.Name, f.Type)
+		fmt.Fprintf(&b, "\t\t\tif _oldV, ok := op.Old.(%s); !ok || t.%s != _oldV {\n", f.Type, f.Name)
 		fmt.Fprintf(&b, "\t\t\t\treturn true, fmt.Errorf(\"strict check failed at %%s: expected %%v, got %%v\", op.Path, op.Old, t.%s)\n", f.Name)
 		b.WriteString("\t\t\t}\n")
 	}
@@ -256,7 +264,7 @@ func evalCondCase(f FieldInfo, pkgPrefix string) string {
 
 	b.WriteString("\t\tif c.Op == \"exists\" { return true, nil }\n")
 	fmt.Fprintf(&b, "\t\tif c.Op == \"type\" { return checkType(t.%s, c.Value.(string)), nil }\n", n)
-	fmt.Fprintf(&b, "\t\tif c.Op == \"log\" { %sLogger.Info(\"deep condition log\", \"message\", c.Value, \"path\", c.Path, \"value\", t.%s); return true, nil }\n", pkgPrefix, n)
+	fmt.Fprintf(&b, "\t\tif c.Op == \"log\" { %sLogger().Info(\"deep condition log\", \"message\", c.Value, \"path\", c.Path, \"value\", t.%s); return true, nil }\n", pkgPrefix, n)
 	fmt.Fprintf(&b, "\t\tif c.Op == \"matches\" { return regexp.MatchString(c.Value.(string), fmt.Sprintf(\"%%v\", t.%s)) }\n", n)
 
 	switch {
@@ -770,13 +778,17 @@ func main() {
 		src = g.buf.Bytes()
 	}
 
-	if *outputFile != "" {
-		if err := os.WriteFile(*outputFile, src, 0644); err != nil {
-			log.Fatalf("writing output: %v", err)
-		}
-	} else {
-		fmt.Print(string(src))
+	// Determine output file: explicit -output flag, or default to
+	// "{first_type_lowercase}_deep.go" in the target directory (like stringer).
+	outFile := *outputFile
+	if outFile == "" {
+		firstName := strings.ToLower(strings.SplitN(*typeNames, ",", 2)[0])
+		outFile = dir + "/" + firstName + "_deep.go"
 	}
+	if err := os.WriteFile(outFile, src, 0644); err != nil {
+		log.Fatalf("writing output: %v", err)
+	}
+	log.Printf("deep-gen: wrote %s", outFile)
 }
 
 func parseFields(st *ast.StructType) []FieldInfo {

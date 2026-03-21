@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	v5 "github.com/brunoga/deep/v5"
 )
 
@@ -25,7 +26,10 @@ func main() {
 	}
 
 	// Move detection is a high-level feature currently handled by reflection fallback
-	patch := v5.Diff(w1, w2)
+	patch, err := v5.Diff(w1, w2)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	fmt.Printf("--- GENERATED PATCH SUMMARY ---\n%v\n", patch)
 

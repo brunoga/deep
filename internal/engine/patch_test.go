@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	//"github.com/brunoga/deep/v5/internal/core"
-	//"github.com/brunoga/deep/v5/cond"
+	//"github.com/brunoga/deep/v5/internal/cond"
 )
 
 func TestPatch_String_Basic(t *testing.T) {

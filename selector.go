@@ -30,14 +30,18 @@ func (p Path[T, V]) String() string {
 	return ""
 }
 
-// Index returns a new path to the element at the given index.
+// Index returns a new path to the element at the given index within a slice or
+// array field. The returned value type is any because the element type cannot
+// be recovered at compile time after the index step; prefer the package-level
+// Set/Add/Remove functions for type-checked assignments.
 func (p Path[T, V]) Index(i int) Path[T, any] {
 	return Path[T, any]{
 		path: fmt.Sprintf("%s/%d", p.String(), i),
 	}
 }
 
-// Key returns a new path to the element at the given key.
+// Key returns a new path to the element at the given key within a map field.
+// Like Index, the returned value type is any; see the note on Index.
 func (p Path[T, V]) Key(k any) Path[T, any] {
 	return Path[T, any]{
 		path: fmt.Sprintf("%s/%v", p.String(), k),

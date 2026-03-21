@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	v5 "github.com/brunoga/deep/v5"
 )
 
@@ -37,7 +38,10 @@ func main() {
 	serverState.Time++
 
 	// Broadcast Patch
-	patch := v5.Diff(previousState, serverState)
+	patch, err := v5.Diff(previousState, serverState)
+	if err != nil {
+		log.Fatal(err)
+	}
 	wireData, _ := json.Marshal(patch)
 	fmt.Printf("\n[Network] Broadcasting Patch (%d bytes): %s\n", len(wireData), string(wireData))
 

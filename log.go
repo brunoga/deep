@@ -1,16 +1,27 @@
 package deep
 
-import "log/slog"
+import (
+	"log/slog"
+	"sync/atomic"
+)
 
-// Logger is the slog.Logger used for OpLog operations and log conditions.
-// It defaults to slog.Default(). Replace it to redirect or silence deep's
-// diagnostic output:
+var loggerPtr atomic.Pointer[slog.Logger]
+
+func init() {
+	loggerPtr.Store(slog.Default())
+}
+
+// Logger returns the slog.Logger used for OpLog operations and log conditions.
+// It is safe to call concurrently with SetLogger. To redirect or silence output:
 //
 //	deep.SetLogger(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 //	deep.SetLogger(slog.New(slog.NewTextHandler(io.Discard, nil))) // silence
-var Logger = slog.Default()
+func Logger() *slog.Logger {
+	return loggerPtr.Load()
+}
 
 // SetLogger replaces the logger used for OpLog operations and log conditions.
+// Safe to call concurrently with Logger.
 func SetLogger(l *slog.Logger) {
-	Logger = l
+	loggerPtr.Store(l)
 }

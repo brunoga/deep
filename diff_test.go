@@ -91,7 +91,7 @@ func TestBuilderAdvanced(t *testing.T) {
 	deep.Exists(deep.Field(func(u *testmodels.User) *string { return &u.Name }))
 
 	p := b.Build()
-	if p.Condition == nil || p.Condition.Op != "==" {
+	if p.Guard == nil || p.Guard.Op != "==" {
 		t.Error("Where failed")
 	}
 }

@@ -40,11 +40,11 @@ func (t *SystemConfig) ApplyOperation(op deep.Operation) (bool, error) {
 	switch op.Path {
 	case "/app", "/AppName":
 		if op.Kind == deep.OpLog {
-			deep.Logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.AppName)
+			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.AppName)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
-			if t.AppName != op.Old.(string) {
+			if _oldV, ok := op.Old.(string); !ok || t.AppName != _oldV {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.AppName)
 			}
 		}
@@ -54,11 +54,20 @@ func (t *SystemConfig) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 	case "/threads", "/MaxThreads":
 		if op.Kind == deep.OpLog {
-			deep.Logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.MaxThreads)
+			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.MaxThreads)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
-			if t.MaxThreads != op.Old.(int) {
+			_oldOK := false
+			if _oldV, ok := op.Old.(int); ok {
+				_oldOK = t.MaxThreads == _oldV
+			}
+			if !_oldOK {
+				if _oldF, ok := op.Old.(float64); ok {
+					_oldOK = float64(t.MaxThreads) == _oldF
+				}
+			}
+			if !_oldOK {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.MaxThreads)
 			}
 		}
@@ -72,7 +81,7 @@ func (t *SystemConfig) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 	case "/endpoints", "/Endpoints":
 		if op.Kind == deep.OpLog {
-			deep.Logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Endpoints)
+			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.Endpoints)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
@@ -177,7 +186,7 @@ func (t *SystemConfig) EvaluateCondition(c deep.Condition) (bool, error) {
 			return checkType(t.AppName, c.Value.(string)), nil
 		}
 		if c.Op == "log" {
-			deep.Logger.Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.AppName)
+			deep.Logger().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.AppName)
 			return true, nil
 		}
 		if c.Op == "matches" {
@@ -225,7 +234,7 @@ func (t *SystemConfig) EvaluateCondition(c deep.Condition) (bool, error) {
 			return checkType(t.MaxThreads, c.Value.(string)), nil
 		}
 		if c.Op == "log" {
-			deep.Logger.Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.MaxThreads)
+			deep.Logger().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.MaxThreads)
 			return true, nil
 		}
 		if c.Op == "matches" {

@@ -40,11 +40,11 @@ func (t *SharedState) ApplyOperation(op deep.Operation) (bool, error) {
 	switch op.Path {
 	case "/title", "/Title":
 		if op.Kind == deep.OpLog {
-			deep.Logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Title)
+			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.Title)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
-			if t.Title != op.Old.(string) {
+			if _oldV, ok := op.Old.(string); !ok || t.Title != _oldV {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Title)
 			}
 		}
@@ -54,7 +54,7 @@ func (t *SharedState) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 	case "/options", "/Options":
 		if op.Kind == deep.OpLog {
-			deep.Logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Options)
+			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.Options)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
@@ -156,7 +156,7 @@ func (t *SharedState) EvaluateCondition(c deep.Condition) (bool, error) {
 			return checkType(t.Title, c.Value.(string)), nil
 		}
 		if c.Op == "log" {
-			deep.Logger.Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Title)
+			deep.Logger().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Title)
 			return true, nil
 		}
 		if c.Op == "matches" {

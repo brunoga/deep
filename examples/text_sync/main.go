@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"log"
+
 	v5 "github.com/brunoga/deep/v5"
 	"github.com/brunoga/deep/v5/crdt"
 	"github.com/brunoga/deep/v5/crdt/hlc"
@@ -24,7 +26,10 @@ func main() {
 	docA = crdt.Text{{ID: clockA.Now(), Value: "Hello"}}
 
 	// Sync A -> B
-	patchA := v5.Diff(crdt.Text{}, docA)
+	patchA, err := v5.Diff(crdt.Text{}, docA)
+	if err != nil {
+		log.Fatal(err)
+	}
 	v5.Apply(&docB, patchA)
 
 	fmt.Printf("Doc A: %s\n", docA.String())
@@ -42,8 +47,14 @@ func main() {
 	fmt.Println("\n--- Concurrent Edits ---")
 
 	// Diff and Merge
-	pA := v5.Diff(crdt.Text{}, docA)
-	pB := v5.Diff(crdt.Text{}, docB)
+	pA, err := v5.Diff(crdt.Text{}, docA)
+	if err != nil {
+		log.Fatal(err)
+	}
+	pB, err := v5.Diff(crdt.Text{}, docB)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// In v5, we apply both patches to reach convergence
 	v5.Apply(&docA, pB)

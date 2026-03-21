@@ -39,11 +39,11 @@ func (t *UIState) ApplyOperation(op deep.Operation) (bool, error) {
 	switch op.Path {
 	case "/theme", "/Theme":
 		if op.Kind == deep.OpLog {
-			deep.Logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Theme)
+			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.Theme)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
-			if t.Theme != op.Old.(string) {
+			if _oldV, ok := op.Old.(string); !ok || t.Theme != _oldV {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Theme)
 			}
 		}
@@ -53,11 +53,11 @@ func (t *UIState) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 	case "/sidebar_open", "/Open":
 		if op.Kind == deep.OpLog {
-			deep.Logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Open)
+			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.Open)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
-			if t.Open != op.Old.(bool) {
+			if _oldV, ok := op.Old.(bool); !ok || t.Open != _oldV {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Open)
 			}
 		}
@@ -121,7 +121,7 @@ func (t *UIState) EvaluateCondition(c deep.Condition) (bool, error) {
 			return checkType(t.Theme, c.Value.(string)), nil
 		}
 		if c.Op == "log" {
-			deep.Logger.Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Theme)
+			deep.Logger().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Theme)
 			return true, nil
 		}
 		if c.Op == "matches" {
@@ -169,7 +169,7 @@ func (t *UIState) EvaluateCondition(c deep.Condition) (bool, error) {
 			return checkType(t.Open, c.Value.(string)), nil
 		}
 		if c.Op == "log" {
-			deep.Logger.Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Open)
+			deep.Logger().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Open)
 			return true, nil
 		}
 		if c.Op == "matches" {
