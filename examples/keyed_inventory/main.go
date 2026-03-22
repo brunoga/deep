@@ -34,5 +34,6 @@ func main() {
 		log.Fatal(err)
 	}
 
-	fmt.Printf("INVENTORY UPDATE (v5):\n%v\n", patch)
+	fmt.Println("--- INVENTORY UPDATE ---")
+	fmt.Println(patch)
 }

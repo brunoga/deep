@@ -44,11 +44,11 @@ func (t *GameWorld) ApplyOperation(op deep.Operation) (bool, error) {
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
-			if old, ok := op.Old.(map[string]*Player); !ok || !deep.Equal(t.Players, old) {
+			if old, ok := op.Old.(map[string]Player); !ok || !deep.Equal(t.Players, old) {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Players)
 			}
 		}
-		if v, ok := op.New.(map[string]*Player); ok {
+		if v, ok := op.New.(map[string]Player); ok {
 			t.Players = v
 			return true, nil
 		}
@@ -83,12 +83,16 @@ func (t *GameWorld) ApplyOperation(op deep.Operation) (bool, error) {
 		if strings.HasPrefix(op.Path, "/players/") {
 			parts := strings.Split(op.Path[len("/players/"):], "/")
 			key := parts[0]
-			if val, ok := t.Players[key]; ok && val != nil {
-				op.Path = "/"
-				if len(parts) > 1 {
-					op.Path = "/" + strings.Join(parts[1:], "/")
-				}
-				return val.ApplyOperation(op)
+			if op.Kind == deep.OpRemove {
+				delete(t.Players, key)
+				return true, nil
+			}
+			if t.Players == nil {
+				t.Players = make(map[string]Player)
+			}
+			if v, ok := op.New.(Player); ok {
+				t.Players[key] = v
+				return true, nil
 			}
 		}
 	}
@@ -104,7 +108,7 @@ func (t *GameWorld) Diff(other *GameWorld) deep.Patch[GameWorld] {
 				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: fmt.Sprintf("/players/%v", k), New: v})
 				continue
 			}
-			if oldV, ok := t.Players[k]; !ok || !oldV.Equal(v) {
+			if oldV, ok := t.Players[k]; !ok || v != oldV {
 				kind := deep.OpReplace
 				if !ok {
 					kind = deep.OpAdd
@@ -232,10 +236,7 @@ func (t *GameWorld) Equal(other *GameWorld) bool {
 		if !ok {
 			return false
 		}
-		if (v == nil) != (vOther == nil) {
-			return false
-		}
-		if v != nil && !v.Equal(vOther) {
+		if v != vOther {
 			return false
 		}
 	}
@@ -251,11 +252,9 @@ func (t *GameWorld) Copy() *GameWorld {
 		Time: t.Time,
 	}
 	if t.Players != nil {
-		res.Players = make(map[string]*Player)
+		res.Players = make(map[string]Player)
 		for k, v := range t.Players {
-			if v != nil {
-				res.Players[k] = v.Copy()
-			}
+			res.Players[k] = v
 		}
 	}
 	return res

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+
 	v5 "github.com/brunoga/deep/v5"
 )
 
@@ -15,10 +16,8 @@ type Employee struct {
 func main() {
 	e := Employee{ID: 101, Name: "John Doe", Role: "Junior", Rating: 5}
 
-	fmt.Printf("Initial Employee: %+v\n", e)
-
-	// Policy: Can only promote to "Senior" if current role is "Junior" AND rating is 5
-	// OR if the name matches a "Superstar" pattern (just for regex demo).
+	// Policy: promote to "Senior" only if (role=="Junior" AND rating==5)
+	// OR name ends with "Superstar".
 	policy := v5.Or(
 		v5.And(
 			v5.Eq(v5.Field(func(e *Employee) *string { return &e.Role }), "Junior"),
@@ -27,28 +26,25 @@ func main() {
 		v5.Matches(v5.Field(func(e *Employee) *string { return &e.Name }), ".*Superstar$"),
 	)
 
-	patch := v5.NewPatch[Employee]().
-		WithGuard(policy).
-		WithStrict(false)
-
-	// Add operation manually
+	patch := v5.NewPatch[Employee]().WithGuard(policy).WithStrict(false)
 	patch.Operations = append(patch.Operations, v5.Operation{
 		Kind: v5.OpReplace, Path: "/role", New: "Senior",
 	})
 
-	fmt.Println("\nAttempting promotion with policy...")
+	fmt.Println("--- PROMOTION ATTEMPT (rating=5) ---")
+	fmt.Printf("Employee: %+v\n", e)
 	if err := v5.Apply(&e, patch); err != nil {
-		fmt.Printf("Policy Rejected: %v\n", err)
+		fmt.Printf("REJECTED: %v\n", err)
 	} else {
-		fmt.Printf("Policy Accepted! New Role: %s\n", e.Role)
+		fmt.Printf("ACCEPTED: new role = %s\n", e.Role)
 	}
 
-	// Change rating and try again
 	e.Rating = 3
-	fmt.Printf("\nRating downgraded to %d. Attempting promotion again...\n", e.Rating)
+	fmt.Println("\n--- PROMOTION ATTEMPT (rating=3) ---")
+	fmt.Printf("Employee: %+v\n", e)
 	if err := v5.Apply(&e, patch); err != nil {
-		fmt.Printf("Policy Rejected: %v\n", err)
+		fmt.Printf("REJECTED: %v\n", err)
 	} else {
-		fmt.Printf("Policy Accepted! New Role: %s\n", e.Role)
+		fmt.Printf("ACCEPTED: new role = %s\n", e.Role)
 	}
 }

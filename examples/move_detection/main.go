@@ -21,7 +21,8 @@ func main() {
 		Published: "",
 	}
 
-	fmt.Printf("Before: %+v\n\n", doc)
+	fmt.Println("--- BEFORE ---")
+	fmt.Printf("%+v\n", doc)
 
 	// Build a Move patch: /draft → /published
 	draftPath := v5.Field(func(d *Document) *string { return &d.Draft })
@@ -29,11 +30,13 @@ func main() {
 
 	patch := v5.Edit(&doc).Move(draftPath, pubPath).Build()
 
-	fmt.Printf("--- GENERATED PATCH ---\n%v\n\n", patch)
+	fmt.Println("\n--- PATCH ---")
+	fmt.Println(patch)
 
 	if err := v5.Apply(&doc, patch); err != nil {
 		log.Fatal(err)
 	}
 
-	fmt.Printf("After: %+v\n", doc)
+	fmt.Println("--- AFTER ---")
+	fmt.Printf("%+v\n", doc)
 }

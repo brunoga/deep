@@ -22,32 +22,31 @@ func main() {
 		Settings:  ProxyConfig{Host: "localhost", Port: 8080},
 	}
 
-	fmt.Printf("Initial Config: %+v\n", meta)
+	fmt.Println("--- INITIAL STATE ---")
+	fmt.Printf("%+v\n", meta)
 
-	// 1. Attempt to change Read-Only field
+	// 1. Attempt to change the read-only field.
 	p1 := v5.NewPatch[SystemMeta]()
 	p1.Operations = append(p1.Operations, v5.Operation{
 		Kind: v5.OpReplace, Path: "/cid", New: "HACKED-CLUSTER",
 	})
 
-	fmt.Println("\nAttempting to modify read-only ClusterID...")
+	fmt.Println("\n--- READ-ONLY ENFORCEMENT ---")
 	if err := v5.Apply(&meta, p1); err != nil {
 		fmt.Printf("REJECTED: %v\n", err)
 	}
 
-	// 2. Demonstrate Atomic update
-	// An atomic update means even if we only change one field in Settings,
-	// Diff should produce a replacement of the WHOLE Settings block if we use it.
-	// But let's show how Apply treats it.
-
+	// 2. Demonstrate atomic update: deep:"atomic" causes the entire Settings
+	// block to be replaced as a unit rather than field-by-field.
 	newSettings := ProxyConfig{Host: "proxy.internal", Port: 9000}
 	p2, err := v5.Diff(meta, SystemMeta{ClusterID: meta.ClusterID, Settings: newSettings})
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	fmt.Printf("\nGenerated Patch for Settings (Atomic):\n%v\n", p2)
+	fmt.Println("\n--- ATOMIC SETTINGS UPDATE ---")
+	fmt.Println(p2)
 
 	v5.Apply(&meta, p2)
-	fmt.Printf("Final Config: %+v\n", meta)
+	fmt.Printf("Result: %+v\n", meta)
 }

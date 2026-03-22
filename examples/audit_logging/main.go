@@ -10,22 +10,22 @@ import (
 )
 
 type User struct {
-	Name  string   `json:"name"`
-	Email string   `json:"email"`
-	Roles []string `json:"roles"`
+	Name  string          `json:"name"`
+	Email string          `json:"email"`
+	Tags  map[string]bool `json:"tags"`
 }
 
 func main() {
 	u1 := User{
 		Name:  "Alice",
 		Email: "alice@example.com",
-		Roles: []string{"user"},
+		Tags:  map[string]bool{"user": true},
 	}
 
 	u2 := User{
 		Name:  "Alice Smith",
 		Email: "alice.smith@example.com",
-		Roles: []string{"user", "admin"},
+		Tags:  map[string]bool{"user": true, "admin": true},
 	}
 
 	// Diff captures old and new values for every changed field.
@@ -34,14 +34,15 @@ func main() {
 		log.Fatal(err)
 	}
 
-	fmt.Println("AUDIT LOG (v5):")
-	fmt.Println("----------")
+	fmt.Println("--- AUDIT LOG ---")
 	for _, op := range patch.Operations {
 		switch op.Kind {
 		case v5.OpReplace:
-			fmt.Printf("Modified field '%s': %v -> %v\n", op.Path, op.Old, op.New)
+			fmt.Printf("  MODIFY  %s: %v → %v\n", op.Path, op.Old, op.New)
 		case v5.OpAdd:
-			fmt.Printf("Set new field '%s': %v\n", op.Path, op.New)
+			fmt.Printf("  ADD     %s: %v\n", op.Path, op.New)
+		case v5.OpRemove:
+			fmt.Printf("  REMOVE  %s: %v\n", op.Path, op.Old)
 		}
 	}
 }

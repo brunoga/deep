@@ -15,22 +15,26 @@ type Stock struct {
 func main() {
 	s := Stock{SKU: "BOLT-1", Quantity: 100}
 
-	// 1. User A generates a patch to decrease stock by 10 (expects 100)
+	// User A generates a patch to decrease stock by 10.
+	// WithStrict(true) records current values so the patch fails if the
+	// state has changed by the time it is applied (optimistic locking).
 	rawPatch, err := v5.Diff(s, Stock{SKU: "BOLT-1", Quantity: 90})
 	if err != nil {
 		log.Fatal(err)
 	}
 	patchA := rawPatch.WithStrict(true)
 
-	// 2. User B concurrently updates stock to 50
+	// User B concurrently updates stock to 50.
 	s.Quantity = 50
-	fmt.Printf("Initial Stock: %+v (updated by User B to 50)\n", s)
 
-	// 3. User A attempts to apply their patch
-	fmt.Println("\nUser A attempting to apply patch (generated when quantity was 100)...")
+	fmt.Println("--- INITIAL STATE ---")
+	fmt.Printf("Stock: %+v (User B set quantity to 50)\n", s)
+
+	// User A's patch was generated when quantity was 100 — it should be rejected.
+	fmt.Println("\n--- APPLYING STALE PATCH ---")
 	if err = v5.Apply(&s, patchA); err != nil {
-		fmt.Printf("User A Update FAILED (Optimistic Lock): %v\n", err)
+		fmt.Printf("REJECTED (optimistic lock): %v\n", err)
 	} else {
-		fmt.Printf("User A Update SUCCESS: New Quantity: %d\n", s.Quantity)
+		fmt.Printf("Applied: new quantity = %d\n", s.Quantity)
 	}
 }

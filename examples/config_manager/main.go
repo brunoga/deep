@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+
 	v5 "github.com/brunoga/deep/v5"
 )
 
@@ -22,12 +23,8 @@ func main() {
 		Features:    map[string]bool{"billing": false},
 	}
 
-	// 1. Propose Changes (deep-copy the map so v1 is not aliased by v2)
-	v2 := v1
-	v2.Features = make(map[string]bool, len(v1.Features))
-	for k, val := range v1.Features {
-		v2.Features[k] = val
-	}
+	// Propose changes on a deep copy so v1 is not mutated.
+	v2 := v5.Copy(v1)
 	v2.Version = 2
 	v2.Timeout = 45
 	v2.Features["billing"] = true
@@ -37,22 +34,19 @@ func main() {
 		log.Fatal(err)
 	}
 
-	fmt.Printf("[Version 2] PROPOSING %d CHANGES:\n%v\n", len(patch.Operations), patch)
+	fmt.Println("--- PROPOSED CHANGES ---")
+	fmt.Println(patch)
 
-	// 2. Synchronize (Apply) — copy the map so v1 is not aliased
-	state := v1
-	state.Features = make(map[string]bool, len(v1.Features))
-	for k, val := range v1.Features {
-		state.Features[k] = val
-	}
+	// Apply to a copy of the live state.
+	state := v5.Copy(v1)
 	v5.Apply(&state, patch)
-	fmt.Printf("System synchronized to Version %d\n", state.Version)
+	fmt.Printf("--- SYNCHRONIZED (version %d) ---\n", state.Version)
 
-	// 3. Rollback using the patch's own reverse
+	// Rollback using the patch's own reverse.
 	rollback := patch.Reverse()
 	v5.Apply(&state, rollback)
-	fmt.Printf("[ROLLBACK] System reverted to Version %d\n", state.Version)
 
+	fmt.Println("--- ROLLED BACK ---")
 	out, _ := json.MarshalIndent(state, "", "  ")
 	fmt.Println(string(out))
 }

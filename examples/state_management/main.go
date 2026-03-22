@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"log"
+
 	v5 "github.com/brunoga/deep/v5"
 )
 
@@ -18,24 +20,41 @@ func main() {
 		Metadata: map[string]string{"author": "Alice"},
 	}
 
-	history := []DocState{v5.Copy(current)}
+	// Each edit records a reverse patch for undo.
+	var undoStack []v5.Patch[DocState]
 
-	// 1. Edit
-	current.Title = "Final Version"
-	current.Content = "Goodbye World"
-	history = append(history, v5.Copy(current))
+	edit := func(fn func(*DocState)) {
+		next := v5.Copy(current)
+		fn(&next)
+		patch, err := v5.Diff(current, next)
+		if err != nil {
+			log.Fatal(err)
+		}
+		undoStack = append(undoStack, patch.Reverse())
+		current = next
+	}
 
-	// 2. Add metadata
-	current.Metadata["tags"] = "go,library"
-	history = append(history, v5.Copy(current))
+	edit(func(d *DocState) {
+		d.Title = "Final Version"
+		d.Content = "Goodbye World"
+	})
 
-	fmt.Printf("Current State: %+v\n", current)
+	edit(func(d *DocState) {
+		d.Metadata["tags"] = "go,library"
+	})
 
-	// Undo Action 2
-	current = v5.Copy(history[1])
-	fmt.Printf("After Undo 2: %+v\n", current)
+	fmt.Println("--- CURRENT STATE ---")
+	fmt.Printf("%+v\n", current)
 
-	// Undo Action 1
-	current = v5.Copy(history[0])
-	fmt.Printf("After Undo 1: %+v\n", current)
+	// Undo edit 2.
+	v5.Apply(&current, undoStack[len(undoStack)-1])
+	undoStack = undoStack[:len(undoStack)-1]
+	fmt.Println("\n--- AFTER UNDO (edit 2) ---")
+	fmt.Printf("%+v\n", current)
+
+	// Undo edit 1.
+	v5.Apply(&current, undoStack[len(undoStack)-1])
+	undoStack = undoStack[:len(undoStack)-1]
+	fmt.Println("\n--- AFTER UNDO (edit 1) ---")
+	fmt.Printf("%+v\n", current)
 }

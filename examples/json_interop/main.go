@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+
 	v5 "github.com/brunoga/deep/v5"
 )
 
@@ -21,19 +22,27 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// In v5, Patch is a pure struct. JSON interop is native.
+	// Native v5 JSON: compact wire format.
 	data, _ := json.MarshalIndent(patch, "", "  ")
-	fmt.Println("INTERNAL V5 JSON REPRESENTATION:")
+	fmt.Println("--- NATIVE V5 JSON ---")
 	fmt.Println(string(data))
 
-	// Unmarshal back
-	var p2 v5.Patch[UIState]
-	json.Unmarshal(data, &p2)
+	// RFC 6902 JSON Patch: human-readable, interoperable with other tools.
+	rfc, err := patch.ToJSONPatch()
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println("--- RFC 6902 JSON PATCH ---")
+	fmt.Println(string(rfc))
 
+	// Round-trip: unmarshal the native format and reapply.
+	var p2 v5.Patch[UIState]
+	if err := json.Unmarshal(data, &p2); err != nil {
+		log.Fatal(err)
+	}
 	s3 := s1
 	v5.Apply(&s3, p2)
 
-	if s3.Theme == "light" {
-		fmt.Println("\nSUCCESS: Patch restored and applied from JSON.")
-	}
+	fmt.Println("--- ROUND-TRIP RESULT ---")
+	fmt.Printf("Theme: %s, Open: %v\n", s3.Theme, s3.Open)
 }

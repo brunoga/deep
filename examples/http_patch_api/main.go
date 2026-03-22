@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"log"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 
@@ -18,7 +18,7 @@ type Resource struct {
 	Value int    `json:"value"`
 }
 
-var ServerState = map[string]*Resource{
+var serverState = map[string]*Resource{
 	"res-1": {ID: "res-1", Data: "Initial Data", Value: 100},
 }
 
@@ -26,7 +26,6 @@ func main() {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 
-		// In v5, Patch is just a struct. We can unmarshal it directly.
 		var patch v5.Patch[Resource]
 		if err := json.Unmarshal(body, &patch); err != nil {
 			http.Error(w, "Invalid patch", http.StatusBadRequest)
@@ -34,23 +33,18 @@ func main() {
 		}
 
 		id := r.URL.Query().Get("id")
-		res := ServerState[id]
-
-		// Apply the patch
-		if err := v5.Apply(res, patch); err != nil {
+		if err := v5.Apply(serverState[id], patch); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
-		fmt.Fprintf(w, "Resource %s updated successfully", id)
+		fmt.Fprintf(w, "OK")
 	}))
 	defer server.Close()
 
-	// Client
+	// Client: compute patch and send it.
 	c1 := Resource{ID: "res-1", Data: "Initial Data", Value: 100}
-	c2 := c1
-	c2.Data = "Network Modified Data"
-	c2.Value = 250
+	c2 := Resource{ID: "res-1", Data: "Network Modified Data", Value: 250}
 
 	patch, err := v5.Diff(c1, c2)
 	if err != nil {
@@ -58,10 +52,12 @@ func main() {
 	}
 	data, _ := json.Marshal(patch)
 
-	fmt.Printf("Client: Sending patch to server (%d bytes)\n", len(data))
-	resp, _ := http.Post(server.URL+"?id=res-1", "application/json", bytes.NewBuffer(data))
+	fmt.Println("--- CLIENT ---")
+	fmt.Printf("Sending patch (%d bytes)\n", len(data))
 
-	status, _ := io.ReadAll(resp.Body)
-	fmt.Printf("Server Response: %s\n", string(status))
-	fmt.Printf("Server Final State for res-1: %+v\n", ServerState["res-1"])
+	resp, _ := http.Post(server.URL+"?id=res-1", "application/json", bytes.NewBuffer(data))
+	io.ReadAll(resp.Body)
+
+	fmt.Println("\n--- SERVER STATE AFTER PATCH ---")
+	fmt.Printf("%+v\n", *serverState["res-1"])
 }

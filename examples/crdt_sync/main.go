@@ -1,58 +1,47 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
+
 	v5 "github.com/brunoga/deep/v5"
-	"github.com/brunoga/deep/v5/crdt/hlc"
+	"github.com/brunoga/deep/v5/crdt"
 )
 
-type SharedState struct {
-	Title   string            `json:"title"`
-	Options map[string]string `json:"options"`
+type SharedDoc struct {
+	Title   string `json:"title"`
+	Content string `json:"content"`
 }
 
 func main() {
-	clockA := hlc.NewClock("node-a")
-	clockB := hlc.NewClock("node-b")
+	initial := SharedDoc{Title: "Untitled", Content: ""}
 
-	initial := SharedState{
-		Title:   "Initial",
-		Options: map[string]string{"theme": "light"},
-	}
+	nodeA := crdt.NewCRDT(initial, "node-a")
+	nodeB := crdt.NewCRDT(initial, "node-b")
 
-	// 1. Node A Edit
-	tsA := clockA.Now()
-	patchA := v5.NewPatch[SharedState]()
-	patchA.Operations = append(patchA.Operations, v5.Operation{
-		Kind: v5.OpReplace, Path: "/title", New: "Title by A", Timestamp: &tsA,
+	// Concurrent edits: A edits the title, B edits the content.
+	deltaA := nodeA.Edit(func(d *SharedDoc) {
+		d.Title = "My Document"
+	})
+	deltaB := nodeB.Edit(func(d *SharedDoc) {
+		d.Content = "Hello, World!"
 	})
 
-	// 2. Node B Edit (Concurrent)
-	tsB := clockB.Now()
-	patchB := v5.NewPatch[SharedState]()
-	patchB.Operations = append(patchB.Operations, v5.Operation{
-		Kind: v5.OpReplace, Path: "/title", New: "Title by B", Timestamp: &tsB,
-	})
-	patchB.Operations = append(patchB.Operations, v5.Operation{
-		Kind: v5.OpReplace, Path: "/options/font", New: "mono", Timestamp: &tsB,
-	})
+	fmt.Println("--- CONCURRENT EDITS ---")
+	fmt.Println("Node A: title   → \"My Document\"")
+	fmt.Println("Node B: content → \"Hello, World!\"")
 
-	// 3. Convergent Merge
-	merged := v5.Merge(patchA, patchB, nil)
+	// Exchange deltas (simulate network delivery).
+	nodeA.ApplyDelta(deltaB)
+	nodeB.ApplyDelta(deltaA)
 
-	fmt.Println("--- Synchronizing Node A and Node B ---")
+	viewA := nodeA.View()
+	viewB := nodeB.View()
 
-	stateA := initial
-	v5.Apply(&stateA, merged)
+	fmt.Println("\n--- AFTER SYNC ---")
+	fmt.Printf("Node A: %+v\n", viewA)
+	fmt.Printf("Node B: %+v\n", viewB)
 
-	stateB := initial
-	v5.Apply(&stateB, merged)
-
-	out, _ := json.MarshalIndent(stateA, "", "  ")
-	fmt.Println(string(out))
-
-	if stateA.Title == stateB.Title {
-		fmt.Println("SUCCESS: Both nodes converged!")
+	if v5.Equal(viewA, viewB) {
+		fmt.Println("\nSUCCESS: Both nodes converged!")
 	}
 }

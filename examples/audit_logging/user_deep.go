@@ -6,6 +6,7 @@ import (
 	deep "github.com/brunoga/deep/v5"
 	"reflect"
 	"regexp"
+	"strings"
 )
 
 // ApplyOperation applies a single operation to User efficiently.
@@ -65,21 +66,36 @@ func (t *User) ApplyOperation(op deep.Operation) (bool, error) {
 			t.Email = v
 			return true, nil
 		}
-	case "/roles", "/Roles":
+	case "/tags", "/Tags":
 		if op.Kind == deep.OpLog {
-			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.Roles)
+			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.Tags)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
-			if old, ok := op.Old.([]string); !ok || !deep.Equal(t.Roles, old) {
-				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Roles)
+			if old, ok := op.Old.(map[string]bool); !ok || !deep.Equal(t.Tags, old) {
+				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Tags)
 			}
 		}
-		if v, ok := op.New.([]string); ok {
-			t.Roles = v
+		if v, ok := op.New.(map[string]bool); ok {
+			t.Tags = v
 			return true, nil
 		}
 	default:
+		if strings.HasPrefix(op.Path, "/tags/") {
+			parts := strings.Split(op.Path[len("/tags/"):], "/")
+			key := parts[0]
+			if op.Kind == deep.OpRemove {
+				delete(t.Tags, key)
+				return true, nil
+			}
+			if t.Tags == nil {
+				t.Tags = make(map[string]bool)
+			}
+			if v, ok := op.New.(bool); ok {
+				t.Tags[key] = v
+				return true, nil
+			}
+		}
 	}
 	return false, nil
 }
@@ -93,12 +109,25 @@ func (t *User) Diff(other *User) deep.Patch[User] {
 	if t.Email != other.Email {
 		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/email", Old: t.Email, New: other.Email})
 	}
-	if len(t.Roles) != len(other.Roles) {
-		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/roles", Old: t.Roles, New: other.Roles})
-	} else {
-		for i := range t.Roles {
-			if t.Roles[i] != other.Roles[i] {
-				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: fmt.Sprintf("/roles/%d", i), Old: t.Roles[i], New: other.Roles[i]})
+	if other.Tags != nil {
+		for k, v := range other.Tags {
+			if t.Tags == nil {
+				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: fmt.Sprintf("/tags/%v", k), New: v})
+				continue
+			}
+			if oldV, ok := t.Tags[k]; !ok || v != oldV {
+				kind := deep.OpReplace
+				if !ok {
+					kind = deep.OpAdd
+				}
+				p.Operations = append(p.Operations, deep.Operation{Kind: kind, Path: fmt.Sprintf("/tags/%v", k), Old: oldV, New: v})
+			}
+		}
+	}
+	if t.Tags != nil {
+		for k, v := range t.Tags {
+			if other.Tags == nil || !contains(other.Tags, k) {
+				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: fmt.Sprintf("/tags/%v", k), Old: v})
 			}
 		}
 	}
@@ -244,11 +273,15 @@ func (t *User) Equal(other *User) bool {
 	if t.Email != other.Email {
 		return false
 	}
-	if len(t.Roles) != len(other.Roles) {
+	if len(t.Tags) != len(other.Tags) {
 		return false
 	}
-	for i := range t.Roles {
-		if t.Roles[i] != other.Roles[i] {
+	for k, v := range t.Tags {
+		vOther, ok := other.Tags[k]
+		if !ok {
+			return false
+		}
+		if v != vOther {
 			return false
 		}
 	}
@@ -260,7 +293,12 @@ func (t *User) Copy() *User {
 	res := &User{
 		Name:  t.Name,
 		Email: t.Email,
-		Roles: append([]string(nil), t.Roles...),
+	}
+	if t.Tags != nil {
+		res.Tags = make(map[string]bool)
+		for k, v := range t.Tags {
+			res.Tags[k] = v
+		}
 	}
 	return res
 }
