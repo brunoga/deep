@@ -3,39 +3,37 @@ package main
 import (
 	"fmt"
 	"log"
+
 	v5 "github.com/brunoga/deep/v5"
 )
 
-type Workspace struct {
-	Drafts  []string          `json:"drafts"`
-	Archive map[string]string `json:"archive"`
+// Document has a draft field and a published field.
+// The Move operation promotes a draft to published atomically:
+// it reads the source value, clears the source, and writes to the destination.
+type Document struct {
+	Draft     string `json:"draft"`
+	Published string `json:"published"`
 }
 
 func main() {
-	w1 := Workspace{
-		Drafts:  []string{"Important Doc"},
-		Archive: make(map[string]string),
+	doc := Document{
+		Draft:     "My Article",
+		Published: "",
 	}
 
-	// Move from Drafts[0] to Archive["v1"]
-	w2 := Workspace{
-		Drafts: []string{},
-		Archive: map[string]string{
-			"v1": "Important Doc",
-		},
-	}
+	fmt.Printf("Before: %+v\n\n", doc)
 
-	// Move detection is a high-level feature currently handled by reflection fallback
-	patch, err := v5.Diff(w1, w2)
-	if err != nil {
+	// Build a Move patch: /draft → /published
+	draftPath := v5.Field(func(d *Document) *string { return &d.Draft })
+	pubPath := v5.Field(func(d *Document) *string { return &d.Published })
+
+	patch := v5.Edit(&doc).Move(draftPath, pubPath).Build()
+
+	fmt.Printf("--- GENERATED PATCH ---\n%v\n\n", patch)
+
+	if err := v5.Apply(&doc, patch); err != nil {
 		log.Fatal(err)
 	}
 
-	fmt.Printf("--- GENERATED PATCH SUMMARY ---\n%v\n", patch)
-
-	// Apply
-	final := w1
-	v5.Apply(&final, patch)
-
-	fmt.Printf("\nFinal Workspace: %+v\n", final)
+	fmt.Printf("After: %+v\n", doc)
 }
