@@ -236,15 +236,15 @@ func Log[T, V any](p Path[T, V], msg string) *Condition {
 
 // And combines multiple conditions with logical AND.
 func And(conds ...*Condition) *Condition {
-	return &Condition{Op: "and", Apply: conds}
+	return &Condition{Op: "and", Sub: conds}
 }
 
 // Or combines multiple conditions with logical OR.
 func Or(conds ...*Condition) *Condition {
-	return &Condition{Op: "or", Apply: conds}
+	return &Condition{Op: "or", Sub: conds}
 }
 
 // Not inverts a condition.
 func Not(c *Condition) *Condition {
-	return &Condition{Op: "not", Apply: []*Condition{c}}
+	return &Condition{Op: "not", Sub: []*Condition{c}}
 }

@@ -116,7 +116,7 @@ func (t *Resource) Diff(other *Resource) deep.Patch[Resource] {
 func (t *Resource) EvaluateCondition(c deep.Condition) (bool, error) {
 	switch c.Op {
 	case "and":
-		for _, sub := range c.Apply {
+		for _, sub := range c.Sub {
 			ok, err := t.EvaluateCondition(*sub)
 			if err != nil || !ok {
 				return false, err
@@ -124,7 +124,7 @@ func (t *Resource) EvaluateCondition(c deep.Condition) (bool, error) {
 		}
 		return true, nil
 	case "or":
-		for _, sub := range c.Apply {
+		for _, sub := range c.Sub {
 			ok, err := t.EvaluateCondition(*sub)
 			if err == nil && ok {
 				return true, nil
@@ -132,8 +132,8 @@ func (t *Resource) EvaluateCondition(c deep.Condition) (bool, error) {
 		}
 		return false, nil
 	case "not":
-		if len(c.Apply) > 0 {
-			ok, err := t.EvaluateCondition(*c.Apply[0])
+		if len(c.Sub) > 0 {
+			ok, err := t.EvaluateCondition(*c.Sub[0])
 			if err != nil {
 				return false, err
 			}

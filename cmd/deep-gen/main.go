@@ -535,20 +535,20 @@ var evalCondTmpl = template.Must(template.New("evalCond").Funcs(tmplFuncs).Parse
 	`func (t *{{.TypeName}}) EvaluateCondition(c {{.P}}Condition) (bool, error) {
 	switch c.Op {
 	case "and":
-		for _, sub := range c.Apply {
+		for _, sub := range c.Sub {
 			ok, err := t.EvaluateCondition(*sub)
 			if err != nil || !ok { return false, err }
 		}
 		return true, nil
 	case "or":
-		for _, sub := range c.Apply {
+		for _, sub := range c.Sub {
 			ok, err := t.EvaluateCondition(*sub)
 			if err == nil && ok { return true, nil }
 		}
 		return false, nil
 	case "not":
-		if len(c.Apply) > 0 {
-			ok, err := t.EvaluateCondition(*c.Apply[0])
+		if len(c.Sub) > 0 {
+			ok, err := t.EvaluateCondition(*c.Sub[0])
 			if err != nil { return false, err }
 			return !ok, nil
 		}

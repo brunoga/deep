@@ -254,7 +254,7 @@ func evaluateCondition(root reflect.Value, c *Condition) (bool, error) {
 	}
 
 	if c.Op == "and" {
-		for _, sub := range c.Apply {
+		for _, sub := range c.Sub {
 			ok, err := evaluateCondition(root, sub)
 			if err != nil || !ok {
 				return false, err
@@ -263,7 +263,7 @@ func evaluateCondition(root reflect.Value, c *Condition) (bool, error) {
 		return true, nil
 	}
 	if c.Op == "or" {
-		for _, sub := range c.Apply {
+		for _, sub := range c.Sub {
 			ok, err := evaluateCondition(root, sub)
 			if err == nil && ok {
 				return true, nil
@@ -272,8 +272,8 @@ func evaluateCondition(root reflect.Value, c *Condition) (bool, error) {
 		return false, nil
 	}
 	if c.Op == "not" {
-		if len(c.Apply) > 0 {
-			ok, err := evaluateCondition(root, c.Apply[0])
+		if len(c.Sub) > 0 {
+			ok, err := evaluateCondition(root, c.Sub[0])
 			if err != nil {
 				return false, err
 			}

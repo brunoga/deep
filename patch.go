@@ -97,22 +97,23 @@ type Operation struct {
 	Strict bool `json:"-"`
 }
 
-// Condition operator constants. Use these instead of raw strings to avoid typos.
+// Condition operator constants. Use these when constructing Condition values
+// manually. Prefer the typed builder functions (Eq, Ne, And, etc.) where possible.
 const (
-	OpEq      = "=="
-	OpNe      = "!="
-	OpGt      = ">"
-	OpLt      = "<"
-	OpGe      = ">="
-	OpLe      = "<="
-	OpExists  = "exists"
-	OpIn      = "in"
-	OpMatches = "matches"
-	OpType    = "type"
-	OpLogCond = "log"
-	OpAnd     = "and"
-	OpOr      = "or"
-	OpNot     = "not"
+	CondEq      = "=="
+	CondNe      = "!="
+	CondGt      = ">"
+	CondLt      = "<"
+	CondGe      = ">="
+	CondLe      = "<="
+	CondExists  = "exists"
+	CondIn      = "in"
+	CondMatches = "matches"
+	CondType    = "type"
+	CondLog     = "log"
+	CondAnd     = "and"
+	CondOr      = "or"
+	CondNot     = "not"
 )
 
 // Condition represents a serializable predicate for conditional application.
@@ -120,7 +121,7 @@ type Condition struct {
 	Path  string       `json:"p,omitempty"`
 	Op    string       `json:"o"` // see Op* constants above
 	Value any          `json:"v,omitempty"`
-	Apply []*Condition `json:"apply,omitempty"` // For logical operators (and, or, not)
+	Sub   []*Condition `json:"apply,omitempty"` // Sub-conditions for logical operators (and, or, not)
 }
 
 // NewPatch returns a new, empty patch for type T.
@@ -293,7 +294,7 @@ func (c *Condition) toPredicateInternal() map[string]any {
 			"op": op,
 		}
 		var apply []map[string]any
-		for _, sub := range c.Apply {
+		for _, sub := range c.Sub {
 			apply = append(apply, sub.toPredicateInternal())
 		}
 		res["apply"] = apply
@@ -330,7 +331,7 @@ func fromPredicateInternal(m map[string]any) *Condition {
 				}
 			}
 		}
-		return &Condition{Op: "not", Apply: parseApply(m["apply"])}
+		return &Condition{Op: "not", Sub: parseApply(m["apply"])}
 	case "more":
 		return &Condition{Path: path, Op: ">", Value: value}
 	case "more-or-equal":
@@ -344,7 +345,7 @@ func fromPredicateInternal(m map[string]any) *Condition {
 	case "contains":
 		return &Condition{Path: path, Op: "in", Value: value}
 	case "and", "or":
-		return &Condition{Op: op, Apply: parseApply(m["apply"])}
+		return &Condition{Op: op, Sub: parseApply(m["apply"])}
 	default:
 		// log, matches, type — same op name, pass through
 		return &Condition{Path: path, Op: op, Value: value}
