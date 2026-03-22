@@ -172,6 +172,7 @@ func (b *Builder[T]) Log(msg string) *Builder[T] {
 	return b
 }
 
+// Build assembles and returns the completed Patch.
 func (b *Builder[T]) Build() Patch[T] {
 	return Patch[T]{
 		Guard:      b.global,

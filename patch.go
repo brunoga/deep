@@ -65,8 +65,9 @@ const (
 // Patch is a pure data structure representing a set of changes to type T.
 // It is designed to be easily serializable and manipulatable.
 type Patch[T any] struct {
-	// Root is the root object type the patch applies to.
-	// Used for type safety during Apply.
+	// _ is a zero-size phantom field that binds T into the struct's type identity.
+	// It prevents Patch[Foo] from being assignable to Patch[Bar] at compile time
+	// without contributing any size or alignment to the struct.
 	_ [0]T
 
 	// Guard is a global Condition that must be satisfied before any operation
@@ -146,6 +147,7 @@ func (p Patch[T]) WithGuard(c *Condition) Patch[T] {
 	return p
 }
 
+// String returns a human-readable summary of the patch operations.
 func (p Patch[T]) String() string {
 	if len(p.Operations) == 0 {
 		return "No changes."

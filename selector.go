@@ -64,7 +64,7 @@ func resolvePathInternal[T, V any](s Selector[T, V]) string {
 	var zero T
 	typ := reflect.TypeOf(zero)
 
-	// In a real implementation, we'd handle non-struct types or return "/" for the root.
+	// Non-struct types have no named fields, so no path can be resolved.
 	if typ.Kind() != reflect.Struct {
 		return ""
 	}
