@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 
-	v5 "github.com/brunoga/deep/v5"
+	"github.com/brunoga/deep/v5"
 )
 
 type UIState struct {
@@ -17,7 +17,7 @@ func main() {
 	s1 := UIState{Theme: "dark", Open: false}
 	s2 := UIState{Theme: "light", Open: true}
 
-	patch, err := v5.Diff(s1, s2)
+	patch, err := deep.Diff(s1, s2)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -36,12 +36,12 @@ func main() {
 	fmt.Println(string(rfc))
 
 	// Round-trip: unmarshal the native format and reapply.
-	var p2 v5.Patch[UIState]
+	var p2 deep.Patch[UIState]
 	if err := json.Unmarshal(data, &p2); err != nil {
 		log.Fatal(err)
 	}
 	s3 := s1
-	v5.Apply(&s3, p2)
+	deep.Apply(&s3, p2)
 
 	fmt.Println("--- ROUND-TRIP RESULT ---")
 	fmt.Printf("Theme: %s, Open: %v\n", s3.Theme, s3.Open)

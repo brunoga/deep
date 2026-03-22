@@ -23,7 +23,7 @@ func TestCausality(t *testing.T) {
 	d1 := Doc{Title: deep.LWW[string]{Value: "Original", Timestamp: ts1}}
 
 	// Newer update
-	p1 := deep.NewPatch[Doc]()
+	p1 := deep.Patch[Doc]{}
 	p1.Operations = append(p1.Operations, deep.Operation{
 		Kind:      deep.OpReplace,
 		Path:      "/Title",
@@ -32,7 +32,7 @@ func TestCausality(t *testing.T) {
 	})
 
 	// Older update (simulating delayed arrival)
-	p2 := deep.NewPatch[Doc]()
+	p2 := deep.Patch[Doc]{}
 	p2.Operations = append(p2.Operations, deep.Operation{
 		Kind:      deep.OpReplace,
 		Path:      "/Title",
@@ -64,7 +64,7 @@ func TestApplyOperation(t *testing.T) {
 		Bio:  crdt.Text{{Value: "Hello"}},
 	}
 
-	p := deep.NewPatch[testmodels.User]()
+	p := deep.Patch[testmodels.User]{}
 	p.Operations = append(p.Operations, deep.Operation{
 		Kind: deep.OpReplace,
 		Path: "/full_name",
@@ -127,7 +127,7 @@ func TestReflectionEngineAdvanced(t *testing.T) {
 	}
 	d := &Data{A: 1, B: 2}
 
-	p := deep.NewPatch[Data]()
+	p := deep.Patch[Data]{}
 	p.Operations = []deep.Operation{
 		{Kind: deep.OpMove, Path: "/B", Old: "/A"},
 		{Kind: deep.OpCopy, Path: "/A", Old: "/B"},
@@ -143,12 +143,12 @@ func TestEngineFailures(t *testing.T) {
 	u := &testmodels.User{}
 
 	// Move from non-existent
-	p1 := deep.NewPatch[testmodels.User]()
+	p1 := deep.Patch[testmodels.User]{}
 	p1.Operations = []deep.Operation{{Kind: deep.OpMove, Path: "/id", Old: "/nonexistent"}}
 	deep.Apply(u, p1)
 
 	// Copy from non-existent
-	p2 := deep.NewPatch[testmodels.User]()
+	p2 := deep.Patch[testmodels.User]{}
 	p2.Operations = []deep.Operation{{Kind: deep.OpCopy, Path: "/id", Old: "/nonexistent"}}
 	deep.Apply(u, p2)
 

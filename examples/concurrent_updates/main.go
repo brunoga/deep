@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"log"
 
-	v5 "github.com/brunoga/deep/v5"
+	"github.com/brunoga/deep/v5"
 )
 
 type Stock struct {
@@ -18,7 +18,7 @@ func main() {
 	// User A generates a patch to decrease stock by 10.
 	// WithStrict(true) records current values so the patch fails if the
 	// state has changed by the time it is applied (optimistic locking).
-	rawPatch, err := v5.Diff(s, Stock{SKU: "BOLT-1", Quantity: 90})
+	rawPatch, err := deep.Diff(s, Stock{SKU: "BOLT-1", Quantity: 90})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -32,7 +32,7 @@ func main() {
 
 	// User A's patch was generated when quantity was 100 — it should be rejected.
 	fmt.Println("\n--- APPLYING STALE PATCH ---")
-	if err = v5.Apply(&s, patchA); err != nil {
+	if err = deep.Apply(&s, patchA); err != nil {
 		fmt.Printf("REJECTED (optimistic lock): %v\n", err)
 	} else {
 		fmt.Printf("Applied: new quantity = %d\n", s.Quantity)

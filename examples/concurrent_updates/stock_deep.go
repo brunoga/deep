@@ -85,7 +85,7 @@ func (t *Stock) ApplyOperation(op deep.Operation) (bool, error) {
 
 // Diff compares t with other and returns a Patch.
 func (t *Stock) Diff(other *Stock) deep.Patch[Stock] {
-	p := deep.NewPatch[Stock]()
+	p := deep.Patch[Stock]{}
 	if t.SKU != other.SKU {
 		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/sku", Old: t.SKU, New: other.SKU})
 	}

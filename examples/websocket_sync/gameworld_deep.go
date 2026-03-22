@@ -101,7 +101,7 @@ func (t *GameWorld) ApplyOperation(op deep.Operation) (bool, error) {
 
 // Diff compares t with other and returns a Patch.
 func (t *GameWorld) Diff(other *GameWorld) deep.Patch[GameWorld] {
-	p := deep.NewPatch[GameWorld]()
+	p := deep.Patch[GameWorld]{}
 	if other.Players != nil {
 		for k, v := range other.Players {
 			if t.Players == nil {
@@ -364,7 +364,7 @@ func (t *Player) ApplyOperation(op deep.Operation) (bool, error) {
 
 // Diff compares t with other and returns a Patch.
 func (t *Player) Diff(other *Player) deep.Patch[Player] {
-	p := deep.NewPatch[Player]()
+	p := deep.Patch[Player]{}
 	if t.X != other.X {
 		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/x", Old: t.X, New: other.X})
 	}

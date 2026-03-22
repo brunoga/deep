@@ -72,7 +72,7 @@ func (t *UIState) ApplyOperation(op deep.Operation) (bool, error) {
 
 // Diff compares t with other and returns a Patch.
 func (t *UIState) Diff(other *UIState) deep.Patch[UIState] {
-	p := deep.NewPatch[UIState]()
+	p := deep.Patch[UIState]{}
 	if t.Theme != other.Theme {
 		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/theme", Old: t.Theme, New: other.Theme})
 	}

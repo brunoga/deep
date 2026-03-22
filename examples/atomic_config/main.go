@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
-	v5 "github.com/brunoga/deep/v5"
+	"github.com/brunoga/deep/v5"
 )
 
 type ProxyConfig struct {
@@ -26,20 +26,20 @@ func main() {
 	fmt.Printf("%+v\n", meta)
 
 	// 1. Attempt to change the read-only field.
-	p1 := v5.NewPatch[SystemMeta]()
-	p1.Operations = append(p1.Operations, v5.Operation{
-		Kind: v5.OpReplace, Path: "/cid", New: "HACKED-CLUSTER",
+	p1 := deep.Patch[SystemMeta]{}
+	p1.Operations = append(p1.Operations, deep.Operation{
+		Kind: deep.OpReplace, Path: "/cid", New: "HACKED-CLUSTER",
 	})
 
 	fmt.Println("\n--- READ-ONLY ENFORCEMENT ---")
-	if err := v5.Apply(&meta, p1); err != nil {
+	if err := deep.Apply(&meta, p1); err != nil {
 		fmt.Printf("REJECTED: %v\n", err)
 	}
 
 	// 2. Demonstrate atomic update: deep:"atomic" causes the entire Settings
 	// block to be replaced as a unit rather than field-by-field.
 	newSettings := ProxyConfig{Host: "proxy.internal", Port: 9000}
-	p2, err := v5.Diff(meta, SystemMeta{ClusterID: meta.ClusterID, Settings: newSettings})
+	p2, err := deep.Diff(meta, SystemMeta{ClusterID: meta.ClusterID, Settings: newSettings})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -47,6 +47,6 @@ func main() {
 	fmt.Println("\n--- ATOMIC SETTINGS UPDATE ---")
 	fmt.Println(p2)
 
-	v5.Apply(&meta, p2)
+	deep.Apply(&meta, p2)
 	fmt.Printf("Result: %+v\n", meta)
 }

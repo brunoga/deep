@@ -69,7 +69,7 @@ func TestReverse(t *testing.T) {
 func TestPatchToJSONPatch(t *testing.T) {
 	deep.Register[testmodels.User]()
 
-	p := deep.NewPatch[testmodels.User]()
+	p := deep.Patch[testmodels.User]{}
 	p.Operations = []deep.Operation{
 		{Kind: deep.OpReplace, Path: "/full_name", Old: "Alice", New: "Bob"},
 	}
@@ -93,7 +93,7 @@ func TestPatchToJSONPatch(t *testing.T) {
 }
 
 func TestPatchUtilities(t *testing.T) {
-	p := deep.NewPatch[testmodels.User]()
+	p := deep.Patch[testmodels.User]{}
 	p.Operations = []deep.Operation{
 		{Kind: deep.OpAdd, Path: "/a", New: 1},
 		{Kind: deep.OpRemove, Path: "/b", Old: 2},
@@ -141,7 +141,7 @@ func TestConditionToPredicate(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		got, err := deep.NewPatch[testmodels.User]().WithGuard(tt.c).ToJSONPatch()
+		got, err := deep.Patch[testmodels.User]{}.WithGuard(tt.c).ToJSONPatch()
 		if err != nil {
 			t.Fatalf("ToJSONPatch failed: %v", err)
 		}
@@ -152,7 +152,7 @@ func TestConditionToPredicate(t *testing.T) {
 }
 
 func TestPatchReverseExhaustive(t *testing.T) {
-	p := deep.NewPatch[testmodels.User]()
+	p := deep.Patch[testmodels.User]{}
 	p.Operations = []deep.Operation{
 		{Kind: deep.OpAdd, Path: "/a", New: 1},
 		{Kind: deep.OpRemove, Path: "/b", Old: 2},
@@ -169,9 +169,9 @@ func TestPatchReverseExhaustive(t *testing.T) {
 }
 
 func TestPatchMergeCustom(t *testing.T) {
-	p1 := deep.NewPatch[testmodels.User]()
+	p1 := deep.Patch[testmodels.User]{}
 	p1.Operations = []deep.Operation{{Path: "/a", New: 1}}
-	p2 := deep.NewPatch[testmodels.User]()
+	p2 := deep.Patch[testmodels.User]{}
 	p2.Operations = []deep.Operation{{Path: "/a", New: 2}}
 
 	res := deep.Merge(p1, p2, &localResolver{})
@@ -185,7 +185,7 @@ type localResolver struct{}
 func (r *localResolver) Resolve(path string, local, remote any) any { return remote }
 
 func TestPatchIsEmpty(t *testing.T) {
-	p := deep.NewPatch[testmodels.User]()
+	p := deep.Patch[testmodels.User]{}
 	if !p.IsEmpty() {
 		t.Error("new patch should be empty")
 	}

@@ -142,7 +142,7 @@ func (t *Config) ApplyOperation(op deep.Operation) (bool, error) {
 
 // Diff compares t with other and returns a Patch.
 func (t *Config) Diff(other *Config) deep.Patch[Config] {
-	p := deep.NewPatch[Config]()
+	p := deep.Patch[Config]{}
 	if t.Version != other.Version {
 		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/version", Old: t.Version, New: other.Version})
 	}

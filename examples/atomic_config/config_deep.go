@@ -85,7 +85,7 @@ func (t *ProxyConfig) ApplyOperation(op deep.Operation) (bool, error) {
 
 // Diff compares t with other and returns a Patch.
 func (t *ProxyConfig) Diff(other *ProxyConfig) deep.Patch[ProxyConfig] {
-	p := deep.NewPatch[ProxyConfig]()
+	p := deep.Patch[ProxyConfig]{}
 	if t.Host != other.Host {
 		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/host", Old: t.Host, New: other.Host})
 	}
@@ -311,7 +311,7 @@ func (t *SystemMeta) ApplyOperation(op deep.Operation) (bool, error) {
 
 // Diff compares t with other and returns a Patch.
 func (t *SystemMeta) Diff(other *SystemMeta) deep.Patch[SystemMeta] {
-	p := deep.NewPatch[SystemMeta]()
+	p := deep.Patch[SystemMeta]{}
 	if t.ClusterID != other.ClusterID {
 		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/cid", Old: t.ClusterID, New: other.ClusterID})
 	}

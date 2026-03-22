@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"log"
 
-	v5 "github.com/brunoga/deep/v5"
+	"github.com/brunoga/deep/v5"
 )
 
 // DeviceID is a non-string map key. deep uses its String() representation
@@ -37,7 +37,7 @@ func main() {
 		},
 	}
 
-	patch, err := v5.Diff(f1, f2)
+	patch, err := deep.Diff(f1, f2)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -45,11 +45,11 @@ func main() {
 	fmt.Println("--- FLEET DIFF (non-string map keys) ---")
 	for _, op := range patch.Operations {
 		switch op.Kind {
-		case v5.OpReplace:
+		case deep.OpReplace:
 			fmt.Printf("  %-8s %s: %v → %v\n", op.Kind, op.Path, op.Old, op.New)
-		case v5.OpAdd:
+		case deep.OpAdd:
 			fmt.Printf("  %-8s %s: %v\n", op.Kind, op.Path, op.New)
-		case v5.OpRemove:
+		case deep.OpRemove:
 			fmt.Printf("  %-8s %s: %v\n", op.Kind, op.Path, op.Old)
 		}
 	}

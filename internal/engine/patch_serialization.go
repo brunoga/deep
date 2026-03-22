@@ -175,10 +175,6 @@ func marshalDiffPatch(p diffPatch) (any, error) {
 		return makeSurrogate("slice", map[string]any{
 			"o": ops,
 		}, v)
-	case *testPatch:
-		return makeSurrogate("test", map[string]any{
-			"e": core.ValueToInterface(v.expected),
-		}, v)
 	case *copyPatch:
 		return makeSurrogate("copy", map[string]any{
 			"f": v.from,
@@ -442,11 +438,6 @@ func convertFromSurrogate(s any) (diffPatch, error) {
 		}
 		return &slicePatch{
 			ops:       ops,
-			basePatch: base,
-		}, nil
-	case "test":
-		return &testPatch{
-			expected:  core.InterfaceToValue(d["e"]),
 			basePatch: base,
 		}, nil
 	case "copy":

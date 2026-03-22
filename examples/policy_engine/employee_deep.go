@@ -126,7 +126,7 @@ func (t *Employee) ApplyOperation(op deep.Operation) (bool, error) {
 
 // Diff compares t with other and returns a Patch.
 func (t *Employee) Diff(other *Employee) deep.Patch[Employee] {
-	p := deep.NewPatch[Employee]()
+	p := deep.Patch[Employee]{}
 	if t.ID != other.ID {
 		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/id", Old: t.ID, New: other.ID})
 	}

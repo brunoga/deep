@@ -35,11 +35,6 @@ func Diff[T any](a, b T) (Patch[T], error) {
 
 	res := Patch[T]{}
 	p.Walk(func(path string, op engine.OpKind, old, new any) error {
-		// Skip OpTest as v5 handles tests via conditions
-		if op == engine.OpTest {
-			return nil
-		}
-
 		res.Operations = append(res.Operations, Operation{
 			Kind: op,
 			Path: path,
@@ -228,11 +223,6 @@ func Matches[T, V any](p Path[T, V], regex string) *Condition {
 // Type creates a type-check condition.
 func Type[T, V any](p Path[T, V], typeName string) *Condition {
 	return &Condition{Path: p.String(), Op: "type", Value: typeName}
-}
-
-// Log creates a condition that logs a message.
-func Log[T, V any](p Path[T, V], msg string) *Condition {
-	return &Condition{Path: p.String(), Op: "log", Value: msg}
 }
 
 // And combines multiple conditions with logical AND.

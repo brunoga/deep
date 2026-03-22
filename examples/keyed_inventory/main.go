@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
-	v5 "github.com/brunoga/deep/v5"
+	"github.com/brunoga/deep/v5"
 )
 
 type Item struct {
@@ -29,7 +29,7 @@ func main() {
 		},
 	}
 
-	patch, err := v5.Diff(inv1, inv2)
+	patch, err := deep.Diff(inv1, inv2)
 	if err != nil {
 		log.Fatal(err)
 	}

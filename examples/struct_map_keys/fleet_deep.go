@@ -57,7 +57,7 @@ func (t *Fleet) ApplyOperation(op deep.Operation) (bool, error) {
 
 // Diff compares t with other and returns a Patch.
 func (t *Fleet) Diff(other *Fleet) deep.Patch[Fleet] {
-	p := deep.NewPatch[Fleet]()
+	p := deep.Patch[Fleet]{}
 	if other.Devices != nil {
 		for k, v := range other.Devices {
 			if t.Devices == nil {

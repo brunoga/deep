@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	v5 "github.com/brunoga/deep/v5"
+	"github.com/brunoga/deep/v5"
 	"github.com/brunoga/deep/v5/crdt"
 )
 
@@ -41,7 +41,7 @@ func main() {
 	fmt.Printf("Node A: %+v\n", viewA)
 	fmt.Printf("Node B: %+v\n", viewB)
 
-	if v5.Equal(viewA, viewB) {
+	if deep.Equal(viewA, viewB) {
 		fmt.Println("\nSUCCESS: Both nodes converged!")
 	}
 }

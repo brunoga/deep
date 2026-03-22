@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 
-	v5 "github.com/brunoga/deep/v5"
+	"github.com/brunoga/deep/v5"
 )
 
 type Config struct {
@@ -24,12 +24,12 @@ func main() {
 	}
 
 	// Propose changes on a deep copy so v1 is not mutated.
-	v2 := v5.Copy(v1)
+	v2 := deep.Copy(v1)
 	v2.Version = 2
 	v2.Timeout = 45
 	v2.Features["billing"] = true
 
-	patch, err := v5.Diff(v1, v2)
+	patch, err := deep.Diff(v1, v2)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -38,13 +38,13 @@ func main() {
 	fmt.Println(patch)
 
 	// Apply to a copy of the live state.
-	state := v5.Copy(v1)
-	v5.Apply(&state, patch)
+	state := deep.Copy(v1)
+	deep.Apply(&state, patch)
 	fmt.Printf("--- SYNCHRONIZED (version %d) ---\n", state.Version)
 
 	// Rollback using the patch's own reverse.
 	rollback := patch.Reverse()
-	v5.Apply(&state, rollback)
+	deep.Apply(&state, rollback)
 
 	fmt.Println("--- ROLLED BACK ---")
 	out, _ := json.MarshalIndent(state, "", "  ")

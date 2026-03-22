@@ -293,11 +293,6 @@ func evaluateCondition(root reflect.Value, c *Condition) (bool, error) {
 		return val.IsValid(), nil
 	}
 
-	if c.Op == "log" {
-		Logger().Info("deep condition log", "message", c.Value, "path", c.Path, "value", val.Interface())
-		return true, nil
-	}
-
 	if c.Op == "matches" {
 		pattern, ok := c.Value.(string)
 		if !ok {

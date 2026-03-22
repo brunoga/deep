@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"log"
 
-	v5 "github.com/brunoga/deep/v5"
+	"github.com/brunoga/deep/v5"
 )
 
 type GameWorld struct {
@@ -29,14 +29,14 @@ func main() {
 		Time: 0,
 	}
 
-	clientState := v5.Copy(serverState)
+	clientState := deep.Copy(serverState)
 
 	fmt.Println("--- INITIAL STATE ---")
 	fmt.Printf("Server: %+v\n", serverState.Players["p1"])
 	fmt.Printf("Client: %+v\n", clientState.Players["p1"])
 
 	// Server tick: move player and advance time.
-	previousState := v5.Copy(serverState)
+	previousState := deep.Copy(serverState)
 	p := serverState.Players["p1"]
 	p.X += 5
 	p.Y += 10
@@ -44,7 +44,7 @@ func main() {
 	serverState.Time++
 
 	// Compute and broadcast the patch (only the changed fields).
-	patch, err := v5.Diff(previousState, serverState)
+	patch, err := deep.Diff(previousState, serverState)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -54,9 +54,9 @@ func main() {
 	fmt.Printf("Patch (%d bytes): %s\n", len(wireData), string(wireData))
 
 	// Client receives and applies.
-	var receivedPatch v5.Patch[GameWorld]
+	var receivedPatch deep.Patch[GameWorld]
 	json.Unmarshal(wireData, &receivedPatch)
-	v5.Apply(&clientState, receivedPatch)
+	deep.Apply(&clientState, receivedPatch)
 
 	fmt.Println("\n--- CLIENT STATE AFTER SYNC ---")
 	fmt.Printf("Player: %+v\n", clientState.Players["p1"])

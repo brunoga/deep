@@ -69,13 +69,6 @@ func TestPatch_ReverseFormat_Exhaustive(t *testing.T) {
 		p.format(0)
 		p.toJSONPatch("/p")
 	})
-	// testPatch
-	t.Run("testPatch", func(t *testing.T) {
-		p := &testPatch{expected: reflect.ValueOf(1)}
-		p.reverse()
-		p.format(0)
-		p.toJSONPatch("/p")
-	})
 	// copyPatch
 	t.Run("copyPatch", func(t *testing.T) {
 		p := &copyPatch{from: "/a", path: "/b"}

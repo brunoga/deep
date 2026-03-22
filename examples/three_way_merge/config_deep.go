@@ -115,7 +115,7 @@ func (t *SystemConfig) ApplyOperation(op deep.Operation) (bool, error) {
 
 // Diff compares t with other and returns a Patch.
 func (t *SystemConfig) Diff(other *SystemConfig) deep.Patch[SystemConfig] {
-	p := deep.NewPatch[SystemConfig]()
+	p := deep.Patch[SystemConfig]{}
 	if t.AppName != other.AppName {
 		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/app", Old: t.AppName, New: other.AppName})
 	}

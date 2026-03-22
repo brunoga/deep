@@ -71,8 +71,7 @@ func TestLog(t *testing.T) {
 
 	builder := deep.Edit(&u)
 	builder.Log("Starting update")
-	deep.Set(builder, deep.Field(func(u *testmodels.User) *string { return &u.Name }), "Bob").
-		If(deep.Log(deep.Field(func(u *testmodels.User) *int { return &u.ID }), "Checking ID"))
+	deep.Set(builder, deep.Field(func(u *testmodels.User) *string { return &u.Name }), "Bob")
 	builder.Log("Finished update")
 
 	p := builder.Build()

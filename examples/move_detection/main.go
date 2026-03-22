@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"log"
 
-	v5 "github.com/brunoga/deep/v5"
+	"github.com/brunoga/deep/v5"
 )
 
 // Document has a draft field and a published field.
@@ -25,15 +25,15 @@ func main() {
 	fmt.Printf("%+v\n", doc)
 
 	// Build a Move patch: /draft → /published
-	draftPath := v5.Field(func(d *Document) *string { return &d.Draft })
-	pubPath := v5.Field(func(d *Document) *string { return &d.Published })
+	draftPath := deep.Field(func(d *Document) *string { return &d.Draft })
+	pubPath := deep.Field(func(d *Document) *string { return &d.Published })
 
-	patch := v5.Edit(&doc).Move(draftPath, pubPath).Build()
+	patch := deep.Edit(&doc).Move(draftPath, pubPath).Build()
 
 	fmt.Println("\n--- PATCH ---")
 	fmt.Println(patch)
 
-	if err := v5.Apply(&doc, patch); err != nil {
+	if err := deep.Apply(&doc, patch); err != nil {
 		log.Fatal(err)
 	}
 

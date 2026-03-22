@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"log"
 
-	v5 "github.com/brunoga/deep/v5"
+	"github.com/brunoga/deep/v5"
 )
 
 type User struct {
@@ -29,7 +29,7 @@ func main() {
 	}
 
 	// Diff captures old and new values for every changed field.
-	patch, err := v5.Diff(u1, u2)
+	patch, err := deep.Diff(u1, u2)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -37,11 +37,11 @@ func main() {
 	fmt.Println("--- AUDIT LOG ---")
 	for _, op := range patch.Operations {
 		switch op.Kind {
-		case v5.OpReplace:
+		case deep.OpReplace:
 			fmt.Printf("  MODIFY  %s: %v → %v\n", op.Path, op.Old, op.New)
-		case v5.OpAdd:
+		case deep.OpAdd:
 			fmt.Printf("  ADD     %s: %v\n", op.Path, op.New)
-		case v5.OpRemove:
+		case deep.OpRemove:
 			fmt.Printf("  REMOVE  %s: %v\n", op.Path, op.Old)
 		}
 	}

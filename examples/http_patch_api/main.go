@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 
-	v5 "github.com/brunoga/deep/v5"
+	"github.com/brunoga/deep/v5"
 )
 
 type Resource struct {
@@ -26,14 +26,14 @@ func main() {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 
-		var patch v5.Patch[Resource]
+		var patch deep.Patch[Resource]
 		if err := json.Unmarshal(body, &patch); err != nil {
 			http.Error(w, "Invalid patch", http.StatusBadRequest)
 			return
 		}
 
 		id := r.URL.Query().Get("id")
-		if err := v5.Apply(serverState[id], patch); err != nil {
+		if err := deep.Apply(serverState[id], patch); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -46,7 +46,7 @@ func main() {
 	c1 := Resource{ID: "res-1", Data: "Initial Data", Value: 100}
 	c2 := Resource{ID: "res-1", Data: "Network Modified Data", Value: 250}
 
-	patch, err := v5.Diff(c1, c2)
+	patch, err := deep.Diff(c1, c2)
 	if err != nil {
 		log.Fatal(err)
 	}

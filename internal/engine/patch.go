@@ -19,7 +19,6 @@ const (
 	OpReplace
 	OpMove
 	OpCopy
-	OpTest
 	OpLog
 )
 
@@ -35,8 +34,6 @@ func (k OpKind) String() string {
 		return "move"
 	case OpCopy:
 		return "copy"
-	case OpTest:
-		return "test"
 	case OpLog:
 		return "log"
 	default:

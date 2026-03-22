@@ -85,7 +85,7 @@ func (t *Item) ApplyOperation(op deep.Operation) (bool, error) {
 
 // Diff compares t with other and returns a Patch.
 func (t *Item) Diff(other *Item) deep.Patch[Item] {
-	p := deep.NewPatch[Item]()
+	p := deep.Patch[Item]{}
 	if t.SKU != other.SKU {
 		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/sku", Old: t.SKU, New: other.SKU})
 	}
@@ -309,7 +309,7 @@ func (t *Inventory) ApplyOperation(op deep.Operation) (bool, error) {
 
 // Diff compares t with other and returns a Patch.
 func (t *Inventory) Diff(other *Inventory) deep.Patch[Inventory] {
-	p := deep.NewPatch[Inventory]()
+	p := deep.Patch[Inventory]{}
 	otherByKey := make(map[any]int)
 	for i, v := range other.Items {
 		otherByKey[v.SKU] = i

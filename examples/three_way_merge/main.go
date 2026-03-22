@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	v5 "github.com/brunoga/deep/v5"
+	"github.com/brunoga/deep/v5"
 	"github.com/brunoga/deep/v5/crdt/hlc"
 )
 
@@ -29,26 +29,26 @@ func main() {
 
 	// User A changes Endpoints/auth
 	tsA := clock.Now()
-	patchA := v5.NewPatch[SystemConfig]()
-	patchA.Operations = append(patchA.Operations, v5.Operation{
-		Kind: v5.OpReplace, Path: "/endpoints/auth", New: "https://auth.internal", Timestamp: &tsA,
+	patchA := deep.Patch[SystemConfig]{}
+	patchA.Operations = append(patchA.Operations, deep.Operation{
+		Kind: deep.OpReplace, Path: "/endpoints/auth", New: "https://auth.internal", Timestamp: &tsA,
 	})
 
 	// User B also changes Endpoints/auth
 	tsB := clock.Now()
-	patchB := v5.NewPatch[SystemConfig]()
-	patchB.Operations = append(patchB.Operations, v5.Operation{
-		Kind: v5.OpReplace, Path: "/endpoints/auth", New: "https://auth.remote", Timestamp: &tsB,
+	patchB := deep.Patch[SystemConfig]{}
+	patchB.Operations = append(patchB.Operations, deep.Operation{
+		Kind: deep.OpReplace, Path: "/endpoints/auth", New: "https://auth.remote", Timestamp: &tsB,
 	})
 
 	fmt.Println("--- BASE STATE ---")
 	fmt.Printf("%+v\n", base)
 
 	fmt.Println("\n--- MERGING PATCHES (Custom Resolution) ---")
-	merged := v5.Merge(patchA, patchB, &Resolver{})
+	merged := deep.Merge(patchA, patchB, &Resolver{})
 
 	final := base
-	v5.Apply(&final, merged)
+	deep.Apply(&final, merged)
 
 	fmt.Println("\n--- FINAL STATE ---")
 	fmt.Printf("%+v\n", final)

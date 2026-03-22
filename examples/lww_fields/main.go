@@ -3,15 +3,15 @@ package main
 import (
 	"fmt"
 
-	v5 "github.com/brunoga/deep/v5"
+	"github.com/brunoga/deep/v5"
 	"github.com/brunoga/deep/v5/crdt/hlc"
 )
 
 // Profile uses per-field LWW[T] registers so that concurrent updates to
 // independent fields can always be merged: the later timestamp wins.
 type Profile struct {
-	Name  v5.LWW[string] `json:"name"`
-	Score v5.LWW[int]    `json:"score"`
+	Name  deep.LWW[string] `json:"name"`
+	Score deep.LWW[int]    `json:"score"`
 }
 
 func main() {
@@ -19,27 +19,27 @@ func main() {
 	ts0 := clock.Now()
 
 	base := Profile{
-		Name:  v5.LWW[string]{Value: "Alice", Timestamp: ts0},
-		Score: v5.LWW[int]{Value: 0, Timestamp: ts0},
+		Name:  deep.LWW[string]{Value: "Alice", Timestamp: ts0},
+		Score: deep.LWW[int]{Value: 0, Timestamp: ts0},
 	}
 
 	// Client A renames the profile (earlier timestamp).
 	tsA := clock.Now()
-	patchA := v5.NewPatch[Profile]()
-	patchA.Operations = append(patchA.Operations, v5.Operation{
-		Kind:      v5.OpReplace,
+	patchA := deep.Patch[Profile]{}
+	patchA.Operations = append(patchA.Operations, deep.Operation{
+		Kind:      deep.OpReplace,
 		Path:      "/name",
-		New:       v5.LWW[string]{Value: "Alice Smith", Timestamp: tsA},
+		New:       deep.LWW[string]{Value: "Alice Smith", Timestamp: tsA},
 		Timestamp: &tsA,
 	})
 
 	// Client B increments the score concurrently (later timestamp).
 	tsB := clock.Now()
-	patchB := v5.NewPatch[Profile]()
-	patchB.Operations = append(patchB.Operations, v5.Operation{
-		Kind:      v5.OpReplace,
+	patchB := deep.Patch[Profile]{}
+	patchB.Operations = append(patchB.Operations, deep.Operation{
+		Kind:      deep.OpReplace,
 		Path:      "/score",
-		New:       v5.LWW[int]{Value: 42, Timestamp: tsB},
+		New:       deep.LWW[int]{Value: 42, Timestamp: tsB},
 		Timestamp: &tsB,
 	})
 
@@ -49,9 +49,9 @@ func main() {
 
 	// Merge both patches: non-conflicting fields are combined;
 	// if both touched the same field, the later HLC timestamp would win.
-	merged := v5.Merge(patchA, patchB, nil)
+	merged := deep.Merge(patchA, patchB, nil)
 	result := base
-	v5.Apply(&result, merged)
+	deep.Apply(&result, merged)
 
 	fmt.Println("\n--- CONVERGED RESULT ---")
 	fmt.Printf("Name:  %s\n", result.Name.Value)

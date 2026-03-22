@@ -99,7 +99,7 @@ func (t *Resource) ApplyOperation(op deep.Operation) (bool, error) {
 
 // Diff compares t with other and returns a Patch.
 func (t *Resource) Diff(other *Resource) deep.Patch[Resource] {
-	p := deep.NewPatch[Resource]()
+	p := deep.Patch[Resource]{}
 	if t.ID != other.ID {
 		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/id", Old: t.ID, New: other.ID})
 	}

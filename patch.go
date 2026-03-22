@@ -77,9 +77,6 @@ type Patch[T any] struct {
 	// Operations is a flat list of changes.
 	Operations []Operation `json:"ops"`
 
-	// Metadata stores optional properties like timestamps or IDs.
-	Metadata map[string]any `json:"meta,omitempty"`
-
 	// Strict mode enables Old value verification.
 	Strict bool `json:"strict,omitempty"`
 }
@@ -111,7 +108,6 @@ const (
 	CondIn      = "in"
 	CondMatches = "matches"
 	CondType    = "type"
-	CondLog     = "log"
 	CondAnd     = "and"
 	CondOr      = "or"
 	CondNot     = "not"
@@ -123,11 +119,6 @@ type Condition struct {
 	Op    string       `json:"o"` // see Op* constants above
 	Value any          `json:"v,omitempty"`
 	Sub   []*Condition `json:"apply,omitempty"` // Sub-conditions for logical operators (and, or, not)
-}
-
-// NewPatch returns a new, empty patch for type T.
-func NewPatch[T any]() Patch[T] {
-	return Patch[T]{}
 }
 
 // IsEmpty reports whether the patch contains no operations.

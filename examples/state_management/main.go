@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"log"
 
-	v5 "github.com/brunoga/deep/v5"
+	"github.com/brunoga/deep/v5"
 )
 
 type DocState struct {
@@ -21,12 +21,12 @@ func main() {
 	}
 
 	// Each edit records a reverse patch for undo.
-	var undoStack []v5.Patch[DocState]
+	var undoStack []deep.Patch[DocState]
 
 	edit := func(fn func(*DocState)) {
-		next := v5.Copy(current)
+		next := deep.Copy(current)
 		fn(&next)
-		patch, err := v5.Diff(current, next)
+		patch, err := deep.Diff(current, next)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -47,13 +47,13 @@ func main() {
 	fmt.Printf("%+v\n", current)
 
 	// Undo edit 2.
-	v5.Apply(&current, undoStack[len(undoStack)-1])
+	deep.Apply(&current, undoStack[len(undoStack)-1])
 	undoStack = undoStack[:len(undoStack)-1]
 	fmt.Println("\n--- AFTER UNDO (edit 2) ---")
 	fmt.Printf("%+v\n", current)
 
 	// Undo edit 1.
-	v5.Apply(&current, undoStack[len(undoStack)-1])
+	deep.Apply(&current, undoStack[len(undoStack)-1])
 	undoStack = undoStack[:len(undoStack)-1]
 	fmt.Println("\n--- AFTER UNDO (edit 1) ---")
 	fmt.Printf("%+v\n", current)

@@ -102,7 +102,7 @@ func (t *DocState) ApplyOperation(op deep.Operation) (bool, error) {
 
 // Diff compares t with other and returns a Patch.
 func (t *DocState) Diff(other *DocState) deep.Patch[DocState] {
-	p := deep.NewPatch[DocState]()
+	p := deep.Patch[DocState]{}
 	if t.Title != other.Title {
 		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/title", Old: t.Title, New: other.Title})
 	}
