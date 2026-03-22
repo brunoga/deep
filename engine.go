@@ -318,6 +318,14 @@ func evaluateCondition(root reflect.Value, c *Condition) (bool, error) {
 	return core.CompareValues(val, reflect.ValueOf(c.Value), c.Op, false)
 }
 
+// hlcAfter reports whether a is strictly after b. Returns false if either is nil.
+func hlcAfter(a, b *hlc.HLC) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	return a.After(*b)
+}
+
 func checkType(v any, typeName string) bool {
 	rv := reflect.ValueOf(v)
 	switch typeName {
