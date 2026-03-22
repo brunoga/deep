@@ -10,7 +10,7 @@
 //   - [Diff] computes the patch from a to b.
 //   - [Apply] applies a patch to a target pointer.
 //   - [Equal] reports whether two values are deeply equal.
-//   - [Copy] returns a deep copy of a value.
+//   - [Clone] returns a deep copy of a value.
 //
 // # Code Generation
 //
@@ -25,10 +25,15 @@
 //
 // # Patch Construction
 //
-// Patches can be computed via [Diff] or built manually with [Edit]:
+// Patches can be computed via [Diff] or built manually with [Edit].
+// Typed operation constructors ([Set], [Add], [Remove], [Move], [Copy]) return
+// an [Op] value that can be passed to [Builder.With] for a fluent, type-safe chain:
 //
 //	patch := deep.Edit(&user).
-//	    Set(nameField, "Alice").
+//	    With(
+//	        deep.Set(nameField, "Alice"),
+//	        deep.Set(ageField, 30).If(deep.Gt(ageField, 0)),
+//	    ).
 //	    Where(deep.Gt(ageField, 18)).
 //	    Build()
 //
@@ -37,9 +42,9 @@
 //
 // # Conditions
 //
-// Operations support per-op guards ([Builder.If], [Builder.Unless]) and a
-// global patch guard ([Builder.Where], [Patch.WithGuard]). Conditions are
-// serializable and survive JSON/Gob round-trips.
+// Per-operation guards are attached to [Op] values via [Op.If] and [Op.Unless].
+// A global patch guard is set via [Builder.Where] or [Patch.WithGuard]. Conditions
+// are serializable and survive JSON/Gob round-trips.
 //
 // # Causality and CRDTs
 //

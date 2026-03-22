@@ -88,7 +88,7 @@ func (c *CRDT[T]) Clock() *hlc.Clock { return c.clock }
 func (c *CRDT[T]) View() T {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return deep.Copy(c.value)
+	return deep.Clone(c.value)
 }
 
 // Edit applies fn to a copy of the current value, computes a delta, advances
@@ -98,7 +98,7 @@ func (c *CRDT[T]) Edit(fn func(*T)) Delta[T] {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	workingCopy := deep.Copy(c.value)
+	workingCopy := deep.Clone(c.value)
 	fn(&workingCopy)
 
 	patch, err := deep.Diff(c.value, workingCopy)

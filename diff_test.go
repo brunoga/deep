@@ -14,9 +14,9 @@ func TestBuilder(t *testing.T) {
 
 	c1 := Config{Theme: "dark"}
 
-	builder := deep.Edit(&c1)
-	deep.Set(builder, deep.Field(func(c *Config) *string { return &c.Theme }), "light")
-	patch := builder.Build()
+	patch := deep.Edit(&c1).
+		With(deep.Set(deep.Field(func(c *Config) *string { return &c.Theme }), "light")).
+		Build()
 
 	if err := deep.Apply(&c1, patch); err != nil {
 		t.Fatalf("deep.Apply failed: %v", err)
@@ -35,14 +35,20 @@ func TestComplexBuilder(t *testing.T) {
 		Score: map[string]int{"a": 10},
 	}
 
-	builder := deep.Edit(&u1)
-	deep.Set(builder, deep.Field(func(u *testmodels.User) *string { return &u.Name }), "Alice Smith")
-	deep.Set(builder, deep.Field(func(u *testmodels.User) *int { return &u.Info.Age }), 35)
-	deep.Add(builder, deep.Field(func(u *testmodels.User) *[]string { return &u.Roles }).Index(1), "admin")
-	deep.Set(builder, deep.Field(func(u *testmodels.User) *map[string]int { return &u.Score }).Key("b"), 20)
-	deep.Remove(builder, deep.Field(func(u *testmodels.User) *map[string]int { return &u.Score }).Key("a"))
+	namePath := deep.Field(func(u *testmodels.User) *string { return &u.Name })
+	agePath := deep.Field(func(u *testmodels.User) *int { return &u.Info.Age })
+	rolesPath := deep.Field(func(u *testmodels.User) *[]string { return &u.Roles })
+	scorePath := deep.Field(func(u *testmodels.User) *map[string]int { return &u.Score })
 
-	patch := builder.Build()
+	patch := deep.Edit(&u1).
+		With(
+			deep.Set(namePath, "Alice Smith"),
+			deep.Set(agePath, 35),
+			deep.Add(rolesPath.Index(1), "admin"),
+			deep.Set(scorePath.Key("b"), 20),
+			deep.Remove(scorePath.Key("a")),
+		).
+		Build()
 
 	u2 := u1
 	if err := deep.Apply(&u2, patch); err != nil {
@@ -69,27 +75,33 @@ func TestComplexBuilder(t *testing.T) {
 func TestLog(t *testing.T) {
 	u := testmodels.User{ID: 1, Name: "Alice"}
 
-	builder := deep.Edit(&u)
-	builder.Log("Starting update")
-	deep.Set(builder, deep.Field(func(u *testmodels.User) *string { return &u.Name }), "Bob")
-	builder.Log("Finished update")
+	namePath := deep.Field(func(u *testmodels.User) *string { return &u.Name })
 
-	p := builder.Build()
+	p := deep.Edit(&u).
+		Log("Starting update").
+		With(deep.Set(namePath, "Bob")).
+		Log("Finished update").
+		Build()
+
 	deep.Apply(&u, p)
 }
 
 func TestBuilderAdvanced(t *testing.T) {
 	u := &testmodels.User{}
-	b := deep.Edit(u).
-		Where(deep.Eq(deep.Field(func(u *testmodels.User) *int { return &u.ID }), 1)).
-		Unless(deep.Ne(deep.Field(func(u *testmodels.User) *string { return &u.Name }), "Alice"))
+	idPath := deep.Field(func(u *testmodels.User) *int { return &u.ID })
+	namePath := deep.Field(func(u *testmodels.User) *string { return &u.Name })
 
-	deep.Set(b, deep.Field(func(u *testmodels.User) *int { return &u.ID }), 2).Unless(deep.Eq(deep.Field(func(u *testmodels.User) *int { return &u.ID }), 1))
-	deep.Gt(deep.Field(func(u *testmodels.User) *int { return &u.ID }), 0)
-	deep.Lt(deep.Field(func(u *testmodels.User) *int { return &u.ID }), 10)
-	deep.Exists(deep.Field(func(u *testmodels.User) *string { return &u.Name }))
+	p := deep.Edit(u).
+		Where(deep.Eq(idPath, 1)).
+		With(
+			deep.Set(idPath, 2).Unless(deep.Eq(idPath, 1)),
+		).
+		Build()
 
-	p := b.Build()
+	_ = deep.Gt(idPath, 0)
+	_ = deep.Lt(idPath, 10)
+	_ = deep.Exists(namePath)
+
 	if p.Guard == nil || p.Guard.Op != "==" {
 		t.Error("Where failed")
 	}

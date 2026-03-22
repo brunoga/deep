@@ -197,21 +197,24 @@ func TestPatchIsEmpty(t *testing.T) {
 
 func TestFromJSONPatchRoundTrip(t *testing.T) {
 	type Doc struct {
-		Name string `json:"name"`
-		Age  int    `json:"age"`
+		Name  string `json:"name"`
+		Alias string `json:"alias"`
+		Age   int    `json:"age"`
 	}
 
 	// Build a patch with all supported op types and conditions.
 	namePath := deep.Field[Doc, string](func(d *Doc) *string { return &d.Name })
+	aliasPath := deep.Field[Doc, string](func(d *Doc) *string { return &d.Alias })
 	agePath := deep.Field[Doc, int](func(d *Doc) *int { return &d.Age })
 
 	original := deep.Edit(&Doc{}).
-		Set(namePath, "Alice").
-		Add(agePath, 30).
-		Remove(namePath).
-		Move(namePath, agePath).
-		Copy(namePath, agePath).
-		If(deep.Eq(namePath, "Alice")).
+		With(
+			deep.Set(namePath, "Alice"),
+			deep.Add(agePath, 30),
+			deep.Remove(namePath),
+			deep.Move(namePath, aliasPath),
+			deep.Copy(namePath, aliasPath).If(deep.Eq(namePath, "Alice")),
+		).
 		Log("done").
 		Where(deep.Gt(agePath, 18)).
 		Build()
@@ -242,7 +245,7 @@ func TestGeLeConditions(t *testing.T) {
 	xPath := deep.Field[S, int](func(s *S) *int { return &s.X })
 
 	s := S{X: 5}
-	if err := deep.Apply(&s, deep.Edit(&s).Set(xPath, 10).Unless(deep.Ge(xPath, 5)).Build()); err != nil {
+	if err := deep.Apply(&s, deep.Edit(&s).With(deep.Set(xPath, 10).Unless(deep.Ge(xPath, 5))).Build()); err != nil {
 		t.Fatal(err)
 	}
 	// Ge(X, 5) is true when X==5, so Unless fires and op is skipped → X stays 5.
@@ -250,7 +253,7 @@ func TestGeLeConditions(t *testing.T) {
 		t.Errorf("Ge condition: got %d, want 5", s.X)
 	}
 
-	if err := deep.Apply(&s, deep.Edit(&s).Set(xPath, 10).Unless(deep.Le(xPath, 4)).Build()); err != nil {
+	if err := deep.Apply(&s, deep.Edit(&s).With(deep.Set(xPath, 10).Unless(deep.Le(xPath, 4))).Build()); err != nil {
 		t.Fatal(err)
 	}
 	// Le(X, 4) is false when X==5, so Unless does not fire → X becomes 10.
@@ -267,7 +270,7 @@ func TestBuilderMoveCopy(t *testing.T) {
 	aPath := deep.Field[S, string](func(s *S) *string { return &s.A })
 	bPath := deep.Field[S, string](func(s *S) *string { return &s.B })
 
-	p := deep.Edit(&S{}).Move(aPath, bPath).Build()
+	p := deep.Edit(&S{}).With(deep.Move(aPath, bPath)).Build()
 	if len(p.Operations) != 1 || p.Operations[0].Kind != deep.OpMove {
 		t.Error("Move not added correctly")
 	}
@@ -275,7 +278,7 @@ func TestBuilderMoveCopy(t *testing.T) {
 		t.Errorf("Move paths wrong: from=%v to=%v", p.Operations[0].Old, p.Operations[0].Path)
 	}
 
-	p2 := deep.Edit(&S{}).Copy(aPath, bPath).Build()
+	p2 := deep.Edit(&S{}).With(deep.Copy(aPath, bPath)).Build()
 	if len(p2.Operations) != 1 || p2.Operations[0].Kind != deep.OpCopy {
 		t.Error("Copy not added correctly")
 	}

@@ -20,7 +20,7 @@ Benchmarks performed on typical struct models (`User` with IDs, Names, Slices):
 | :--- | :--- | :--- | :--- |
 | **Apply Patch** | 726 ns/op | **50 ns/op** | **14.5x** |
 | **Diff + Apply** | 2,391 ns/op | **270 ns/op** | **8.8x** |
-| **Clone (Copy)** | 1,872 ns/op | **290 ns/op** | **6.4x** |
+| **Clone** | 1,872 ns/op | **290 ns/op** | **6.4x** |
 | **Equality** | 202 ns/op | **84 ns/op** | **2.4x** |
 
 Run `go test -bench=. ./...` to reproduce. `BenchmarkApplyGenerated` uses generated code;
@@ -69,10 +69,11 @@ if err != nil {
     log.Fatal(err)
 }
 
-// Operation-based Building (Fluent API)
-builder := deep.Edit(&u1)
-deep.Set(builder, deep.Field(func(u *User) *string { return &u.Name }), "Alice Smith")
-patch2 := builder.Build()
+// Operation-based Building (Fluent, Type-Safe API)
+namePath := deep.Field(func(u *User) *string { return &u.Name })
+patch2 := deep.Edit(&u1).
+    With(deep.Set(namePath, "Alice Smith")).
+    Build()
 
 // Application
 if err := deep.Apply(&u1, patch); err != nil {
@@ -98,8 +99,12 @@ type Document struct {
 Apply changes only if specific business rules are met:
 
 ```go
-builder.Set(deep.Field(func(u *User) *string { return &u.Name }), "New Name").
-    If(deep.Eq(deep.Field(func(u *User) *int { return &u.ID }), 1))
+namePath := deep.Field(func(u *User) *string { return &u.Name })
+idPath   := deep.Field(func(u *User) *int    { return &u.ID   })
+
+patch := deep.Edit(&u).
+    With(deep.Set(namePath, "New Name").If(deep.Eq(idPath, 1))).
+    Build()
 ```
 
 Apply a patch only if a global guard condition holds:

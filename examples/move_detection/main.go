@@ -28,7 +28,7 @@ func main() {
 	draftPath := deep.Field(func(d *Document) *string { return &d.Draft })
 	pubPath := deep.Field(func(d *Document) *string { return &d.Published })
 
-	patch := deep.Edit(&doc).Move(draftPath, pubPath).Build()
+	patch := deep.Edit(&doc).With(deep.Move(draftPath, pubPath)).Build()
 
 	fmt.Println("\n--- PATCH ---")
 	fmt.Println(patch)

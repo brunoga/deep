@@ -24,7 +24,7 @@ func main() {
 	}
 
 	// Propose changes on a deep copy so v1 is not mutated.
-	v2 := deep.Copy(v1)
+	v2 := deep.Clone(v1)
 	v2.Version = 2
 	v2.Timeout = 45
 	v2.Features["billing"] = true
@@ -38,7 +38,7 @@ func main() {
 	fmt.Println(patch)
 
 	// Apply to a copy of the live state.
-	state := deep.Copy(v1)
+	state := deep.Clone(v1)
 	deep.Apply(&state, patch)
 	fmt.Printf("--- SYNCHRONIZED (version %d) ---\n", state.Version)
 

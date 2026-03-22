@@ -54,7 +54,53 @@ func Edit[T any](_ *T) *Builder[T] {
 	return &Builder[T]{}
 }
 
-// Builder allows for type-safe manual patch construction.
+// Op is a pending patch operation. Obtain one from [Set], [Add], [Remove],
+// [Move], or [Copy]; attach per-operation conditions with [Op.If] or
+// [Op.Unless] before passing to [Builder.With].
+type Op struct {
+	op Operation
+}
+
+// If attaches a condition that must hold for this operation to be applied.
+func (o Op) If(c *Condition) Op {
+	o.op.If = c
+	return o
+}
+
+// Unless attaches a condition that must NOT hold for this operation to be applied.
+func (o Op) Unless(c *Condition) Op {
+	o.op.Unless = c
+	return o
+}
+
+// Set returns a type-safe replace operation.
+func Set[T, V any](p Path[T, V], val V) Op {
+	return Op{op: Operation{Kind: OpReplace, Path: p.String(), New: val}}
+}
+
+// Add returns a type-safe add (insert) operation.
+func Add[T, V any](p Path[T, V], val V) Op {
+	return Op{op: Operation{Kind: OpAdd, Path: p.String(), New: val}}
+}
+
+// Remove returns a type-safe remove operation.
+func Remove[T, V any](p Path[T, V]) Op {
+	return Op{op: Operation{Kind: OpRemove, Path: p.String()}}
+}
+
+// Move returns a type-safe move operation that relocates the value at from to to.
+// Both paths must share the same value type V.
+func Move[T, V any](from, to Path[T, V]) Op {
+	return Op{op: Operation{Kind: OpMove, Path: to.String(), Old: from.String()}}
+}
+
+// Copy returns a type-safe copy operation that duplicates the value at from to to.
+// Both paths must share the same value type V.
+func Copy[T, V any](from, to Path[T, V]) Op {
+	return Op{op: Operation{Kind: OpCopy, Path: to.String(), Old: from.String()}}
+}
+
+// Builder constructs a [Patch] via a fluent chain.
 type Builder[T any] struct {
 	global *Condition
 	ops    []Operation
@@ -72,92 +118,18 @@ func (b *Builder[T]) Where(c *Condition) *Builder[T] {
 	return b
 }
 
-// If attaches a condition to the most recently added operation.
-// It is a no-op if no operations have been added yet.
-func (b *Builder[T]) If(c *Condition) *Builder[T] {
-	if len(b.ops) > 0 {
-		b.ops[len(b.ops)-1].If = c
+// With appends one or more operations to the patch being built.
+// Obtain operations from the typed constructors [Set], [Add], [Remove],
+// [Move], and [Copy]; per-operation conditions can be attached with
+// [Op.If] and [Op.Unless] before passing here.
+func (b *Builder[T]) With(ops ...Op) *Builder[T] {
+	for _, o := range ops {
+		b.ops = append(b.ops, o.op)
 	}
 	return b
 }
 
-// Unless attaches a negative condition to the most recently added operation.
-// It is a no-op if no operations have been added yet.
-func (b *Builder[T]) Unless(c *Condition) *Builder[T] {
-	if len(b.ops) > 0 {
-		b.ops[len(b.ops)-1].Unless = c
-	}
-	return b
-}
-
-// Set adds a replace operation. For compile-time type checking, prefer the
-// package-level Set[T, V] function.
-func (b *Builder[T]) Set(p fmt.Stringer, val any) *Builder[T] {
-	b.ops = append(b.ops, Operation{
-		Kind: OpReplace,
-		Path: p.String(),
-		New:  val,
-	})
-	return b
-}
-
-// Add adds an insert operation. For compile-time type checking, prefer the
-// package-level Add[T, V] function.
-func (b *Builder[T]) Add(p fmt.Stringer, val any) *Builder[T] {
-	b.ops = append(b.ops, Operation{
-		Kind: OpAdd,
-		Path: p.String(),
-		New:  val,
-	})
-	return b
-}
-
-// Remove adds a delete operation. For compile-time type checking, prefer the
-// package-level Remove[T, V] function.
-func (b *Builder[T]) Remove(p fmt.Stringer) *Builder[T] {
-	b.ops = append(b.ops, Operation{
-		Kind: OpRemove,
-		Path: p.String(),
-	})
-	return b
-}
-
-// Set adds a type-safe set operation to the builder.
-func Set[T, V any](b *Builder[T], p Path[T, V], val V) *Builder[T] {
-	return b.Set(p, val)
-}
-
-// Add adds a type-safe add operation to the builder.
-func Add[T, V any](b *Builder[T], p Path[T, V], val V) *Builder[T] {
-	return b.Add(p, val)
-}
-
-// Remove adds a type-safe remove operation to the builder.
-func Remove[T, V any](b *Builder[T], p Path[T, V]) *Builder[T] {
-	return b.Remove(p)
-}
-
-// Move adds a move operation that relocates the value at from to the destination path.
-func (b *Builder[T]) Move(from, to fmt.Stringer) *Builder[T] {
-	b.ops = append(b.ops, Operation{
-		Kind: OpMove,
-		Path: to.String(),
-		Old:  from.String(),
-	})
-	return b
-}
-
-// Copy adds a copy operation that duplicates the value at from to the destination path.
-func (b *Builder[T]) Copy(from, to fmt.Stringer) *Builder[T] {
-	b.ops = append(b.ops, Operation{
-		Kind: OpCopy,
-		Path: to.String(),
-		Old:  from.String(),
-	})
-	return b
-}
-
-// Log adds a log operation to the builder.
+// Log appends a log operation.
 func (b *Builder[T]) Log(msg string) *Builder[T] {
 	b.ops = append(b.ops, Operation{
 		Kind: OpLog,

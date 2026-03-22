@@ -24,7 +24,7 @@ func main() {
 	var undoStack []deep.Patch[DocState]
 
 	edit := func(fn func(*DocState)) {
-		next := deep.Copy(current)
+		next := deep.Clone(current)
 		fn(&next)
 		patch, err := deep.Diff(current, next)
 		if err != nil {

@@ -29,14 +29,14 @@ func main() {
 		Time: 0,
 	}
 
-	clientState := deep.Copy(serverState)
+	clientState := deep.Clone(serverState)
 
 	fmt.Println("--- INITIAL STATE ---")
 	fmt.Printf("Server: %+v\n", serverState.Players["p1"])
 	fmt.Printf("Client: %+v\n", clientState.Players["p1"])
 
 	// Server tick: move player and advance time.
-	previousState := deep.Copy(serverState)
+	previousState := deep.Clone(serverState)
 	p := serverState.Players["p1"]
 	p.X += 5
 	p.Y += 10

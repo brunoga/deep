@@ -17,8 +17,13 @@ Major rewrite. Breaking changes from v4.
 | `Diff[T](a, b T) (Patch[T], error)` | Compare two values; returns error for unsupported types |
 | `Apply[T](*T, Patch[T]) error` | Apply a patch; returns `*ApplyError` with `Unwrap() []error` |
 | `Equal[T](a, b T) bool` | Deep equality |
-| `Copy[T](v T) T` | Deep copy |
-| `Edit[T](*T) *Builder[T]` | Fluent patch builder |
+| `Clone[T](v T) T` | Deep copy (formerly `Copy`) |
+| `Set[T,V](Path[T,V], V) Op` | Typed replace operation constructor |
+| `Add[T,V](Path[T,V], V) Op` | Typed add operation constructor |
+| `Remove[T,V](Path[T,V]) Op` | Typed remove operation constructor |
+| `Move[T,V](from, to Path[T,V]) Op` | Typed move operation constructor |
+| `Copy[T,V](from, to Path[T,V]) Op` | Typed copy operation constructor |
+| `Edit[T](*T) *Builder[T]` | Returns a fluent patch builder |
 | `Merge[T](base, other, resolver)` | Merge two patches with LWW or custom resolution |
 | `Field[T,V](selector)` | Type-safe path from a selector function |
 | `Register[T]()` | Register types for gob serialization |
@@ -30,7 +35,8 @@ Major rewrite. Breaking changes from v4.
 - `Condition` struct with `Op`, `Path`, `Value`, `Apply` fields (serializable predicates).
 - Patch-level guard set via `Patch.Guard` field or `patch.WithGuard(c)`.
 - Per-operation conditions via `Operation.If` / `Operation.Unless`.
-- Builder helpers: `Eq`, `Ne`, `Gt`, `Ge`, `Lt`, `Le`, `Exists`, `In`, `Matches`, `Type`, `And`, `Or`, `Not`, `Log`.
+- Builder helpers: `Eq`, `Ne`, `Gt`, `Ge`, `Lt`, `Le`, `Exists`, `In`, `Matches`, `Type`, `And`, `Or`, `Not`.
+- Per-op conditions attached to `Op` values via `Op.If` / `Op.Unless`; passed to the builder via `Builder.With`.
 
 ### CRDTs
 
@@ -48,3 +54,6 @@ Major rewrite. Breaking changes from v4.
 - `cond/` package moved to `internal/cond/`; no longer part of the public API.
 - `deep-gen` now writes output to `{type}_deep.go` by default instead of stdout.
 - `OpAdd` on slices sets by index rather than inserting; true insertion is not supported for unkeyed slices.
+- `Copy[T](v T) T` renamed to `Clone[T](v T) T`; `Copy` is now the patch-op constructor `Copy[T,V](from, to Path[T,V]) Op`.
+- `Builder.Set/Add/Remove/Move/Copy` methods removed; use `Builder.With(deep.Set(...), ...)` instead.
+- `Builder.If/Unless` methods removed; attach per-op conditions on the `Op` value before passing to `With`.

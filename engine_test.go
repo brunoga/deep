@@ -183,9 +183,9 @@ func TestReflectionEqualCopy(t *testing.T) {
 		t.Error("deep.Equal failed for different simple structs")
 	}
 
-	s3 := deep.Copy(s1)
+	s3 := deep.Clone(s1)
 	if s3.A != 1 {
-		t.Error("deep.Copy failed for simple struct")
+		t.Error("deep.Clone failed for simple struct")
 	}
 }
 
@@ -275,7 +275,7 @@ func BenchmarkCopyGenerated(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		deep.Copy(u)
+		deep.Clone(u)
 	}
 }
 
@@ -295,7 +295,7 @@ func BenchmarkCopyReflection(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		deep.Copy(a)
+		deep.Clone(a)
 	}
 }
 

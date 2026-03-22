@@ -241,8 +241,8 @@ func Equal[T any](a, b T) bool {
 	return core.Equal(a, b)
 }
 
-// Copy returns a deep copy of v.
-func Copy[T any](v T) T {
+// Clone returns a deep copy of v.
+func Clone[T any](v T) T {
 	if copyable, ok := any(&v).(interface {
 		Copy() *T
 	}); ok {
