@@ -2,9 +2,7 @@ package main
 
 import (
 	"fmt"
-	"log"
 
-	v5 "github.com/brunoga/deep/v5"
 	"github.com/brunoga/deep/v5/crdt"
 	"github.com/brunoga/deep/v5/crdt/hlc"
 )
@@ -13,57 +11,42 @@ func main() {
 	clockA := hlc.NewClock("node-a")
 	clockB := hlc.NewClock("node-b")
 
-	// Text CRDT requires HLC for operations
-	// Since Text is a specialized type, we use it directly or in structs
+	// Two nodes start with the same empty document.
 	docA := crdt.Text{}
 	docB := crdt.Text{}
 
-	fmt.Println("--- Initial State: Empty ---")
+	// --- Step 1: Node A inserts "Hello" ---
+	docA = docA.Insert(0, "Hello", clockA)
 
-	// 1. A types 'Hello'
-	// (Using v4-like Insert but adapted for v5 concept)
-	// For this prototype example, we'll manually create the Text state
-	docA = crdt.Text{{ID: clockA.Now(), Value: "Hello"}}
+	// Propagate A's full state to B via MergeTextRuns.
+	docB = crdt.MergeTextRuns(docB, docA)
 
-	// Sync A -> B
-	patchA, err := v5.Diff(crdt.Text{}, docA)
-	if err != nil {
-		log.Fatal(err)
-	}
-	v5.Apply(&docB, patchA)
+	fmt.Println("After A types 'Hello':")
+	fmt.Printf("  Doc A: %q\n", docA.String())
+	fmt.Printf("  Doc B: %q\n", docB.String())
 
-	fmt.Printf("Doc A: %s\n", docA.String())
-	fmt.Printf("Doc B: %s\n", docB.String())
+	// --- Step 2: Concurrent edits (network partition) ---
+	// A appends " World"
+	docA = docA.Insert(5, " World", clockA)
 
-	// 2. Concurrent Edits
-	// A appends ' World'
-	tsA := clockA.Now()
-	docA = append(docA, crdt.TextRun{ID: tsA, Value: " World", Prev: docA[0].ID})
+	// B inserts "!" at position 5 (after "Hello")
+	docB = docB.Insert(5, "!", clockB)
 
-	// B inserts '!'
-	tsB := clockB.Now()
-	docB = append(docB, crdt.TextRun{ID: tsB, Value: "!", Prev: docB[0].ID})
+	fmt.Println("\nAfter concurrent edits (partition):")
+	fmt.Printf("  Doc A: %q\n", docA.String())
+	fmt.Printf("  Doc B: %q\n", docB.String())
 
-	fmt.Println("\n--- Concurrent Edits ---")
+	// --- Step 3: Merge (partition heals) ---
+	mergedA := crdt.MergeTextRuns(docA, docB)
+	mergedB := crdt.MergeTextRuns(docB, docA)
 
-	// Diff and Merge
-	pA, err := v5.Diff(crdt.Text{}, docA)
-	if err != nil {
-		log.Fatal(err)
-	}
-	pB, err := v5.Diff(crdt.Text{}, docB)
-	if err != nil {
-		log.Fatal(err)
-	}
+	fmt.Println("\nAfter merge:")
+	fmt.Printf("  Doc A: %q\n", mergedA.String())
+	fmt.Printf("  Doc B: %q\n", mergedB.String())
 
-	// In v5, we apply both patches to reach convergence
-	v5.Apply(&docA, pB)
-	v5.Apply(&docB, pA)
-
-	fmt.Printf("Doc A: %s\n", docA.String())
-	fmt.Printf("Doc B: %s\n", docB.String())
-
-	if docA.String() == docB.String() {
-		fmt.Println("SUCCESS: Collaborative text converged!")
+	if mergedA.String() == mergedB.String() {
+		fmt.Println("\nSUCCESS: both nodes converged.")
+	} else {
+		fmt.Println("\nFAILURE: nodes diverged!")
 	}
 }

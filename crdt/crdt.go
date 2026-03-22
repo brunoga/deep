@@ -18,7 +18,7 @@
 //
 // [Text] is a convergent, ordered sequence of [TextRun] segments. It supports
 // concurrent insertions and deletions across nodes and is integrated with
-// [CRDT] via a custom diff/apply strategy registered at init time.
+// [CRDT] directly — no separate registration required.
 package crdt
 
 import (
@@ -26,67 +26,9 @@ import (
 	"log/slog"
 	"sync"
 
+	deep "github.com/brunoga/deep/v5"
 	"github.com/brunoga/deep/v5/crdt/hlc"
-	"github.com/brunoga/deep/v5/internal/cond"
-	"github.com/brunoga/deep/v5/internal/engine"
-	crdtresolver "github.com/brunoga/deep/v5/internal/resolvers/crdt"
 )
-
-func init() {
-	engine.RegisterCustomPatch(&textPatch{})
-	engine.RegisterCustomDiff[Text](func(a, b Text) (engine.Patch[Text], error) {
-		// Optimization: if both are same, return nil
-		if len(a) == len(b) {
-			same := true
-			for i := range a {
-				if a[i].ID != b[i].ID || a[i].Value != b[i].Value || a[i].Deleted != b[i].Deleted {
-					same = false
-					break
-				}
-			}
-			if same {
-				return nil, nil
-			}
-		}
-		return &textPatch{Runs: b}, nil
-	})
-}
-
-// textPatch is a specialized patch for Text CRDT.
-type textPatch struct {
-	Runs Text
-}
-
-func (p *textPatch) PatchKind() string { return "text" }
-
-func (p *textPatch) Apply(v *Text) {
-	*v = MergeTextRuns(*v, p.Runs)
-}
-
-func (p *textPatch) ApplyChecked(v *Text) error {
-	p.Apply(v)
-	return nil
-}
-
-func (p *textPatch) ApplyResolved(v *Text, r engine.ConflictResolver) error {
-	*v = MergeTextRuns(*v, p.Runs)
-	return nil
-}
-
-func (p *textPatch) Walk(fn func(path string, op engine.OpKind, old, new any) error) error {
-	return fn("", engine.OpReplace, nil, p.Runs)
-}
-
-func (p *textPatch) WithCondition(c cond.Condition[Text]) engine.Patch[Text] { return p }
-func (p *textPatch) WithStrict(strict bool) engine.Patch[Text]               { return p }
-func (p *textPatch) Reverse() engine.Patch[Text]                             { return p }
-func (p *textPatch) ToJSONPatch() ([]byte, error)                            { return nil, nil }
-func (p *textPatch) Summary() string                                         { return "Text update" }
-func (p *textPatch) String() string                                          { return "TextPatch" }
-
-func (p *textPatch) MarshalSerializable() (any, error) {
-	return engine.PatchToSerializable(p)
-}
 
 // CRDT represents a Conflict-free Replicated Data Type wrapper around type T.
 type CRDT[T any] struct {
@@ -101,40 +43,27 @@ type CRDT[T any] struct {
 // Delta represents a set of changes with a causal timestamp.
 // Obtain a Delta via CRDT.Edit; apply it on remote nodes via CRDT.ApplyDelta.
 type Delta[T any] struct {
-	patch     engine.Patch[T]
+	patch     deep.Patch[T]
 	Timestamp hlc.HLC `json:"t"`
 }
 
 func (d Delta[T]) MarshalJSON() ([]byte, error) {
-	patchBytes, err := json.Marshal(d.patch)
-	if err != nil {
-		return nil, err
-	}
 	return json.Marshal(struct {
-		Patch     json.RawMessage `json:"p"`
-		Timestamp hlc.HLC         `json:"t"`
-	}{
-		Patch:     patchBytes,
-		Timestamp: d.Timestamp,
-	})
+		Patch     deep.Patch[T] `json:"p"`
+		Timestamp hlc.HLC       `json:"t"`
+	}{d.patch, d.Timestamp})
 }
 
 func (d *Delta[T]) UnmarshalJSON(data []byte) error {
 	var m struct {
-		Patch     json.RawMessage `json:"p"`
-		Timestamp hlc.HLC         `json:"t"`
+		Patch     deep.Patch[T] `json:"p"`
+		Timestamp hlc.HLC       `json:"t"`
 	}
 	if err := json.Unmarshal(data, &m); err != nil {
 		return err
 	}
+	d.patch = m.Patch
 	d.Timestamp = m.Timestamp
-	if len(m.Patch) > 0 && string(m.Patch) != "null" {
-		p := engine.NewPatch[T]()
-		if err := json.Unmarshal(m.Patch, p); err != nil {
-			return err
-		}
-		d.patch = p
-	}
 	return nil
 }
 
@@ -150,28 +79,16 @@ func NewCRDT[T any](initial T, nodeID string) *CRDT[T] {
 }
 
 // NodeID returns the unique identifier for this CRDT instance.
-func (c *CRDT[T]) NodeID() string {
-	return c.nodeID
-}
+func (c *CRDT[T]) NodeID() string { return c.nodeID }
 
 // Clock returns the internal hybrid logical clock.
-func (c *CRDT[T]) Clock() *hlc.Clock {
-	return c.clock
-}
+func (c *CRDT[T]) Clock() *hlc.Clock { return c.clock }
 
 // View returns a deep copy of the current value.
-// If the copy fails (e.g. the value contains an unsupported kind), the zero
-// value for T is returned and the error is logged via slog.Default().
 func (c *CRDT[T]) View() T {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	copied, err := engine.Copy(c.value)
-	if err != nil {
-		slog.Default().Error("crdt: View copy failed", "err", err)
-		var zero T
-		return zero
-	}
-	return copied
+	return deep.Copy(c.value)
 }
 
 // Edit applies fn to a copy of the current value, computes a delta, advances
@@ -181,74 +98,39 @@ func (c *CRDT[T]) Edit(fn func(*T)) Delta[T] {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	workingCopy, err := engine.Copy(c.value)
-	if err != nil {
-		slog.Default().Error("crdt: Edit copy failed", "err", err)
-		return Delta[T]{}
-	}
+	workingCopy := deep.Copy(c.value)
 	fn(&workingCopy)
 
-	patch, err := engine.Diff(c.value, workingCopy)
+	patch, err := deep.Diff(c.value, workingCopy)
 	if err != nil {
 		slog.Default().Error("crdt: Edit diff failed", "err", err)
 		return Delta[T]{}
 	}
-	if patch == nil {
+	if patch.IsEmpty() {
 		return Delta[T]{}
 	}
 
 	now := c.clock.Now()
-	if err := c.updateMetadataLocked(patch, now); err != nil {
-		slog.Default().Error("crdt: Edit metadata update failed", "err", err)
-		return Delta[T]{}
-	}
-
+	c.updateMetadataLocked(patch, now)
 	c.value = workingCopy
 
-	return Delta[T]{
-		patch:     patch,
-		Timestamp: now,
-	}
+	return Delta[T]{patch: patch, Timestamp: now}
 }
 
-// createDelta wraps an existing internal patch into a Delta, applies it
-// locally, and advances the clock. Used internally by tests.
-func (c *CRDT[T]) createDelta(patch engine.Patch[T]) Delta[T] {
-	if patch == nil {
-		return Delta[T]{}
-	}
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	now := c.clock.Now()
-	if err := c.updateMetadataLocked(patch, now); err != nil {
-		slog.Default().Error("crdt: createDelta metadata update failed", "err", err)
-		return Delta[T]{}
-	}
-
-	patch.Apply(&c.value)
-
-	return Delta[T]{
-		patch:     patch,
-		Timestamp: now,
-	}
-}
-
-func (c *CRDT[T]) updateMetadataLocked(patch engine.Patch[T], ts hlc.HLC) error {
-	return patch.Walk(func(path string, op engine.OpKind, old, new any) error {
-		if op == engine.OpRemove {
-			c.tombstones[path] = ts
+func (c *CRDT[T]) updateMetadataLocked(patch deep.Patch[T], ts hlc.HLC) {
+	for _, op := range patch.Operations {
+		if op.Kind == deep.OpRemove {
+			c.tombstones[op.Path] = ts
 		} else {
-			c.clocks[path] = ts
+			c.clocks[op.Path] = ts
 		}
-		return nil
-	})
+	}
 }
 
-// ApplyDelta applies a delta using LWW resolution.
+// ApplyDelta applies a delta from a remote peer using Last-Write-Wins resolution.
+// Returns true if any operations were accepted.
 func (c *CRDT[T]) ApplyDelta(delta Delta[T]) bool {
-	if delta.patch == nil {
+	if delta.patch.IsEmpty() {
 		return false
 	}
 
@@ -257,25 +139,47 @@ func (c *CRDT[T]) ApplyDelta(delta Delta[T]) bool {
 
 	c.clock.Update(delta.Timestamp)
 
-	resolver := &crdtresolver.LWWResolver{
-		Clocks:     c.clocks,
-		Tombstones: c.tombstones,
-		OpTime:     delta.Timestamp,
+	// Text is a convergent CRDT with its own merge semantics — always apply,
+	// skipping the LWW clock filter that would discard concurrent inserts/deletes.
+	if _, ok := any(c.value).(Text); ok {
+		return deep.Apply(&c.value, delta.patch) == nil
 	}
 
-	if err := delta.patch.ApplyResolved(&c.value, resolver); err != nil {
+	var filtered []deep.Operation
+	for _, op := range delta.patch.Operations {
+		opTime := delta.Timestamp
+
+		// LWW: effective local time is the max of the write clock and tombstone.
+		lTime := c.clocks[op.Path]
+		if lTomb, ok := c.tombstones[op.Path]; ok && lTomb.After(lTime) {
+			lTime = lTomb
+		}
+
+		if !opTime.After(lTime) {
+			continue // local is newer or equal — skip
+		}
+
+		filtered = append(filtered, op)
+		if op.Kind == deep.OpRemove {
+			c.tombstones[op.Path] = opTime
+		} else {
+			c.clocks[op.Path] = opTime
+		}
+	}
+
+	if len(filtered) == 0 {
 		return false
 	}
-
-	return true
+	return deep.Apply(&c.value, deep.Patch[T]{Operations: filtered}) == nil
 }
 
-// Merge merges another state.
+// Merge performs a full state-based merge with another CRDT node.
+// For each changed field the node with the strictly newer effective timestamp
+// (max of write clock and tombstone) wins.
 func (c *CRDT[T]) Merge(other *CRDT[T]) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Update local clock
 	for _, h := range other.clocks {
 		c.clock.Update(h)
 	}
@@ -283,33 +187,64 @@ func (c *CRDT[T]) Merge(other *CRDT[T]) bool {
 		c.clock.Update(h)
 	}
 
-	patch, err := engine.Diff(c.value, other.value)
-	if err != nil || patch == nil {
-		c.mergeMeta(other)
-		return false
-	}
-
-	// State-based Resolver
+	// Text has its own convergent merge that doesn't rely on per-field clocks.
 	if v, ok := any(c.value).(Text); ok {
-		// Special case for Text
 		otherV := any(other.value).(Text)
 		c.value = any(MergeTextRuns(v, otherV)).(T)
 		c.mergeMeta(other)
 		return true
 	}
 
-	resolver := &crdtresolver.StateResolver{
-		LocalClocks:      c.clocks,
-		LocalTombstones:  c.tombstones,
-		RemoteClocks:     other.clocks,
-		RemoteTombstones: other.tombstones,
-	}
-
-	if err := patch.ApplyResolved(&c.value, resolver); err != nil {
+	patch, err := deep.Diff(c.value, other.value)
+	if err != nil || patch.IsEmpty() {
+		c.mergeMeta(other)
 		return false
 	}
 
+	// State-based LWW: apply each op only if the remote effective time is
+	// strictly newer than the local effective time for that path.
+	var filtered []deep.Operation
+	for _, op := range patch.Operations {
+		rClock, hasRC := other.clocks[op.Path]
+		rTomb, hasRT := other.tombstones[op.Path]
+
+		// If remote has no timing info for this path, local wins by default.
+		if !hasRC && !hasRT {
+			continue
+		}
+
+		lTime := c.clocks[op.Path]
+		if lTomb, ok := c.tombstones[op.Path]; ok && lTomb.After(lTime) {
+			lTime = lTomb
+		}
+
+		rTime := rClock
+		if hasRT && rTomb.After(rTime) {
+			rTime = rTomb
+		}
+
+		if !rTime.After(lTime) {
+			continue // local is newer or equal
+		}
+
+		filtered = append(filtered, op)
+		if op.Kind == deep.OpRemove {
+			if hasRT {
+				c.tombstones[op.Path] = rTomb
+			}
+		} else {
+			if hasRC {
+				c.clocks[op.Path] = rClock
+			}
+		}
+	}
+
 	c.mergeMeta(other)
+
+	if len(filtered) == 0 {
+		return false
+	}
+	_ = deep.Apply(&c.value, deep.Patch[T]{Operations: filtered})
 	return true
 }
 

@@ -1,6 +1,7 @@
 package crdt
 
 import (
+	"encoding/json"
 	"sort"
 	"strings"
 
@@ -208,6 +209,19 @@ func (t Text) Diff(other Text) deep.Patch[Text] {
 func (t *Text) ApplyOperation(op deep.Operation) (bool, error) {
 	if op.Path == "" || op.Path == "/" {
 		if other, ok := op.New.(Text); ok {
+			*t = MergeTextRuns(*t, other)
+			return true, nil
+		}
+		// Handle JSON roundtrip: op.New arrives as []interface{} after JSON decode.
+		if raw, ok := op.New.([]interface{}); ok {
+			data, err := json.Marshal(raw)
+			if err != nil {
+				return false, err
+			}
+			var other Text
+			if err := json.Unmarshal(data, &other); err != nil {
+				return false, err
+			}
 			*t = MergeTextRuns(*t, other)
 			return true, nil
 		}

@@ -69,10 +69,24 @@ func (p DeepPath) Navigate(v reflect.Value, parts []PathPart) (reflect.Value, Pa
 		}
 
 		if part.IsIndex && (current.Kind() == reflect.Slice || current.Kind() == reflect.Array) {
-			if part.Index < 0 || part.Index >= current.Len() {
-				return reflect.Value{}, PathPart{}, fmt.Errorf("index out of bounds: %d", part.Index)
+			// Check whether the element type uses a keyed-collection tag.
+			// If so, treat the numeric segment as a key value, not an array index.
+			if keyIdx, found := sliceKeyField(current.Type()); found {
+				keyStr := part.Key
+				if keyStr == "" {
+					keyStr = strconv.Itoa(part.Index)
+				}
+				elem, ok := findSliceElemByKey(current, keyIdx, keyStr)
+				if !ok {
+					return reflect.Value{}, PathPart{}, fmt.Errorf("element with key %s not found", keyStr)
+				}
+				current = elem
+			} else {
+				if part.Index < 0 || part.Index >= current.Len() {
+					return reflect.Value{}, PathPart{}, fmt.Errorf("index out of bounds: %d", part.Index)
+				}
+				current = current.Index(part.Index)
 			}
-			current = current.Index(part.Index)
 		} else if current.Kind() == reflect.Map {
 			keyType := current.Type().Key()
 			var keyVal reflect.Value
@@ -168,6 +182,24 @@ func (p DeepPath) Set(v reflect.Value, val reflect.Value) error {
 		parent.SetMapIndex(keyVal, ConvertValue(val, parent.Type().Elem()))
 		return nil
 	case reflect.Slice:
+		// For keyed slices, find by key and update or append; for plain slices, use positional index.
+		if keyIdx, found := sliceKeyField(parent.Type()); found {
+			key := lastPart.Key
+			if key == "" && lastPart.IsIndex {
+				key = strconv.Itoa(lastPart.Index)
+			}
+			converted := ConvertValue(val, parent.Type().Elem())
+			for i := 0; i < parent.Len(); i++ {
+				elem := parent.Index(i)
+				if keyFieldStr(elem, keyIdx) == key {
+					elem.Set(converted)
+					return nil
+				}
+			}
+			// Key not found: append the new element.
+			parent.Set(reflect.Append(parent, converted))
+			return nil
+		}
 		idx := lastPart.Index
 		if !lastPart.IsIndex {
 			var err error
@@ -238,6 +270,21 @@ func (p DeepPath) Delete(v reflect.Value) error {
 		parent.SetMapIndex(keyVal, reflect.Value{})
 		return nil
 	case reflect.Slice:
+		// For keyed slices, find by key and remove; for plain slices, use positional index.
+		if keyIdx, found := sliceKeyField(parent.Type()); found {
+			key := lastPart.Key
+			if key == "" && lastPart.IsIndex {
+				key = strconv.Itoa(lastPart.Index)
+			}
+			for i := 0; i < parent.Len(); i++ {
+				if keyFieldStr(parent.Index(i), keyIdx) == key {
+					newSlice := reflect.AppendSlice(parent.Slice(0, i), parent.Slice(i+1, parent.Len()))
+					parent.Set(newSlice)
+					return nil
+				}
+			}
+			return fmt.Errorf("element with key %s not found", key)
+		}
 		idx := lastPart.Index
 		if !lastPart.IsIndex {
 			var err error
@@ -469,6 +516,39 @@ func JoinPath(parent, child string) string {
 		res += child
 	}
 	return res
+}
+
+// sliceKeyField returns the index of the deep:"key" field on the element type of
+// a slice type, together with a found flag. Returns -1, false for non-keyed slices.
+func sliceKeyField(sliceType reflect.Type) (int, bool) {
+	elemType := sliceType.Elem()
+	for elemType.Kind() == reflect.Pointer {
+		elemType = elemType.Elem()
+	}
+	return GetKeyField(elemType)
+}
+
+// keyFieldStr returns the string representation of the key field at fieldIdx in elem.
+func keyFieldStr(elem reflect.Value, fieldIdx int) string {
+	for elem.Kind() == reflect.Pointer {
+		if elem.IsNil() {
+			return ""
+		}
+		elem = elem.Elem()
+	}
+	f := elem.Field(fieldIdx)
+	return fmt.Sprintf("%v", f.Interface())
+}
+
+// findSliceElemByKey searches s for the element whose key field equals keyStr,
+// returning the element value and true on success.
+func findSliceElemByKey(s reflect.Value, keyIdx int, keyStr string) (reflect.Value, bool) {
+	for i := 0; i < s.Len(); i++ {
+		if keyFieldStr(s.Index(i), keyIdx) == keyStr {
+			return s.Index(i), true
+		}
+	}
+	return reflect.Value{}, false
 }
 
 func ToReflectValue(v any) reflect.Value {
