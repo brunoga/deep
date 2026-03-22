@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	//"github.com/brunoga/deep/v5/internal/core"
-	//"github.com/brunoga/deep/v5/internal/cond"
 )
 
 func TestPatch_String_Basic(t *testing.T) {
@@ -107,37 +106,6 @@ func (f ConflictResolverFunc) Resolve(path string, op OpKind, key, prevKey any, 
 	return f(path, op, key, prevKey, current, proposed)
 }
 
-func TestPatch_ConditionPropagation(t *testing.T) {
-	/*
-		type InnerC struct{ V int }
-		type DataC struct {
-			A   int
-			P   *InnerC
-			I   any
-			M   map[string]InnerC
-			S   []InnerC
-			Arr [1]InnerC
-		}
-		builder := NewPatchBuilder[DataC]()
-
-		c := cond.Eq[DataC]("A", 1)
-
-		builder.If(c).Unless(c).Test(DataC{A: 1})
-
-		builder.Field("P").If(c).Unless(c)
-		builder.Field("I").If(c).Unless(c)
-		builder.Field("M").If(c).Unless(c)
-		builder.Field("S").If(c).Unless(c)
-		builder.Field("Arr").If(c).Unless(c)
-
-		patch, _ := builder.Build()
-		if patch == nil {
-			t.Fatal("Build failed")
-		}
-	*/
-}
-
-
 func TestPatch_MoreApplyChecked(t *testing.T) {
 	// ptrPatch
 	t.Run("ptrPatch", func(t *testing.T) {
@@ -161,50 +129,6 @@ func TestPatch_MoreApplyChecked(t *testing.T) {
 	})
 }
 
-func TestPatch_ToJSONPatch_Exhaustive(t *testing.T) {
-	/*
-		type Inner struct{ V int }
-		type Data struct {
-			P *Inner
-			I any
-			A []Inner
-			M map[string]Inner
-		}
-
-		builder := NewPatchBuilder[Data]()
-
-		builder.Field("P").Elem().Field("V").Set(1, 2)
-		builder.Field("I").Elem().Set(1, 2)
-		builder.Field("A").Index(0).Field("V").Set(1, 2)
-		builder.Field("M").MapKey("k").Field("V").Set(1, 2)
-
-		patch, _ := builder.Build()
-		patch.ToJSONPatch()
-	*/
-}
-
-func TestPatch_LogExhaustive(t *testing.T) {
-	lp := &logPatch{message: "test"}
-
-	lp.apply(reflect.Value{}, reflect.ValueOf(1), "/path")
-
-	if err := lp.applyChecked(reflect.ValueOf(1), reflect.ValueOf(1), false, "/path"); err != nil {
-		t.Errorf("logPatch applyChecked failed: %v", err)
-	}
-
-	if lp.reverse() != lp {
-		t.Error("logPatch reverse should return itself")
-	}
-
-	if lp.format(0) == "" {
-		t.Error("logPatch format returned empty string")
-	}
-
-	ops := lp.toJSONPatch("/path")
-	if len(ops) != 1 || ops[0]["op"] != "log" {
-		t.Errorf("Unexpected toJSONPatch output: %+v", ops)
-	}
-}
 
 func TestPatch_Walk_Basic(t *testing.T) {
 	a := 10

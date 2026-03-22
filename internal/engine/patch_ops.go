@@ -3,17 +3,13 @@ package engine
 import (
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"reflect"
 	"strconv"
 	"strings"
 
-	"github.com/brunoga/deep/v5/internal/cond"
 	"github.com/brunoga/deep/v5/internal/core"
 	"github.com/brunoga/deep/v5/internal/unsafe"
 )
-
-var ErrConditionSkipped = fmt.Errorf("condition skipped")
 
 // diffPatch is the internal recursive interface for all patch types.
 type diffPatch interface {
@@ -23,92 +19,14 @@ type diffPatch interface {
 	reverse() diffPatch
 	format(indent int) string
 	walk(path string, fn func(path string, op OpKind, old, new any) error) error
-	setCondition(cond any)
-	setIfCondition(cond any)
-	setUnlessCondition(cond any)
-	conditions() (cond, ifCond, unlessCond any)
 	toJSONPatch(path string) []map[string]any
 	summary(path string) string
 	dependencies(path string) (reads []string, writes []string)
 }
 
-type basePatch struct {
-	cond any
-
-	ifCond any
-
-	unlessCond any
-}
-
-func (p *basePatch) setCondition(cond any) { p.cond = cond }
-
-func (p *basePatch) setIfCondition(cond any) { p.ifCond = cond }
-
-func (p *basePatch) setUnlessCondition(cond any) { p.unlessCond = cond }
-
-func (p *basePatch) conditions() (any, any, any) { return p.cond, p.ifCond, p.unlessCond }
-
-func checkConditions(p diffPatch, root, v reflect.Value) error {
-	c, ifC, unlessC := p.conditions()
-	if err := checkIfUnless(ifC, unlessC, root); err != nil {
-		return err
-	}
-	return evaluateLocalCondition(c, v)
-}
-
-func evaluateLocalCondition(c any, v reflect.Value) error {
-	if c == nil {
-		return nil
-	}
-	ok, err := evaluateCondition(c, v)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return fmt.Errorf("local condition failed for value %v", v.Interface())
-	}
-	return nil
-}
-
-func evaluateCondition(c any, v reflect.Value) (bool, error) {
-	if ic, ok := c.(cond.InternalCondition); ok {
-		return ic.EvaluateAny(v.Interface())
-	}
-
-	if gc, ok := c.(interface {
-		Evaluate(any) (bool, error)
-	}); ok {
-		return gc.Evaluate(v.Interface())
-	}
-
-	return false, fmt.Errorf("local condition: %T does not implement required interface", c)
-}
-
-func checkIfUnless(ifCond, unlessCond any, v reflect.Value) error {
-	if ifCond != nil {
-		ok, err := evaluateCondition(ifCond, v)
-		if err != nil {
-			return err
-		}
-		if !ok {
-			return ErrConditionSkipped
-		}
-	}
-	if unlessCond != nil {
-		ok, err := evaluateCondition(unlessCond, v)
-		if err != nil {
-			return err
-		}
-		if ok {
-			return ErrConditionSkipped
-		}
-	}
-	return nil
-}
 
 // valuePatch handles replacement of basic types and full replacement of complex types.
 type valuePatch struct {
-	basePatch
 	oldVal reflect.Value
 	newVal reflect.Value
 }
@@ -128,12 +46,6 @@ func (p *valuePatch) apply(root, v reflect.Value, path string) {
 }
 
 func (p *valuePatch) applyChecked(root, v reflect.Value, strict bool, path string) error {
-	if err := checkConditions(p, root, v); err != nil {
-		if err == ErrConditionSkipped {
-			return nil
-		}
-		return err
-	}
 	if strict && p.oldVal.IsValid() {
 		if v.IsValid() {
 			convertedOldVal := core.ConvertValue(p.oldVal, v.Type())
@@ -166,7 +78,7 @@ func (p *valuePatch) dependencies(path string) (reads []string, writes []string)
 }
 
 func (p *valuePatch) reverse() diffPatch {
-	return &valuePatch{oldVal: p.newVal, newVal: p.oldVal, basePatch: p.basePatch}
+	return &valuePatch{oldVal: p.newVal, newVal: p.oldVal}
 }
 
 func (p *valuePatch) walk(path string, fn func(path string, op OpKind, old, new any) error) error {
@@ -207,7 +119,6 @@ func (p *valuePatch) toJSONPatch(path string) []map[string]any {
 	} else {
 		op = map[string]any{"op": "replace", "path": fullPath, "value": core.ValueToInterface(p.newVal)}
 	}
-	addConditionsToOp(op, p)
 	return []map[string]any{op}
 }
 
@@ -223,7 +134,6 @@ func (p *valuePatch) summary(path string) string {
 
 // copyPatch copies a value from another path.
 type copyPatch struct {
-	basePatch
 	from string
 	path string // target path for reversal
 }
@@ -237,12 +147,6 @@ func (p *copyPatch) apply(root, v reflect.Value, path string) {
 }
 
 func (p *copyPatch) applyChecked(root, v reflect.Value, strict bool, path string) error {
-	if err := checkConditions(p, root, v); err != nil {
-		if err == ErrConditionSkipped {
-			return nil
-		}
-		return err
-	}
 	to := path
 	if p.path != "" && p.path[0] == '/' {
 		to = p.path
@@ -283,7 +187,6 @@ func (p *copyPatch) toJSONPatch(path string) []map[string]any {
 	}
 	p.path = fullPath
 	op := map[string]any{"op": "copy", "from": p.from, "path": fullPath}
-	addConditionsToOp(op, p)
 	return []map[string]any{op}
 }
 
@@ -325,7 +228,6 @@ func applyCopyOrMoveInternal(from, to, currentPath string, root, v reflect.Value
 
 // movePatch moves a value from another path.
 type movePatch struct {
-	basePatch
 	from string
 	path string // target path for reversal
 }
@@ -339,12 +241,6 @@ func (p *movePatch) apply(root, v reflect.Value, path string) {
 }
 
 func (p *movePatch) applyChecked(root, v reflect.Value, strict bool, path string) error {
-	if err := checkConditions(p, root, v); err != nil {
-		if err == ErrConditionSkipped {
-			return nil
-		}
-		return err
-	}
 	to := path
 	if p.path != "" && p.path[0] == '/' {
 		to = p.path
@@ -385,73 +281,12 @@ func (p *movePatch) toJSONPatch(path string) []map[string]any {
 	}
 	p.path = fullPath // capture path for potential reversal
 	op := map[string]any{"op": "move", "from": p.from, "path": fullPath}
-	addConditionsToOp(op, p)
 	return []map[string]any{op}
 }
+
 
 func (p *movePatch) summary(path string) string {
 	return fmt.Sprintf("Moved %s to %s", p.from, path)
-}
-
-// logPatch logs a message without modifying the value.
-type logPatch struct {
-	basePatch
-	message string
-}
-
-func (p *logPatch) apply(root, v reflect.Value, path string) {
-	slog.Default().Info("deep log", "message", p.message, "value", v.Interface())
-}
-
-func (p *logPatch) applyChecked(root, v reflect.Value, strict bool, path string) error {
-	if err := checkConditions(p, root, v); err != nil {
-		if err == ErrConditionSkipped {
-			return nil
-		}
-		return err
-	}
-	p.apply(root, v, path)
-	return nil
-}
-
-func (p *logPatch) applyResolved(root, v reflect.Value, path string, resolver ConflictResolver) error {
-	if resolver != nil {
-		_, ok := resolver.Resolve(path, OpLog, nil, nil, v, reflect.ValueOf(p.message))
-		if !ok {
-			return nil
-		}
-	}
-	return p.applyChecked(root, v, false, path)
-}
-
-func (p *logPatch) dependencies(path string) (reads []string, writes []string) {
-	return nil, nil
-}
-
-func (p *logPatch) reverse() diffPatch {
-	return p
-}
-
-func (p *logPatch) walk(path string, fn func(path string, op OpKind, old, new any) error) error {
-	return fn(path, OpLog, nil, p.message)
-}
-
-func (p *logPatch) format(indent int) string {
-	return fmt.Sprintf("Log(%q)", p.message)
-}
-
-func (p *logPatch) toJSONPatch(path string) []map[string]any {
-	fullPath := path
-	if fullPath == "" {
-		fullPath = "/"
-	}
-	op := map[string]any{"op": "log", "path": fullPath, "value": p.message}
-	addConditionsToOp(op, p)
-	return []map[string]any{op}
-}
-
-func (p *logPatch) summary(path string) string {
-	return fmt.Sprintf("Log: %s", p.message)
 }
 
 func newPtrPatch(elemPatch diffPatch) *ptrPatch {
@@ -478,7 +313,6 @@ func newMapPatch(keyType reflect.Type) *mapPatch {
 
 // ptrPatch handles changes to the content pointed to by a pointer.
 type ptrPatch struct {
-	basePatch
 	elemPatch diffPatch
 }
 
@@ -493,12 +327,6 @@ func (p *ptrPatch) apply(root, v reflect.Value, path string) {
 }
 
 func (p *ptrPatch) applyChecked(root, v reflect.Value, strict bool, path string) error {
-	if err := checkConditions(p, root, v); err != nil {
-		if err == ErrConditionSkipped {
-			return nil
-		}
-		return err
-	}
 	if v.IsNil() {
 		return fmt.Errorf("cannot apply pointer patch to nil value")
 	}
@@ -518,7 +346,6 @@ func (p *ptrPatch) dependencies(path string) (reads []string, writes []string) {
 
 func (p *ptrPatch) reverse() diffPatch {
 	return &ptrPatch{
-		basePatch: p.basePatch,
 		elemPatch: p.elemPatch.reverse(),
 	}
 }
@@ -532,11 +359,7 @@ func (p *ptrPatch) format(indent int) string {
 }
 
 func (p *ptrPatch) toJSONPatch(path string) []map[string]any {
-	ops := p.elemPatch.toJSONPatch(path)
-	for _, op := range ops {
-		addConditionsToOp(op, p)
-	}
-	return ops
+	return p.elemPatch.toJSONPatch(path)
 }
 
 func (p *ptrPatch) summary(path string) string {
@@ -545,7 +368,6 @@ func (p *ptrPatch) summary(path string) string {
 
 // interfacePatch handles changes to the value stored in an interface.
 type interfacePatch struct {
-	basePatch
 	elemPatch diffPatch
 }
 
@@ -561,12 +383,6 @@ func (p *interfacePatch) apply(root, v reflect.Value, path string) {
 }
 
 func (p *interfacePatch) applyChecked(root, v reflect.Value, strict bool, path string) error {
-	if err := checkConditions(p, root, v); err != nil {
-		if err == ErrConditionSkipped {
-			return nil
-		}
-		return err
-	}
 	if v.IsNil() {
 		return fmt.Errorf("cannot apply interface patch to nil value")
 	}
@@ -600,7 +416,6 @@ func (p *interfacePatch) dependencies(path string) (reads []string, writes []str
 
 func (p *interfacePatch) reverse() diffPatch {
 	return &interfacePatch{
-		basePatch: p.basePatch,
 		elemPatch: p.elemPatch.reverse(),
 	}
 }
@@ -614,20 +429,16 @@ func (p *interfacePatch) format(indent int) string {
 }
 
 func (p *interfacePatch) toJSONPatch(path string) []map[string]any {
-	ops := p.elemPatch.toJSONPatch(path)
-	for _, op := range ops {
-		addConditionsToOp(op, p)
-	}
-	return ops
+	return p.elemPatch.toJSONPatch(path)
 }
 
 func (p *interfacePatch) summary(path string) string {
 	return p.elemPatch.summary(path)
 }
 
+
 // structPatch handles field-level modifications in a struct.
 type structPatch struct {
-	basePatch
 	fields map[string]diffPatch
 }
 
@@ -658,13 +469,6 @@ func (p *structPatch) apply(root, v reflect.Value, path string) {
 }
 
 func (p *structPatch) applyChecked(root, v reflect.Value, strict bool, path string) error {
-	if err := checkConditions(p, root, v); err != nil {
-		if err == ErrConditionSkipped {
-			return nil
-		}
-		return err
-	}
-
 	effectivePatches, order, err := resolveStructDependencies(p, path, root)
 	if err != nil {
 		return err
@@ -762,8 +566,7 @@ func (p *structPatch) reverse() diffPatch {
 		newFields[k] = v.reverse()
 	}
 	return &structPatch{
-		basePatch: p.basePatch,
-		fields:    newFields,
+		fields: newFields,
 	}
 }
 
@@ -793,9 +596,6 @@ func (p *structPatch) toJSONPatch(path string) []map[string]any {
 	for name, patch := range p.fields {
 		fullPath := path + "/" + name
 		subOps := patch.toJSONPatch(fullPath)
-		for _, op := range subOps {
-			addConditionsToOp(op, p)
-		}
 		ops = append(ops, subOps...)
 	}
 	return ops
@@ -816,7 +616,6 @@ func (p *structPatch) summary(path string) string {
 
 // arrayPatch handles index-level modifications in a fixed-size array.
 type arrayPatch struct {
-	basePatch
 	indices map[int]diffPatch
 }
 
@@ -834,12 +633,6 @@ func (p *arrayPatch) apply(root, v reflect.Value, path string) {
 }
 
 func (p *arrayPatch) applyChecked(root, v reflect.Value, strict bool, path string) error {
-	if err := checkConditions(p, root, v); err != nil {
-		if err == ErrConditionSkipped {
-			return nil
-		}
-		return err
-	}
 	var errs []error
 	for i, patch := range p.indices {
 		if i >= v.Len() {
@@ -896,8 +689,7 @@ func (p *arrayPatch) reverse() diffPatch {
 		newIndices[k] = v.reverse()
 	}
 	return &arrayPatch{
-		basePatch: p.basePatch,
-		indices:   newIndices,
+		indices: newIndices,
 	}
 }
 
@@ -927,9 +719,6 @@ func (p *arrayPatch) toJSONPatch(path string) []map[string]any {
 	for i, patch := range p.indices {
 		fullPath := fmt.Sprintf("%s/%d", path, i)
 		subOps := patch.toJSONPatch(fullPath)
-		for _, op := range subOps {
-			addConditionsToOp(op, p)
-		}
 		ops = append(ops, subOps...)
 	}
 	return ops
@@ -950,7 +739,6 @@ func (p *arrayPatch) summary(path string) string {
 
 // mapPatch handles additions, removals, and modifications in a map.
 type mapPatch struct {
-	basePatch
 	added        map[any]reflect.Value
 	removed      map[any]reflect.Value
 	modified     map[any]diffPatch
@@ -1027,12 +815,6 @@ func (p *mapPatch) getOriginalKey(k any, targetType reflect.Type, v reflect.Valu
 }
 
 func (p *mapPatch) applyChecked(root, v reflect.Value, strict bool, path string) error {
-	if err := checkConditions(p, root, v); err != nil {
-		if err == ErrConditionSkipped {
-			return nil
-		}
-		return err
-	}
 	if v.IsNil() {
 		if len(p.added) > 0 {
 			newMap := reflect.MakeMap(v.Type())
@@ -1179,7 +961,6 @@ func (p *mapPatch) reverse() diffPatch {
 		newModified[k] = v.reverse()
 	}
 	return &mapPatch{
-		basePatch: p.basePatch,
 		added:     p.removed,
 		removed:   p.added,
 		modified:  newModified,
@@ -1231,25 +1012,21 @@ func (p *mapPatch) toJSONPatch(path string) []map[string]any {
 	for k := range p.removed {
 		fullPath := fmt.Sprintf("%s/%v", path, k)
 		op := map[string]any{"op": "remove", "path": fullPath}
-		addConditionsToOp(op, p)
 		ops = append(ops, op)
 	}
 	for k, patch := range p.modified {
 		fullPath := fmt.Sprintf("%s/%v", path, k)
 		subOps := patch.toJSONPatch(fullPath)
-		for _, op := range subOps {
-			addConditionsToOp(op, p)
-		}
 		ops = append(ops, subOps...)
 	}
 	for k, val := range p.added {
 		fullPath := fmt.Sprintf("%s/%v", path, k)
 		op := map[string]any{"op": "add", "path": fullPath, "value": core.ValueToInterface(val)}
-		addConditionsToOp(op, p)
 		ops = append(ops, op)
 	}
 	return ops
 }
+
 
 func (p *mapPatch) summary(path string) string {
 	var summaries []string
@@ -1293,7 +1070,6 @@ type ConflictResolver interface {
 
 // slicePatch handles complex edits (insertions, deletions, modifications) in a slice.
 type slicePatch struct {
-	basePatch
 	ops []sliceOp
 }
 
@@ -1343,12 +1119,6 @@ func (p *slicePatch) apply(root, v reflect.Value, path string) {
 }
 
 func (p *slicePatch) applyChecked(root, v reflect.Value, strict bool, path string) error {
-	if err := checkConditions(p, root, v); err != nil {
-		if err == ErrConditionSkipped {
-			return nil
-		}
-		return err
-	}
 	newSlice := reflect.MakeSlice(v.Type(), 0, v.Len())
 	curIdx := 0
 	var errs []error
@@ -1625,8 +1395,7 @@ func (p *slicePatch) reverse() diffPatch {
 		}
 	}
 	return &slicePatch{
-		basePatch: p.basePatch,
-		ops:       revOps,
+		ops: revOps,
 	}
 }
 
@@ -1697,19 +1466,14 @@ func (p *slicePatch) toJSONPatch(path string) []map[string]any {
 		switch op.Kind {
 		case OpAdd:
 			jsonOp := map[string]any{"op": "add", "path": fullPath, "value": core.ValueToInterface(op.Val)}
-			addConditionsToOp(jsonOp, p)
 			ops = append(ops, jsonOp)
 			shift++
 		case OpRemove:
 			jsonOp := map[string]any{"op": "remove", "path": fullPath}
-			addConditionsToOp(jsonOp, p)
 			ops = append(ops, jsonOp)
 			shift--
 		case OpReplace:
 			subOps := op.Patch.toJSONPatch(fullPath)
-			for _, sop := range subOps {
-				addConditionsToOp(sop, p)
-			}
 			ops = append(ops, subOps...)
 		}
 	}
@@ -1741,119 +1505,7 @@ func (p *slicePatch) summary(path string) string {
 	return strings.Join(summaries, "\n")
 }
 
-func addConditionsToOp(op map[string]any, p diffPatch) {
-	_, ifC, unlessC := p.conditions()
-	if ifC != nil {
-		op["if"] = conditionToPredicate(ifC)
-	}
-	if unlessC != nil {
-		op["unless"] = conditionToPredicate(unlessC)
-	}
-}
-
-func conditionToPredicate(c any) any {
-	if c == nil {
-		return nil
-	}
-
-	v := reflect.ValueOf(c)
-	for v.Kind() == reflect.Pointer || v.Kind() == reflect.Interface {
-		v = v.Elem()
-	}
-
-	typeName := v.Type().Name()
-	if strings.HasPrefix(typeName, "rawCompareCondition") {
-		path := string(v.FieldByName("Path").Interface().(core.DeepPath))
-		val := v.FieldByName("Val").Interface()
-		op := v.FieldByName("Op").String()
-		ignoreCase := v.FieldByName("IgnoreCase").Bool()
-
-		switch op {
-		case "==":
-			jsonOp := "test"
-			if ignoreCase {
-				jsonOp = "test-"
-			}
-			return map[string]any{"op": jsonOp, "path": path, "value": val}
-		case "!=":
-			jsonOp := "test"
-			if ignoreCase {
-				jsonOp = "test-"
-			}
-			return map[string]any{"op": "not", "apply": []any{map[string]any{"op": jsonOp, "path": path, "value": val}}}
-		case "<":
-			return map[string]any{"op": "less", "path": path, "value": val}
-		case ">":
-			return map[string]any{"op": "more", "path": path, "value": val}
-		case "<=":
-			return map[string]any{"op": "or", "apply": []any{
-				map[string]any{"op": "less", "path": path, "value": val},
-				map[string]any{"op": "test", "path": path, "value": val},
-			}}
-		case ">=":
-			return map[string]any{"op": "or", "apply": []any{
-				map[string]any{"op": "more", "path": path, "value": val},
-				map[string]any{"op": "test", "path": path, "value": val},
-			}}
-		}
-	}
-
-	if strings.HasPrefix(typeName, "rawDefinedCondition") {
-		path := string(v.FieldByName("Path").Interface().(core.DeepPath))
-		return map[string]any{"op": "defined", "path": path}
-	}
-
-	if strings.HasPrefix(typeName, "rawUndefinedCondition") {
-		path := string(v.FieldByName("Path").Interface().(core.DeepPath))
-		return map[string]any{"op": "undefined", "path": path}
-	}
-
-	if strings.HasPrefix(typeName, "rawTypeCondition") {
-		path := string(v.FieldByName("Path").Interface().(core.DeepPath))
-		typeName := v.FieldByName("TypeName").String()
-		return map[string]any{"op": "type", "path": path, "value": typeName}
-	}
-
-	if strings.HasPrefix(typeName, "rawStringCondition") {
-		path := string(v.FieldByName("Path").Interface().(core.DeepPath))
-		val := v.FieldByName("Val").String()
-		op := v.FieldByName("Op").String()
-		ignoreCase := v.FieldByName("IgnoreCase").Bool()
-
-		if ignoreCase && op != "matches" {
-			op += "-"
-		}
-		if op == "matches" && ignoreCase {
-			return map[string]any{"op": op, "path": path, "value": val, "ignoreCase": true}
-		}
-		return map[string]any{"op": op, "path": path, "value": val}
-	}
-
-	if strings.HasPrefix(typeName, "rawInCondition") {
-		path := string(v.FieldByName("Path").Interface().(core.DeepPath))
-		vals := v.FieldByName("Values").Interface()
-		ignoreCase := v.FieldByName("IgnoreCase").Bool()
-
-		op := "in"
-		if ignoreCase {
-			op = "in-"
-		}
-		return map[string]any{"op": op, "path": path, "value": vals}
-	}
-
-	if strings.HasPrefix(typeName, "typedCondition") || strings.HasPrefix(typeName, "typedRawCondition") {
-		inner := v.FieldByName("inner")
-		if !inner.IsValid() {
-			inner = v.FieldByName("raw")
-		}
-		return conditionToPredicate(inner.Interface())
-	}
-
-	return nil
-}
-
 type readOnlyPatch struct {
-	basePatch
 	inner diffPatch
 }
 
@@ -1872,7 +1524,7 @@ func (p *readOnlyPatch) applyResolved(root, v reflect.Value, path string, resolv
 }
 
 func (p *readOnlyPatch) reverse() diffPatch {
-	return &readOnlyPatch{basePatch: p.basePatch, inner: p.inner.reverse()}
+	return &readOnlyPatch{inner: p.inner.reverse()}
 }
 
 func (p *readOnlyPatch) format(indent int) string {
@@ -1896,7 +1548,6 @@ func (p *readOnlyPatch) dependencies(path string) (reads []string, writes []stri
 }
 
 type customDiffPatch struct {
-	basePatch
 	patch any
 }
 
@@ -1938,7 +1589,7 @@ func (p *customDiffPatch) reverse() diffPatch {
 	m := reflect.ValueOf(p.patch).MethodByName("Reverse")
 	if m.IsValid() {
 		res := m.Call(nil)
-		return &customDiffPatch{basePatch: p.basePatch, patch: res[0].Interface()}
+		return &customDiffPatch{patch: res[0].Interface()}
 	}
 	return p // Cannot reverse?
 }
@@ -1961,12 +1612,6 @@ func (p *customDiffPatch) walk(path string, fn func(path string, op OpKind, old,
 	m := reflect.ValueOf(p.patch).MethodByName("Walk")
 	if m.IsValid() {
 		// This is tricky. Fn needs to be adapted.
-		// Let's assume custom patch Walk signature matches Patch.Walk but untyped?
-		// func(path string, op OpKind, old, new any) error
-		// We can try to pass fn.
-		// But reflection call expects reflect.Value.
-		// We can't easily pass a closure via reflection if types don't match exactly.
-		// Skip for now.
 	}
 	return nil
 }
@@ -1991,3 +1636,4 @@ func (p *customDiffPatch) toJSONPatch(path string) []map[string]any {
 func (p *customDiffPatch) summary(path string) string {
 	return "CustomPatch"
 }
+

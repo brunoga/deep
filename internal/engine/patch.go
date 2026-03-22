@@ -1,13 +1,10 @@
 package engine
 
 import (
-	"encoding/gob"
 	"encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
-
-	"github.com/brunoga/deep/v5/internal/cond"
 )
 
 // OpKind represents the type of operation in a patch.
@@ -50,9 +47,7 @@ type Patch[T any] interface {
 	Apply(v *T)
 
 	// ApplyChecked applies the patch only if specific conditions are met.
-	// 1. If the patch has a global Condition, it must evaluate to true.
-	// 2. If Strict mode is enabled, every modification must match the 'oldVal' recorded in the patch.
-	// 3. Any local per-field conditions must evaluate to true.
+	// If Strict mode is enabled, every modification must match the 'oldVal' recorded in the patch.
 	ApplyChecked(v *T) error
 
 	// ApplyResolved applies the patch using a custom ConflictResolver.
@@ -63,9 +58,6 @@ type Patch[T any] interface {
 	// The path is a JSON Pointer dot-notation path (e.g. "/Field/SubField/0").
 	// If fn returns an error, walking stops and that error is returned.
 	Walk(fn func(path string, op OpKind, old, new any) error) error
-
-	// WithCondition returns a new Patch with the given global condition attached.
-	WithCondition(c cond.Condition[T]) Patch[T]
 
 	// WithStrict returns a new Patch with the strict consistency check enabled or disabled.
 	WithStrict(strict bool) Patch[T]
@@ -78,68 +70,8 @@ type Patch[T any] interface {
 
 	// Summary returns a human-readable summary of the changes in the patch.
 	Summary() string
-
-	// MarshalSerializable returns a serializable representation of the patch.
-	MarshalSerializable() (any, error)
 }
 
-// NewPatch returns a new, empty patch for type T.
-func NewPatch[T any]() Patch[T] {
-	return &typedPatch[T]{}
-}
-
-// UnmarshalPatchSerializable reconstructs a patch from its serializable representation.
-func UnmarshalPatchSerializable[T any](data any) (Patch[T], error) {
-	if data == nil {
-		return &typedPatch[T]{}, nil
-	}
-
-	m, ok := data.(map[string]any)
-	if !ok {
-		// Try direct unmarshal if it's not the wrapped map
-		inner, err := PatchFromSerializable(data)
-		if err != nil {
-			return nil, err
-		}
-		return &typedPatch[T]{inner: inner.(diffPatch)}, nil
-	}
-
-	innerData, ok := m["inner"]
-	if !ok {
-		// It might be a direct surrogate map
-		inner, err := PatchFromSerializable(m)
-		if err != nil {
-			return nil, err
-		}
-		return &typedPatch[T]{inner: inner.(diffPatch)}, nil
-	}
-
-	inner, err := PatchFromSerializable(innerData)
-	if err != nil {
-		return nil, err
-	}
-
-	p := &typedPatch[T]{
-		inner: inner.(diffPatch),
-	}
-	if condData, ok := m["cond"]; ok && condData != nil {
-		c, err := cond.ConditionFromSerializable[T](condData)
-		if err != nil {
-			return nil, err
-		}
-		p.cond = c
-	}
-	if strict, ok := m["strict"].(bool); ok {
-		p.strict = strict
-	}
-	return p, nil
-}
-
-// Register registers the Patch implementation for type T with the gob package.
-// This is required if you want to use Gob serialization with Patch[T].
-func Register[T any]() {
-	gob.Register(&typedPatch[T]{})
-}
 
 // ApplyError represents one or more errors that occurred during patch application.
 type ApplyError struct {
@@ -168,7 +100,6 @@ func (e *ApplyError) Errors() []error {
 
 type typedPatch[T any] struct {
 	inner  diffPatch
-	cond   cond.Condition[T]
 	strict bool
 }
 
@@ -189,16 +120,6 @@ func (p *typedPatch[T]) Apply(v *T) {
 }
 
 func (p *typedPatch[T]) ApplyChecked(v *T) error {
-	if p.cond != nil {
-		ok, err := p.cond.Evaluate(v)
-		if err != nil {
-			return &ApplyError{errors: []error{fmt.Errorf("condition evaluation failed: %w", err)}}
-		}
-		if !ok {
-			return &ApplyError{errors: []error{fmt.Errorf("condition failed")}}
-		}
-	}
-
 	if p.inner == nil {
 		return nil
 	}
@@ -240,18 +161,9 @@ func (p *typedPatch[T]) Walk(fn func(path string, op OpKind, old, new any) error
 	})
 }
 
-func (p *typedPatch[T]) WithCondition(c cond.Condition[T]) Patch[T] {
-	return &typedPatch[T]{
-		inner:  p.inner,
-		cond:   c,
-		strict: p.strict,
-	}
-}
-
 func (p *typedPatch[T]) WithStrict(strict bool) Patch[T] {
 	return &typedPatch[T]{
 		inner:  p.inner,
-		cond:   p.cond,
 		strict: strict,
 	}
 }
@@ -282,22 +194,6 @@ func (p *typedPatch[T]) Summary() string {
 	return p.inner.summary("/")
 }
 
-func (p *typedPatch[T]) MarshalSerializable() (any, error) {
-	inner, err := PatchToSerializable(p.inner)
-	if err != nil {
-		return nil, err
-	}
-	c, err := cond.ConditionToSerializable(p.cond)
-	if err != nil {
-		return nil, err
-	}
-	return map[string]any{
-		"inner":  inner,
-		"cond":   c,
-		"strict": p.strict,
-	}, nil
-}
-
 func (p *typedPatch[T]) String() string {
 	if p.inner == nil {
 		return "<nil>"
@@ -305,52 +201,3 @@ func (p *typedPatch[T]) String() string {
 	return p.inner.format(0)
 }
 
-func (p *typedPatch[T]) MarshalJSON() ([]byte, error) {
-	s, err := p.MarshalSerializable()
-	if err != nil {
-		return nil, err
-	}
-	return json.Marshal(s)
-}
-
-func (p *typedPatch[T]) UnmarshalJSON(data []byte) error {
-	var m map[string]any
-	if err := json.Unmarshal(data, &m); err != nil {
-		return err
-	}
-	res, err := UnmarshalPatchSerializable[T](m)
-	if err != nil {
-		return err
-	}
-	if tp, ok := res.(*typedPatch[T]); ok {
-		p.inner = tp.inner
-		p.cond = tp.cond
-		p.strict = tp.strict
-	}
-	return nil
-}
-
-func (p *typedPatch[T]) GobEncode() ([]byte, error) {
-	s, err := p.MarshalSerializable()
-	if err != nil {
-		return nil, err
-	}
-	return json.Marshal(s)
-}
-
-func (p *typedPatch[T]) GobDecode(data []byte) error {
-	var m map[string]any
-	if err := json.Unmarshal(data, &m); err != nil {
-		return err
-	}
-	res, err := UnmarshalPatchSerializable[T](m)
-	if err != nil {
-		return err
-	}
-	if tp, ok := res.(*typedPatch[T]); ok {
-		p.inner = tp.inner
-		p.cond = tp.cond
-		p.strict = tp.strict
-	}
-	return nil
-}

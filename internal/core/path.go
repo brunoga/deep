@@ -401,42 +401,6 @@ type PathPart struct {
 	IsIndex bool
 }
 
-func (p PathPart) Equals(other PathPart) bool {
-	if p.IsIndex != other.IsIndex {
-		return false
-	}
-	if p.IsIndex {
-		return p.Index == other.Index
-	}
-	return p.Key == other.Key
-}
-
-func (p DeepPath) StripParts(prefix []PathPart) DeepPath {
-	parts := ParsePath(string(p))
-	if len(parts) < len(prefix) {
-		return p
-	}
-	for i := range prefix {
-		if !parts[i].Equals(prefix[i]) {
-			return p
-		}
-	}
-	remaining := parts[len(prefix):]
-	if len(remaining) == 0 {
-		return ""
-	}
-	var res strings.Builder
-	for _, part := range remaining {
-		res.WriteByte('/')
-		if part.IsIndex {
-			res.WriteString(strconv.Itoa(part.Index))
-		} else {
-			res.WriteString(EscapeKey(part.Key))
-		}
-	}
-	return DeepPath(res.String())
-}
-
 // ParsePath parses a JSON Pointer path (RFC 6901).
 func ParsePath(path string) []PathPart {
 	return ParseJSONPointer(path)
@@ -551,13 +515,3 @@ func findSliceElemByKey(s reflect.Value, keyIdx int, keyStr string) (reflect.Val
 	return reflect.Value{}, false
 }
 
-func ToReflectValue(v any) reflect.Value {
-	if rv, ok := v.(reflect.Value); ok {
-		return rv
-	}
-	rv := reflect.ValueOf(v)
-	for rv.Kind() == reflect.Pointer {
-		rv = rv.Elem()
-	}
-	return rv
-}

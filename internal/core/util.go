@@ -92,13 +92,6 @@ func ValueToInterface(v reflect.Value) any {
 	return v.Interface()
 }
 
-func InterfaceToValue(i any) reflect.Value {
-	if i == nil {
-		return reflect.Value{}
-	}
-	return reflect.ValueOf(i)
-}
-
 func ExtractKey(v reflect.Value, fieldIdx int) any {
 	if v.Kind() == reflect.Pointer {
 		if v.IsNil() {

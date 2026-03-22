@@ -83,13 +83,6 @@ func TestPatch_ReverseFormat_Exhaustive(t *testing.T) {
 		p.format(0)
 		p.toJSONPatch("/p")
 	})
-	// logPatch
-	t.Run("logPatch", func(t *testing.T) {
-		p := &logPatch{message: "test"}
-		p.reverse()
-		p.format(0)
-		p.toJSONPatch("/p")
-	})
 }
 
 func TestPatch_MiscCoverage(t *testing.T) {

@@ -62,7 +62,6 @@ type typeData struct {
 // ── helpers used by both templates and FuncMap ───────────────────────────────
 
 func isPtr(s string) bool          { return strings.HasPrefix(s, "*") }
-func deref(s string) string        { return strings.TrimPrefix(s, "*") }
 func mapVal(s string) string       { return s[strings.Index(s, "]")+1:] }
 func sliceElem(s string) string    { return s[2:] }
 func isMapStringKey(s string) bool { return strings.HasPrefix(s, "map[string]") }
