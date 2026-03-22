@@ -1,14 +1,35 @@
+// Package crdt provides Conflict-free Replicated Data Types (CRDTs) built on
+// top of the deep patch engine.
+//
+// The central type is [CRDT], a concurrency-safe wrapper around any value of
+// type T. It tracks causal history using a per-field Hybrid Logical Clock (HLC)
+// and resolves concurrent edits with Last-Write-Wins (LWW) semantics.
+//
+// # Basic workflow
+//
+//  1. Create nodes: nodeA := crdt.NewCRDT(initial, "node-a")
+//  2. Edit locally: delta := nodeA.Edit(func(v *T) { v.Field = newVal })
+//  3. Distribute: send delta (JSON-serializable) to peers
+//  4. Apply remotely: nodeB.ApplyDelta(delta)
+//
+// For full-state synchronization between two nodes use [CRDT.Merge].
+//
+// # Text CRDT
+//
+// [Text] is a convergent, ordered sequence of [TextRun] segments. It supports
+// concurrent insertions and deletions across nodes and is integrated with
+// [CRDT] via a custom diff/apply strategy registered at init time.
 package crdt
 
 import (
 	"encoding/json"
-	"fmt"
+	"log/slog"
 	"sync"
 
-	"github.com/brunoga/deep/v5/internal/cond"
 	"github.com/brunoga/deep/v5/crdt/hlc"
+	"github.com/brunoga/deep/v5/internal/cond"
 	"github.com/brunoga/deep/v5/internal/engine"
-	crdtresolver "github.com/brunoga/deep/v5/resolvers/crdt"
+	crdtresolver "github.com/brunoga/deep/v5/internal/resolvers/crdt"
 )
 
 func init() {
@@ -78,9 +99,24 @@ type CRDT[T any] struct {
 }
 
 // Delta represents a set of changes with a causal timestamp.
+// Obtain a Delta via CRDT.Edit; apply it on remote nodes via CRDT.ApplyDelta.
 type Delta[T any] struct {
-	Patch     engine.Patch[T] `json:"p"`
-	Timestamp hlc.HLC         `json:"t"`
+	patch     engine.Patch[T]
+	Timestamp hlc.HLC `json:"t"`
+}
+
+func (d Delta[T]) MarshalJSON() ([]byte, error) {
+	patchBytes, err := json.Marshal(d.patch)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(struct {
+		Patch     json.RawMessage `json:"p"`
+		Timestamp hlc.HLC         `json:"t"`
+	}{
+		Patch:     patchBytes,
+		Timestamp: d.Timestamp,
+	})
 }
 
 func (d *Delta[T]) UnmarshalJSON(data []byte) error {
@@ -97,7 +133,7 @@ func (d *Delta[T]) UnmarshalJSON(data []byte) error {
 		if err := json.Unmarshal(m.Patch, p); err != nil {
 			return err
 		}
-		d.Patch = p
+		d.patch = p
 	}
 	return nil
 }
@@ -124,48 +160,60 @@ func (c *CRDT[T]) Clock() *hlc.Clock {
 }
 
 // View returns a deep copy of the current value.
+// If the copy fails (e.g. the value contains an unsupported kind), the zero
+// value for T is returned and the error is logged via slog.Default().
 func (c *CRDT[T]) View() T {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	copied, err := engine.Copy(c.value)
 	if err != nil {
+		slog.Default().Error("crdt: View copy failed", "err", err)
 		var zero T
 		return zero
 	}
 	return copied
 }
 
-// Edit applies changes and returns a Delta.
+// Edit applies fn to a copy of the current value, computes a delta, advances
+// the local clock, and returns the delta for distribution to peers. Returns an
+// empty Delta if the edit produces no changes.
 func (c *CRDT[T]) Edit(fn func(*T)) Delta[T] {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	workingCopy, err := engine.Copy(c.value)
 	if err != nil {
+		slog.Default().Error("crdt: Edit copy failed", "err", err)
 		return Delta[T]{}
 	}
 	fn(&workingCopy)
 
 	patch, err := engine.Diff(c.value, workingCopy)
-	if err != nil || patch == nil {
+	if err != nil {
+		slog.Default().Error("crdt: Edit diff failed", "err", err)
+		return Delta[T]{}
+	}
+	if patch == nil {
 		return Delta[T]{}
 	}
 
 	now := c.clock.Now()
-	c.updateMetadataLocked(patch, now)
+	if err := c.updateMetadataLocked(patch, now); err != nil {
+		slog.Default().Error("crdt: Edit metadata update failed", "err", err)
+		return Delta[T]{}
+	}
 
 	c.value = workingCopy
 
 	return Delta[T]{
-		Patch:     patch,
+		patch:     patch,
 		Timestamp: now,
 	}
 }
 
-// CreateDelta takes an existing patch, applies it to the local value,
-// updates local metadata, and returns a Delta. Use this if you have
-// already generated a patch manually.
-func (c *CRDT[T]) CreateDelta(patch engine.Patch[T]) Delta[T] {
+// createDelta wraps an existing internal patch into a Delta, applies it
+// locally, and advances the clock. Used internally by tests.
+func (c *CRDT[T]) createDelta(patch engine.Patch[T]) Delta[T] {
 	if patch == nil {
 		return Delta[T]{}
 	}
@@ -174,18 +222,21 @@ func (c *CRDT[T]) CreateDelta(patch engine.Patch[T]) Delta[T] {
 	defer c.mu.Unlock()
 
 	now := c.clock.Now()
-	c.updateMetadataLocked(patch, now)
+	if err := c.updateMetadataLocked(patch, now); err != nil {
+		slog.Default().Error("crdt: createDelta metadata update failed", "err", err)
+		return Delta[T]{}
+	}
 
 	patch.Apply(&c.value)
 
 	return Delta[T]{
-		Patch:     patch,
+		patch:     patch,
 		Timestamp: now,
 	}
 }
 
-func (c *CRDT[T]) updateMetadataLocked(patch engine.Patch[T], ts hlc.HLC) {
-	err := patch.Walk(func(path string, op engine.OpKind, old, new any) error {
+func (c *CRDT[T]) updateMetadataLocked(patch engine.Patch[T], ts hlc.HLC) error {
+	return patch.Walk(func(path string, op engine.OpKind, old, new any) error {
 		if op == engine.OpRemove {
 			c.tombstones[path] = ts
 		} else {
@@ -193,14 +244,11 @@ func (c *CRDT[T]) updateMetadataLocked(patch engine.Patch[T], ts hlc.HLC) {
 		}
 		return nil
 	})
-	if err != nil {
-		panic(fmt.Errorf("crdt metadata update failed: %w", err))
-	}
 }
 
 // ApplyDelta applies a delta using LWW resolution.
 func (c *CRDT[T]) ApplyDelta(delta Delta[T]) bool {
-	if delta.Patch == nil {
+	if delta.patch == nil {
 		return false
 	}
 
@@ -215,7 +263,7 @@ func (c *CRDT[T]) ApplyDelta(delta Delta[T]) bool {
 		OpTime:     delta.Timestamp,
 	}
 
-	if err := delta.Patch.ApplyResolved(&c.value, resolver); err != nil {
+	if err := delta.patch.ApplyResolved(&c.value, resolver); err != nil {
 		return false
 	}
 

@@ -43,8 +43,8 @@ func TestCRDT_CreateDelta(t *testing.T) {
 	// Manually create a patch using engine.Diff
 	patch := engine.MustDiff(node.View(), TestUser{ID: 1, Name: "New"})
 
-	// Use the new helper to wrap it into a Delta and update local state
-	delta := node.CreateDelta(patch)
+	// Use the internal helper to wrap it into a Delta and update local state
+	delta := node.createDelta(patch)
 
 	if node.View().Name != "New" {
 		t.Errorf("expected New, got %s", node.View().Name)
