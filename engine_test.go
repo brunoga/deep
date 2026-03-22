@@ -215,6 +215,90 @@ func TestTextAdvanced(t *testing.T) {
 	text2.ApplyOperation(op)
 }
 
+func BenchmarkDiffGenerated(b *testing.B) {
+	u1 := testmodels.User{ID: 1, Name: "Alice", Roles: []string{"admin", "user"}}
+	u2 := testmodels.User{ID: 1, Name: "Bob", Roles: []string{"admin"}}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		deep.Diff(u1, u2)
+	}
+}
+
+func BenchmarkDiffReflection(b *testing.B) {
+	type SimpleData struct {
+		A int
+		B string
+		C []string
+	}
+	a := SimpleData{A: 1, B: "Alice", C: []string{"admin", "user"}}
+	c := SimpleData{A: 1, B: "Bob", C: []string{"admin"}}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		deep.Diff(a, c)
+	}
+}
+
+func BenchmarkEqualGenerated(b *testing.B) {
+	u1 := testmodels.User{ID: 1, Name: "Alice", Roles: []string{"admin", "user"}}
+	u2 := testmodels.User{ID: 1, Name: "Alice", Roles: []string{"admin", "user"}}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		deep.Equal(u1, u2)
+	}
+}
+
+func BenchmarkEqualReflection(b *testing.B) {
+	type SimpleData struct {
+		A int
+		B string
+		C []string
+	}
+	a := SimpleData{A: 1, B: "Alice", C: []string{"admin", "user"}}
+	c := SimpleData{A: 1, B: "Alice", C: []string{"admin", "user"}}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		deep.Equal(a, c)
+	}
+}
+
+func BenchmarkCopyGenerated(b *testing.B) {
+	u := testmodels.User{
+		ID:    1,
+		Name:  "Alice",
+		Roles: []string{"admin", "user"},
+		Score: map[string]int{"chess": 1500, "go": 2000},
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		deep.Copy(u)
+	}
+}
+
+func BenchmarkCopyReflection(b *testing.B) {
+	type SimpleData struct {
+		A int
+		B string
+		C []string
+		D map[string]int
+	}
+	a := SimpleData{
+		A: 1,
+		B: "Alice",
+		C: []string{"admin", "user"},
+		D: map[string]int{"chess": 1500, "go": 2000},
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		deep.Copy(a)
+	}
+}
+
 func BenchmarkApplyGenerated(b *testing.B) {
 	u1 := testmodels.User{ID: 1, Name: "Alice"}
 	u2 := testmodels.User{ID: 1, Name: "Bob"}
