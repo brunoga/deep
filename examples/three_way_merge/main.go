@@ -31,14 +31,14 @@ func main() {
 	tsA := clock.Now()
 	patchA := v5.NewPatch[SystemConfig]()
 	patchA.Operations = append(patchA.Operations, v5.Operation{
-		Kind: v5.OpReplace, Path: "/endpoints/auth", New: "https://auth.internal", Timestamp: tsA,
+		Kind: v5.OpReplace, Path: "/endpoints/auth", New: "https://auth.internal", Timestamp: &tsA,
 	})
 
 	// User B also changes Endpoints/auth
 	tsB := clock.Now()
 	patchB := v5.NewPatch[SystemConfig]()
 	patchB.Operations = append(patchB.Operations, v5.Operation{
-		Kind: v5.OpReplace, Path: "/endpoints/auth", New: "https://auth.remote", Timestamp: tsB,
+		Kind: v5.OpReplace, Path: "/endpoints/auth", New: "https://auth.remote", Timestamp: &tsB,
 	})
 
 	fmt.Println("--- BASE STATE ---")

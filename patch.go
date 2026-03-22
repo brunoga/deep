@@ -89,7 +89,7 @@ type Operation struct {
 	Path      string     `json:"p"` // JSON Pointer path; created via Field selectors.
 	Old       any        `json:"o,omitempty"`
 	New       any        `json:"n,omitempty"`
-	Timestamp hlc.HLC    `json:"t,omitempty"` // Integrated causality via HLC.
+	Timestamp *hlc.HLC   `json:"t,omitempty"` // Integrated causality via HLC; nil means no timestamp.
 	If        *Condition `json:"if,omitempty"`
 	Unless    *Condition `json:"un,omitempty"`
 

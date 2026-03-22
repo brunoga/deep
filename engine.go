@@ -122,7 +122,7 @@ func Apply[T any](target *T, p Patch[T]) error {
 			newVal := reflect.ValueOf(op.New)
 
 			// LWW logic
-			if op.Timestamp.WallTime != 0 {
+			if op.Timestamp != nil {
 				current, err := core.DeepPath(op.Path).Resolve(v.Elem())
 				if err == nil && current.IsValid() {
 					if current.Kind() == reflect.Struct {
@@ -204,7 +204,7 @@ func Merge[T any](base, other Patch[T], r ConflictResolver) Patch[T] {
 				resolvedVal := r.Resolve(op.Path, existing.New, op.New)
 				op.New = resolvedVal
 				latest[op.Path] = op
-			} else if op.Timestamp.After(existing.Timestamp) || (isOther && !existing.Timestamp.After(op.Timestamp)) {
+			} else if hlcAfter(op.Timestamp, existing.Timestamp) || (isOther && !hlcAfter(existing.Timestamp, op.Timestamp)) {
 				// Newer timestamp wins; on tie (equal or zero) other wins over base.
 				latest[op.Path] = op
 			}

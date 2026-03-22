@@ -28,7 +28,7 @@ func TestCausality(t *testing.T) {
 		Kind:      deep.OpReplace,
 		Path:      "/Title",
 		New:       deep.LWW[string]{Value: "Newer", Timestamp: ts2},
-		Timestamp: ts2,
+		Timestamp: &ts2,
 	})
 
 	// Older update (simulating delayed arrival)
@@ -37,7 +37,7 @@ func TestCausality(t *testing.T) {
 		Kind:      deep.OpReplace,
 		Path:      "/Title",
 		New:       deep.LWW[string]{Value: "Older", Timestamp: ts1},
-		Timestamp: ts1,
+		Timestamp: &ts1,
 	})
 
 	// 1. Apply newer then older -> newer should win

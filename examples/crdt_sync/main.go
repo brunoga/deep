@@ -25,17 +25,17 @@ func main() {
 	tsA := clockA.Now()
 	patchA := v5.NewPatch[SharedState]()
 	patchA.Operations = append(patchA.Operations, v5.Operation{
-		Kind: v5.OpReplace, Path: "/title", New: "Title by A", Timestamp: tsA,
+		Kind: v5.OpReplace, Path: "/title", New: "Title by A", Timestamp: &tsA,
 	})
 
 	// 2. Node B Edit (Concurrent)
 	tsB := clockB.Now()
 	patchB := v5.NewPatch[SharedState]()
 	patchB.Operations = append(patchB.Operations, v5.Operation{
-		Kind: v5.OpReplace, Path: "/title", New: "Title by B", Timestamp: tsB,
+		Kind: v5.OpReplace, Path: "/title", New: "Title by B", Timestamp: &tsB,
 	})
 	patchB.Operations = append(patchB.Operations, v5.Operation{
-		Kind: v5.OpReplace, Path: "/options/font", New: "mono", Timestamp: tsB,
+		Kind: v5.OpReplace, Path: "/options/font", New: "mono", Timestamp: &tsB,
 	})
 
 	// 3. Convergent Merge
