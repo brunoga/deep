@@ -1,0 +1,10 @@
+# Editor swap files
+*.swp
+*.swo
+
+# macOS
+.DS_Store
+
+# Test binaries and coverage
+*.test
+coverage.out
