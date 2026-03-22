@@ -154,8 +154,13 @@ func Apply[T any](target *T, p Patch[T]) error {
 			var val reflect.Value
 			val, err = core.DeepPath(fromPath).Resolve(v.Elem())
 			if err == nil {
+				// Copy the resolved value before deleting the source: Resolve
+				// returns a reference into the struct, so Delete would zero val
+				// in place before it is written to the destination.
+				copied := reflect.New(val.Type()).Elem()
+				copied.Set(val)
 				if err = core.DeepPath(fromPath).Delete(v.Elem()); err == nil {
-					err = core.DeepPath(op.Path).Set(v.Elem(), val)
+					err = core.DeepPath(op.Path).Set(v.Elem(), copied)
 				}
 			}
 		case OpCopy:

@@ -22,7 +22,7 @@ func main() {
 	}
 
 	fmt.Println("--- BEFORE ---")
-	fmt.Printf("%+v\n", doc)
+	fmt.Printf("Draft: %q  Published: %q\n", doc.Draft, doc.Published)
 
 	// Build a Move patch: /draft → /published
 	draftPath := deep.Field(func(d *Document) *string { return &d.Draft })
@@ -38,5 +38,5 @@ func main() {
 	}
 
 	fmt.Println("--- AFTER ---")
-	fmt.Printf("%+v\n", doc)
+	fmt.Printf("Draft: %q  Published: %q\n", doc.Draft, doc.Published)
 }
