@@ -116,6 +116,12 @@ func fieldApplyCase(f FieldInfo, p string) string {
 	}
 	b.WriteString("\t\t}\n")
 	// Value assignment
+	if f.IsText {
+		// Text is a convergent CRDT type — delegate to its own ApplyOperation which calls MergeTextRuns.
+		fmt.Fprintf(&b, "\t\top.Path = \"/\"\n")
+		fmt.Fprintf(&b, "\t\treturn t.%s.ApplyOperation(op)\n", f.Name)
+		return b.String()
+	}
 	fmt.Fprintf(&b, "\t\tif v, ok := op.New.(%s); ok {\n\t\t\tt.%s = v\n\t\t\treturn true, nil\n\t\t}\n", f.Type, f.Name)
 	// Numeric float64 fallback (JSON deserialises numbers as float64)
 	if f.Type == "int" || f.Type == "int64" || f.Type == "float64" {
@@ -187,7 +193,9 @@ func diffFieldCode(f FieldInfo, p string, typeKeys map[string]string) string {
 		if f.IsText {
 			other = "other." + f.Name
 		}
-		needsGuard := isPtr(f.Type) || f.IsText
+		// Text is a slice value — &t.Field is never nil and Text.Diff handles empty slices.
+		// Only pointer fields need a nil guard.
+		needsGuard := isPtr(f.Type)
 		if needsGuard {
 			fmt.Fprintf(&b, "\tif %s != nil && %s != nil {\n", self, other)
 		}
@@ -264,7 +272,6 @@ func evalCondCase(f FieldInfo, pkgPrefix string) string {
 
 	b.WriteString("\t\tif c.Op == \"exists\" { return true, nil }\n")
 	fmt.Fprintf(&b, "\t\tif c.Op == \"type\" { return checkType(t.%s, c.Value.(string)), nil }\n", n)
-	fmt.Fprintf(&b, "\t\tif c.Op == \"log\" { %sLogger().Info(\"deep condition log\", \"message\", c.Value, \"path\", c.Path, \"value\", t.%s); return true, nil }\n", pkgPrefix, n)
 	fmt.Fprintf(&b, "\t\tif c.Op == \"matches\" { return regexp.MatchString(c.Value.(string), fmt.Sprintf(\"%%v\", t.%s)) }\n", n)
 
 	switch {
@@ -524,7 +531,7 @@ func (t *{{.TypeName}}) ApplyOperation(op {{.P}}Operation) (bool, error) {
 var diffTmpl = template.Must(template.New("diff").Funcs(tmplFuncs).Parse(
 	`// Diff compares t with other and returns a Patch.
 func (t *{{.TypeName}}) Diff(other *{{.TypeName}}) {{.P}}Patch[{{.TypeName}}] {
-	p := {{.P}}NewPatch[{{.TypeName}}]()
+	p := {{.P}}Patch[{{.TypeName}}]{}
 {{range .Fields}}{{diffFieldCode . $.P $.TypeKeys}}{{end}}
 	return p
 }

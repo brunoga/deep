@@ -132,10 +132,8 @@ func (t *User) ApplyOperation(op deep.Operation) (bool, error) {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Bio)
 			}
 		}
-		if v, ok := op.New.(crdt.Text); ok {
-			t.Bio = v
-			return true, nil
-		}
+		op.Path = "/"
+		return t.Bio.ApplyOperation(op)
 	case "/age":
 		if op.Kind == deep.OpLog {
 			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.age)
@@ -189,7 +187,7 @@ func (t *User) ApplyOperation(op deep.Operation) (bool, error) {
 
 // Diff compares t with other and returns a Patch.
 func (t *User) Diff(other *User) deep.Patch[User] {
-	p := deep.NewPatch[User]()
+	p := deep.Patch[User]{}
 	if t.ID != other.ID {
 		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/id", Old: t.ID, New: other.ID})
 	}
@@ -236,16 +234,14 @@ func (t *User) Diff(other *User) deep.Patch[User] {
 			}
 		}
 	}
-	if (&t.Bio) != nil && other.Bio != nil {
-		subBio := (&t.Bio).Diff(other.Bio)
-		for _, op := range subBio.Operations {
-			if op.Path == "" || op.Path == "/" {
-				op.Path = "/bio"
-			} else {
-				op.Path = "/bio" + op.Path
-			}
-			p.Operations = append(p.Operations, op)
+	subBio := (&t.Bio).Diff(other.Bio)
+	for _, op := range subBio.Operations {
+		if op.Path == "" || op.Path == "/" {
+			op.Path = "/bio"
+		} else {
+			op.Path = "/bio" + op.Path
 		}
+		p.Operations = append(p.Operations, op)
 	}
 	if t.age != other.age {
 		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/age", Old: t.age, New: other.age})
@@ -290,10 +286,6 @@ func (t *User) EvaluateCondition(c deep.Condition) (bool, error) {
 		}
 		if c.Op == "type" {
 			return checkType(t.ID, c.Value.(string)), nil
-		}
-		if c.Op == "log" {
-			deep.Logger().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.ID)
-			return true, nil
 		}
 		if c.Op == "matches" {
 			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.ID))
@@ -352,10 +344,6 @@ func (t *User) EvaluateCondition(c deep.Condition) (bool, error) {
 		if c.Op == "type" {
 			return checkType(t.Name, c.Value.(string)), nil
 		}
-		if c.Op == "log" {
-			deep.Logger().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Name)
-			return true, nil
-		}
 		if c.Op == "matches" {
 			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Name))
 		}
@@ -399,10 +387,6 @@ func (t *User) EvaluateCondition(c deep.Condition) (bool, error) {
 		}
 		if c.Op == "type" {
 			return checkType(t.age, c.Value.(string)), nil
-		}
-		if c.Op == "log" {
-			deep.Logger().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.age)
-			return true, nil
 		}
 		if c.Op == "matches" {
 			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.age))
@@ -599,7 +583,7 @@ func (t *Detail) ApplyOperation(op deep.Operation) (bool, error) {
 
 // Diff compares t with other and returns a Patch.
 func (t *Detail) Diff(other *Detail) deep.Patch[Detail] {
-	p := deep.NewPatch[Detail]()
+	p := deep.Patch[Detail]{}
 	if t.Age != other.Age {
 		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/Age", Old: t.Age, New: other.Age})
 	}
@@ -646,10 +630,6 @@ func (t *Detail) EvaluateCondition(c deep.Condition) (bool, error) {
 		}
 		if c.Op == "type" {
 			return checkType(t.Age, c.Value.(string)), nil
-		}
-		if c.Op == "log" {
-			deep.Logger().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Age)
-			return true, nil
 		}
 		if c.Op == "matches" {
 			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Age))
@@ -707,10 +687,6 @@ func (t *Detail) EvaluateCondition(c deep.Condition) (bool, error) {
 		}
 		if c.Op == "type" {
 			return checkType(t.Address, c.Value.(string)), nil
-		}
-		if c.Op == "log" {
-			deep.Logger().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Address)
-			return true, nil
 		}
 		if c.Op == "matches" {
 			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Address))
