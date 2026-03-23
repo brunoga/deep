@@ -68,7 +68,7 @@ type Patch[T any] struct {
 	_ [0]T
 
 	// Guard is a global Condition that must be satisfied before any operation
-	// in this patch is applied. Set via WithGuard or Builder.Where.
+	// in this patch is applied. Set via WithGuard or Builder.Guard.
 	Guard *Condition `json:"cond,omitempty"`
 
 	// Operations is a flat list of changes.
@@ -122,9 +122,11 @@ func (p Patch[T]) IsEmpty() bool {
 	return len(p.Operations) == 0
 }
 
-// WithStrict returns a new patch with the strict flag set.
-func (p Patch[T]) WithStrict(strict bool) Patch[T] {
-	p.Strict = strict
+// AsStrict returns a new patch with strict mode enabled.
+// When strict mode is on, every Replace and Remove operation verifies the
+// current value matches Op.Old before applying; mismatches return an error.
+func (p Patch[T]) AsStrict() Patch[T] {
+	p.Strict = true
 	return p
 }
 
@@ -356,12 +358,12 @@ func parseApply(raw any) []*Condition {
 	return out
 }
 
-// FromJSONPatch parses a JSON Patch document (RFC 6902 plus deep extensions)
+// ParseJSONPatch parses a JSON Patch document (RFC 6902 plus deep extensions)
 // back into a Patch[T]. This is the inverse of Patch.ToJSONPatch().
-func FromJSONPatch[T any](data []byte) (Patch[T], error) {
+func ParseJSONPatch[T any](data []byte) (Patch[T], error) {
 	var ops []map[string]any
 	if err := json.Unmarshal(data, &ops); err != nil {
-		return Patch[T]{}, fmt.Errorf("FromJSONPatch: %w", err)
+		return Patch[T]{}, fmt.Errorf("ParseJSONPatch: %w", err)
 	}
 	res := Patch[T]{}
 	for _, m := range ops {

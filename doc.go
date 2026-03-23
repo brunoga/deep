@@ -34,16 +34,16 @@
 //	        deep.Set(nameField, "Alice"),
 //	        deep.Set(ageField, 30).If(deep.Gt(ageField, 0)),
 //	    ).
-//	    Where(deep.Gt(ageField, 18)).
+//	    Guard(deep.Gt(ageField, 18)).
 //	    Build()
 //
 // [Field] creates type-safe path selectors from struct field accessors.
-// [Path.Index] and [Path.Key] extend paths into slices and maps.
+// [At] and [MapKey] extend paths into slices and maps with full type safety.
 //
 // # Conditions
 //
 // Per-operation guards are attached to [Op] values via [Op.If] and [Op.Unless].
-// A global patch guard is set via [Builder.Where] or [Patch.WithGuard]. Conditions
+// A global patch guard is set via [Builder.Guard] or [Patch.WithGuard]. Conditions
 // are serializable and survive JSON/Gob round-trips.
 //
 // # Causality and CRDTs
@@ -56,6 +56,6 @@
 //
 // [Patch] marshals to/from JSON and Gob natively. Call [Register] for each
 // type T whose values flow through [Operation.Old] or [Operation.New] fields
-// during Gob encoding. [Patch.ToJSONPatch] and [FromJSONPatch] interoperate
+// during Gob encoding. [Patch.ToJSONPatch] and [ParseJSONPatch] interoperate
 // with RFC 6902 JSON Patch (with deep extensions for conditions and causality).
 package deep

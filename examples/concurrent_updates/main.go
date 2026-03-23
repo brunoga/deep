@@ -22,7 +22,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	patchA := rawPatch.WithStrict(true)
+	patchA := rawPatch.AsStrict()
 
 	// User B concurrently updates stock to 50.
 	s.Quantity = 50

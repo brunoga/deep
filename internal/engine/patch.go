@@ -59,8 +59,8 @@ type Patch[T any] interface {
 	// If fn returns an error, walking stops and that error is returned.
 	Walk(fn func(path string, op OpKind, old, new any) error) error
 
-	// WithStrict returns a new Patch with the strict consistency check enabled or disabled.
-	WithStrict(strict bool) Patch[T]
+	// AsStrict returns a new Patch with strict mode enabled.
+	AsStrict() Patch[T]
 
 	// Reverse returns a new Patch that undoes the changes in this patch.
 	Reverse() Patch[T]
@@ -160,10 +160,10 @@ func (p *typedPatch[T]) Walk(fn func(path string, op OpKind, old, new any) error
 	})
 }
 
-func (p *typedPatch[T]) WithStrict(strict bool) Patch[T] {
+func (p *typedPatch[T]) AsStrict() Patch[T] {
 	return &typedPatch[T]{
 		inner:  p.inner,
-		strict: strict,
+		strict: true,
 	}
 }
 

@@ -44,9 +44,9 @@ func TestComplexBuilder(t *testing.T) {
 		With(
 			deep.Set(namePath, "Alice Smith"),
 			deep.Set(agePath, 35),
-			deep.Add(rolesPath.Index(1), "admin"),
-			deep.Set(scorePath.Key("b"), 20),
-			deep.Remove(scorePath.Key("a")),
+			deep.Add(deep.At(rolesPath, 1), "admin"),
+			deep.Set(deep.MapKey(scorePath, "b"), 20),
+			deep.Remove(deep.MapKey(scorePath, "a")),
 		).
 		Build()
 
@@ -92,7 +92,7 @@ func TestBuilderAdvanced(t *testing.T) {
 	namePath := deep.Field(func(u *testmodels.User) *string { return &u.Name })
 
 	p := deep.Edit(u).
-		Where(deep.Eq(idPath, 1)).
+		Guard(deep.Eq(idPath, 1)).
 		With(
 			deep.Set(idPath, 2).Unless(deep.Eq(idPath, 1)),
 		).
@@ -103,6 +103,6 @@ func TestBuilderAdvanced(t *testing.T) {
 	_ = deep.Exists(namePath)
 
 	if p.Guard == nil || p.Guard.Op != "==" {
-		t.Error("Where failed")
+		t.Error("Guard failed")
 	}
 }

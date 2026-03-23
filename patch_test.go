@@ -113,16 +113,16 @@ func TestPatchUtilities(t *testing.T) {
 		}
 	}
 
-	// WithStrict
-	p2 := p.WithStrict(true)
+	// AsStrict
+	p2 := p.AsStrict()
 	if !p2.Strict {
-		t.Error("WithStrict failed to set global Strict")
+		t.Error("AsStrict failed to set global Strict")
 	}
 	// Operation.Strict is stamped from Patch.Strict at apply time, not at build time.
 	// Verify ops in the built patch do not carry the flag (it's runtime-only).
 	for _, op := range p2.Operations {
 		if op.Strict {
-			t.Error("WithStrict should not pre-stamp Strict onto operations before Apply")
+			t.Error("AsStrict should not pre-stamp Strict onto operations before Apply")
 		}
 	}
 }
@@ -196,7 +196,7 @@ func TestPatchIsEmpty(t *testing.T) {
 	}
 }
 
-func TestFromJSONPatchRoundTrip(t *testing.T) {
+func TestParseJSONPatchRoundTrip(t *testing.T) {
 	type Doc struct {
 		Name  string `json:"name"`
 		Alias string `json:"alias"`
@@ -217,7 +217,7 @@ func TestFromJSONPatchRoundTrip(t *testing.T) {
 			deep.Copy(namePath, aliasPath).If(deep.Eq(namePath, "Alice")),
 		).
 		Log("done").
-		Where(deep.Gt(agePath, 18)).
+		Guard(deep.Gt(agePath, 18)).
 		Build()
 
 	data, err := original.ToJSONPatch()
@@ -225,9 +225,9 @@ func TestFromJSONPatchRoundTrip(t *testing.T) {
 		t.Fatalf("ToJSONPatch: %v", err)
 	}
 
-	rt, err := deep.FromJSONPatch[Doc](data)
+	rt, err := deep.ParseJSONPatch[Doc](data)
 	if err != nil {
-		t.Fatalf("FromJSONPatch: %v", err)
+		t.Fatalf("ParseJSONPatch: %v", err)
 	}
 
 	if len(rt.Operations) != len(original.Operations) {

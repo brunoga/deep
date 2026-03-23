@@ -106,10 +106,10 @@ type Builder[T any] struct {
 	ops    []Operation
 }
 
-// Where sets the global guard condition on the patch. If Where has already been
+// Guard sets the global guard condition on the patch. If Guard has already been
 // called, the new condition is ANDed with the existing one rather than
-// replacing it — calling Where twice is equivalent to Where(And(c1, c2)).
-func (b *Builder[T]) Where(c *Condition) *Builder[T] {
+// replacing it — calling Guard twice is equivalent to Guard(And(c1, c2)).
+func (b *Builder[T]) Guard(c *Condition) *Builder[T] {
 	if b.global == nil {
 		b.global = c
 	} else {

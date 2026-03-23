@@ -26,7 +26,7 @@ func main() {
 		deep.Matches(deep.Field(func(e *Employee) *string { return &e.Name }), ".*Superstar$"),
 	)
 
-	patch := deep.Patch[Employee]{}.WithGuard(policy).WithStrict(false)
+	patch := deep.Patch[Employee]{}.WithGuard(policy)
 	patch.Operations = append(patch.Operations, deep.Operation{
 		Kind: deep.OpReplace, Path: "/role", New: "Senior",
 	})

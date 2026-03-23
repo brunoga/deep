@@ -25,12 +25,12 @@ func TestSelector(t *testing.T) {
 		},
 		{
 			"slice index",
-			deep.Field(func(u *testmodels.User) *[]string { return &u.Roles }).Index(1).String(),
+			deep.At(deep.Field(func(u *testmodels.User) *[]string { return &u.Roles }), 1).String(),
 			"/roles/1",
 		},
 		{
 			"map key",
-			deep.Field(func(u *testmodels.User) *map[string]int { return &u.Score }).Key("alice").String(),
+			deep.MapKey(deep.Field(func(u *testmodels.User) *map[string]int { return &u.Score }), "alice").String(),
 			"/score/alice",
 		},
 		{
