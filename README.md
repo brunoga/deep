@@ -6,7 +6,7 @@
 
 - **Extreme Performance**: Reflection-free operations via `deep-gen` (10x-20x faster than v4).
 - **Compile-Time Safety**: Type-safe field selectors replace brittle string paths.
-- **Data-Oriented**: Patches are pure, flat data structures, natively serializable to JSON/Gob.
+- **Data-Oriented**: Patches are pure, flat data structures, natively serializable to JSON.
 - **Integrated Causality**: Native support for HLC (Hybrid Logical Clocks) and LWW (Last-Write-Wins).
 - **First-Class CRDTs**: Built-in support for `Text` and `LWW[T]` convergent registers.
 - **Standard Compliant**: Export to RFC 6902 JSON Patch with advanced predicate extensions.
@@ -70,9 +70,14 @@ if err != nil {
 }
 
 // Operation-based Building (Fluent, Type-Safe API)
-namePath := deep.Field(func(u *User) *string { return &u.Name })
+namePath  := deep.Field(func(u *User) *string   { return &u.Name  })
+rolesPath := deep.Field(func(u *User) *[]string { return &u.Roles })
+
 patch2 := deep.Edit(&u1).
-    With(deep.Set(namePath, "Alice Smith")).
+    With(
+        deep.Set(namePath, "Alice Smith"),
+        deep.Add(deep.At(rolesPath, 0), "viewer"),
+    ).
     Build()
 
 // Application
@@ -137,13 +142,25 @@ deep.Apply(&u, patch, deep.WithLogger(logger))
 When no logger is provided, `slog.Default()` is used — so existing `slog.SetDefault`
 configuration is respected without any extra wiring.
 
+### Patch Utilities
+
+```go
+// Reverse a patch to produce an undo patch.
+undo := patch.Reverse()
+
+// Enable strict mode — Apply verifies Old values match before each operation.
+strictPatch := patch.AsStrict()
+```
+
 ### Standard Interop
 
-Export your Deep patches to standard RFC 6902 JSON Patch format:
+Export your Deep patches to standard RFC 6902 JSON Patch format, and parse them back:
 
 ```go
 jsonData, err := patch.ToJSONPatch()
 // Output: [{"op":"replace","path":"/name","value":"Bob"}]
+
+restored, err := deep.ParseJSONPatch[User](jsonData)
 ```
 
 > **JSON deserialization note**: When a patch is JSON-encoded and then decoded, numeric

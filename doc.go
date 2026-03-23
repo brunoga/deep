@@ -44,7 +44,7 @@
 //
 // Per-operation guards are attached to [Op] values via [Op.If] and [Op.Unless].
 // A global patch guard is set via [Builder.Guard] or [Patch.WithGuard]. Conditions
-// are serializable and survive JSON/Gob round-trips.
+// are serializable and survive JSON round-trips.
 //
 // # Causality and CRDTs
 //
@@ -54,8 +54,7 @@
 //
 // # Serialization
 //
-// [Patch] marshals to/from JSON and Gob natively. Call [Register] for each
-// type T whose values flow through [Operation.Old] or [Operation.New] fields
-// during Gob encoding. [Patch.ToJSONPatch] and [ParseJSONPatch] interoperate
-// with RFC 6902 JSON Patch (with deep extensions for conditions and causality).
+// [Patch] marshals to/from JSON natively. [Patch.ToJSONPatch] and
+// [ParseJSONPatch] interoperate with RFC 6902 JSON Patch (with deep
+// extensions for conditions and log operations).
 package deep

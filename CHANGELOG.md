@@ -24,9 +24,23 @@ Major rewrite. Breaking changes from v4.
 | `Move[T,V](from, to Path[T,V]) Op` | Typed move operation constructor |
 | `Copy[T,V](from, to Path[T,V]) Op` | Typed copy operation constructor |
 | `Edit[T](*T) *Builder[T]` | Returns a fluent patch builder |
-| `Merge[T](base, other, resolver)` | Merge two patches with LWW or custom resolution |
+| `Merge[T](base, other, resolver)` | Deduplicate ops by path; resolver called on conflicts, otherwise other wins |
 | `Field[T,V](selector)` | Type-safe path from a selector function |
+| `At[T,S,E](Path[T,S], int) Path[T,E]` | Extend a slice-field path to an element by index |
+| `MapKey[T,M,K,V](Path[T,M], K) Path[T,V]` | Extend a map-field path to a value by key |
 | `WithLogger(*slog.Logger) ApplyOption` | Pass a logger to a single Apply call |
+| `ParseJSONPatch[T]([]byte) (Patch[T], error)` | Parse RFC 6902 + deep extensions back into a Patch |
+
+**`Patch[T]` methods:**
+
+| Method | Description |
+|---|---|
+| `Patch.IsEmpty() bool` | Reports whether the patch has no operations |
+| `Patch.AsStrict() Patch[T]` | Returns a copy with strict Old-value verification enabled |
+| `Patch.WithGuard(*Condition) Patch[T]` | Returns a copy with a global guard condition set |
+| `Patch.Reverse() Patch[T]` | Returns the inverse patch (undo) |
+| `Patch.ToJSONPatch() ([]byte, error)` | Serialize to RFC 6902 JSON Patch with deep extensions |
+| `Patch.String() string` | Human-readable summary of operations |
 
 ### Condition / Guard system
 

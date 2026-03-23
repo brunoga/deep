@@ -84,10 +84,9 @@ type ConflictResolver interface {
 }
 
 // Merge combines two patches into a single patch, resolving conflicts.
-// When both patches touch the same path, r is consulted if non-nil; otherwise
-// the operation with the later HLC timestamp wins. If timestamps are equal or
-// zero (e.g. manually built patches), other wins over base.
-// The output operations are sorted by path for deterministic ordering.
+// Operations are deduplicated by path. When both patches modify the same path,
+// r.Resolve is called if r is non-nil; otherwise other's operation wins over
+// base. The output operations are sorted by path for deterministic ordering.
 func Merge[T any](base, other Patch[T], r ConflictResolver) Patch[T] {
 	latest := make(map[string]Operation, len(base.Operations)+len(other.Operations))
 
