@@ -48,3 +48,42 @@ func TestSelector(t *testing.T) {
 		})
 	}
 }
+
+func TestSelectorNestedPointer(t *testing.T) {
+	type NestedPointer struct {
+		Inner *struct {
+			Value string
+		} `json:"inner"`
+	}
+
+	path := deep.Field(func(n *NestedPointer) *string { return &n.Inner.Value })
+	got := path.String()
+	want := "/inner/Value"
+	if got != want {
+		t.Errorf("path.String() = %q, want %q", got, want)
+	}
+}
+
+// TestSelectorCircularType verifies that self-referential struct types do not
+// cause infinite recursion during path resolution.
+func TestSelectorCircularType(t *testing.T) {
+	type Node struct {
+		Value int    `json:"value"`
+		Next  *Node  `json:"next"`
+	}
+
+	path := deep.Field(func(n *Node) *int { return &n.Value })
+	got := path.String()
+	want := "/value"
+	if got != want {
+		t.Errorf("path.String() = %q, want %q", got, want)
+	}
+
+	// Selecting through the pointer field should also work (one level deep).
+	path2 := deep.Field(func(n *Node) *int { return &n.Next.Value })
+	got2 := path2.String()
+	want2 := "/next/value"
+	if got2 != want2 {
+		t.Errorf("path.String() = %q, want %q", got2, want2)
+	}
+}

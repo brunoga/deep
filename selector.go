@@ -17,8 +17,8 @@ type Path[T, V any] struct {
 }
 
 // String returns the string representation of the path.
-// Paths built from a selector resolve lazily; the result is cached in a global
-// table so repeated calls are O(1) after the first.
+// Paths built from a selector resolve lazily; the result is cached per selector
+// function so repeated calls are O(1) after the first.
 func (p Path[T, V]) String() string {
 	if p.path != "" {
 		return p.path
@@ -35,82 +35,107 @@ func Field[T, V any](s func(*T) *V) Path[T, V] {
 }
 
 // At returns a type-safe path to the element at index i within a slice field.
-//
-//	rolesPath := deep.Field(func(u *User) *[]string { return &u.Roles })
-//	elemPath  := deep.At(rolesPath, 0) // Path[User, string]
 func At[T any, S ~[]E, E any](p Path[T, S], i int) Path[T, E] {
 	return Path[T, E]{path: fmt.Sprintf("%s/%d", p.String(), i)}
 }
 
 // MapKey returns a type-safe path to the value at key k within a map field.
-//
-//	scoreMap := deep.Field(func(u *User) *map[string]int { return &u.Score })
-//	entry    := deep.MapKey(scoreMap, "kills") // Path[User, int]
 func MapKey[T any, M ~map[K]V, K comparable, V any](p Path[T, M], k K) Path[T, V] {
 	return Path[T, V]{path: fmt.Sprintf("%s/%v", p.String(), k)}
 }
 
-var (
-	pathCache   = make(map[reflect.Type]map[uintptr]string)
-	pathCacheMu sync.RWMutex
-)
+// pathCache stores resolved paths keyed by selector function pointer.
+var pathCache sync.Map // map[uintptr]string
 
 func resolvePathInternal[T, V any](s selector[T, V]) string {
+	key := reflect.ValueOf(s).Pointer()
+	if cached, ok := pathCache.Load(key); ok {
+		return cached.(string)
+	}
+
 	var zero T
 	typ := reflect.TypeOf(zero)
 
-	// Non-struct types have no named fields, so no path can be resolved.
 	if typ.Kind() != reflect.Struct {
+		pathCache.Store(key, "")
 		return ""
 	}
 
-	// Calculate offset by running the selector on a zero instance.
-	// The selector must return the address of a field (&u.Field), not a field
-	// value. If it returns nil the selector was written incorrectly.
 	base := reflect.New(typ).Elem()
-	ptr := s(base.Addr().Interface().(*T))
-	if ptr == nil {
+	initializePointers(base, make(map[reflect.Type]bool))
+
+	targetPtr := s(base.Addr().Interface().(*T))
+	if targetPtr == nil {
 		panic(fmt.Sprintf("deep.Field: selector returned nil — use &u.Field, not u.Field (type %T)", (*T)(nil)))
 	}
 
-	offset := reflect.ValueOf(ptr).Pointer() - base.Addr().Pointer()
+	targetAddr := reflect.ValueOf(targetPtr).Pointer()
+	targetTyp := reflect.TypeOf(targetPtr).Elem()
 
-	pathCacheMu.RLock()
-	cache, ok := pathCache[typ]
-	pathCacheMu.RUnlock()
-
-	if ok {
-		if p, ok := cache[offset]; ok {
-			return p
+	path := findPathByAddr(base, targetAddr, targetTyp, "", make(map[uintptr]bool))
+	if path == "" {
+		// Fallback: maybe it's the root itself?
+		if targetAddr == base.Addr().Pointer() {
+			path = "/"
 		}
 	}
 
-	// Cache miss: acquire write lock and re-check before scanning (TOCTOU fix).
-	pathCacheMu.Lock()
-	defer pathCacheMu.Unlock()
-
-	// Another goroutine may have scanned this type between our read and write lock.
-	if cache, ok := pathCache[typ]; ok {
-		if p, ok := cache[offset]; ok {
-			return p
-		}
-	}
-
-	if pathCache[typ] == nil {
-		pathCache[typ] = make(map[uintptr]string)
-	}
-
-	scanStructInternal("", typ, 0, pathCache[typ])
-
-	return pathCache[typ][offset]
+	pathCache.Store(key, path)
+	return path
 }
 
-func scanStructInternal(prefix string, typ reflect.Type, baseOffset uintptr, cache map[uintptr]string) {
-	for i := 0; i < typ.NumField(); i++ {
-		field := typ.Field(i)
+// initializePointers allocates nil pointer fields so selectors can safely
+// dereference them. inProgress prevents infinite recursion for self-referential
+// types (e.g. linked lists).
+func initializePointers(v reflect.Value, inProgress map[reflect.Type]bool) {
+	if v.Kind() != reflect.Struct {
+		return
+	}
+	typ := v.Type()
+	if inProgress[typ] {
+		return
+	}
+	inProgress[typ] = true
+	defer delete(inProgress, typ)
 
-		// Use JSON tag if available, otherwise field name.
-		// Skip fields tagged json:"-" — they have no JSON path.
+	for i := 0; i < v.NumField(); i++ {
+		f := v.Field(i)
+		if f.Kind() == reflect.Ptr {
+			if f.IsNil() && f.CanSet() {
+				f.Set(reflect.New(f.Type().Elem()))
+			}
+			initializePointers(f.Elem(), inProgress)
+		} else if f.Kind() == reflect.Struct {
+			initializePointers(f, inProgress)
+		}
+	}
+}
+
+// findPathByAddr walks v looking for the field at targetAddr with type
+// targetTyp. visited tracks struct addresses already on the walk stack to
+// prevent infinite recursion through circular pointer structures.
+func findPathByAddr(v reflect.Value, targetAddr uintptr, targetTyp reflect.Type, prefix string, visited map[uintptr]bool) string {
+	if v.Kind() == reflect.Pointer {
+		if v.IsNil() {
+			return ""
+		}
+		addr := v.Pointer()
+		if visited[addr] {
+			return ""
+		}
+		visited[addr] = true
+		defer delete(visited, addr)
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		return ""
+	}
+
+	t := v.Type()
+	for i := 0; i < v.NumField(); i++ {
+		field := t.Field(i)
+		f := v.Field(i)
+
 		name := field.Name
 		if tag := field.Tag.Get("json"); tag != "" {
 			name = strings.Split(tag, ",")[0]
@@ -120,18 +145,23 @@ func scanStructInternal(prefix string, typ reflect.Type, baseOffset uintptr, cac
 		}
 
 		fieldPath := prefix + "/" + name
-		offset := baseOffset + field.Offset
 
-		cache[offset] = fieldPath
-
-		// Recurse into nested structs
-		fieldType := field.Type
-		for fieldType.Kind() == reflect.Ptr {
-			fieldType = fieldType.Elem()
+		// Recurse first to find the most specific match (handles overlapping
+		// addresses, e.g. a struct and its first field share the same address).
+		if f.Kind() == reflect.Struct {
+			if p := findPathByAddr(f, targetAddr, targetTyp, fieldPath, visited); p != "" {
+				return p
+			}
+		} else if f.Kind() == reflect.Ptr && !f.IsNil() && f.Elem().Kind() == reflect.Struct {
+			if p := findPathByAddr(f, targetAddr, targetTyp, fieldPath, visited); p != "" {
+				return p
+			}
 		}
 
-		if fieldType.Kind() == reflect.Struct {
-			scanStructInternal(fieldPath, fieldType, offset, cache)
+		// Check this field after recursing so deeper matches win.
+		if f.Addr().Pointer() == targetAddr && f.Type() == targetTyp {
+			return fieldPath
 		}
 	}
+	return ""
 }
