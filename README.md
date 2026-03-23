@@ -148,7 +148,7 @@ jsonData, err := patch.ToJSONPatch()
 
 > **JSON deserialization note**: When a patch is JSON-encoded and then decoded, numeric
 > values in `Operation.Old` and `Operation.New` are unmarshaled as `float64` (standard
-> Go JSON behavior). Generated `ApplyOperation` methods handle this automatically with
+> Go JSON behavior). Generated `Patch` methods handle this automatically with
 > numeric coercion. If you use the reflection fallback, be aware of this when inspecting
 > `Old`/`New` directly.
 

@@ -64,9 +64,14 @@ func resolvePathInternal[T, V any](s selector[T, V]) string {
 		return ""
 	}
 
-	// Calculate offset by running the selector on a dummy instance
+	// Calculate offset by running the selector on a zero instance.
+	// The selector must return the address of a field (&u.Field), not a field
+	// value. If it returns nil the selector was written incorrectly.
 	base := reflect.New(typ).Elem()
 	ptr := s(base.Addr().Interface().(*T))
+	if ptr == nil {
+		panic(fmt.Sprintf("deep.Field: selector returned nil — use &u.Field, not u.Field (type %T)", (*T)(nil)))
+	}
 
 	offset := reflect.ValueOf(ptr).Pointer() - base.Addr().Pointer()
 

@@ -6,8 +6,8 @@ Major rewrite. Breaking changes from v4.
 
 ### Architecture
 
-- **Flat operation model**: `Patch[T]` is now a plain `[]Operation` rather than a recursive tree. Operations have `Kind`, `Path` (JSON Pointer), `Old`, `New`, `Timestamp`, `If`, and `Unless` fields.
-- **Code generation**: `cmd/deep-gen` produces `*_deep.go` files with reflection-free `ApplyOperation`, `Diff`, `Equal`, `Copy`, and `EvaluateCondition` methods — typically 10–15x faster than the reflection fallback.
+- **Flat operation model**: `Patch[T]` is now a plain `[]Operation` rather than a recursive tree. Operations have `Kind`, `Path` (JSON Pointer), `Old`, `New`, `If`, and `Unless` fields.
+- **Code generation**: `cmd/deep-gen` produces `*_deep.go` files with reflection-free `Patch`, `Diff`, `Equal`, and `Clone` methods — typically 10–15x faster than the reflection fallback.
 - **Reflection fallback**: Types without generated code fall through to the v4-based internal engine automatically.
 
 ### New API (`github.com/brunoga/deep/v5`)
@@ -26,13 +26,11 @@ Major rewrite. Breaking changes from v4.
 | `Edit[T](*T) *Builder[T]` | Returns a fluent patch builder |
 | `Merge[T](base, other, resolver)` | Merge two patches with LWW or custom resolution |
 | `Field[T,V](selector)` | Type-safe path from a selector function |
-| `Register[T]()` | Register types for gob serialization |
-| `Logger() *slog.Logger` | Concurrent-safe logger accessor |
-| `SetLogger(*slog.Logger)` | Replace the logger (concurrent-safe) |
+| `WithLogger(*slog.Logger) ApplyOption` | Pass a logger to a single Apply call |
 
 ### Condition / Guard system
 
-- `Condition` struct with `Op`, `Path`, `Value`, `Apply` fields (serializable predicates).
+- `Condition` struct with `Op`, `Path`, `Value`, `Sub` fields (serializable predicates).
 - Patch-level guard set via `Patch.Guard` field or `patch.WithGuard(c)`.
 - Per-operation conditions via `Operation.If` / `Operation.Unless`.
 - Builder helpers: `Eq`, `Ne`, `Gt`, `Ge`, `Lt`, `Le`, `Exists`, `In`, `Matches`, `Type`, `And`, `Or`, `Not`.
@@ -50,8 +48,8 @@ Major rewrite. Breaking changes from v4.
 - `Diff` now returns `(Patch[T], error)` instead of `Patch[T]`.
 - `Patch` is now generic (`Patch[T]`); patches are not cross-type compatible.
 - `Patch.Condition` renamed to `Patch.Guard`; `WithCondition` → `WithGuard`.
-- `Logger` changed from a package-level variable to `Logger() *slog.Logger` (concurrent-safe).
-- `cond/` package moved to `internal/cond/`; no longer part of the public API.
+- Global `Logger`/`SetLogger` removed; pass `WithLogger(l)` as an `Apply` option for per-call logging.
+- `cond/` package removed; conditions live in `github.com/brunoga/deep/v5/core`.
 - `deep-gen` now writes output to `{type}_deep.go` by default instead of stdout.
 - `OpAdd` on slices sets by index rather than inserting; true insertion is not supported for unkeyed slices.
 - `Copy[T](v T) T` renamed to `Clone[T](v T) T`; `Copy` is now the patch-op constructor `Copy[T,V](from, to Path[T,V]) Op`.
