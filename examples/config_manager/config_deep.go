@@ -3,8 +3,8 @@ package main
 
 import (
 	"fmt"
-	"log/slog"
 	deep "github.com/brunoga/deep/v5"
+	"log/slog"
 	"reflect"
 	"regexp"
 	"strings"

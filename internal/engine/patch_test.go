@@ -6,7 +6,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-
 	//"github.com/brunoga/deep/v5/internal/core"
 )
 
@@ -128,7 +127,6 @@ func TestPatch_MoreApplyChecked(t *testing.T) {
 		}
 	})
 }
-
 
 func TestPatch_Walk_Basic(t *testing.T) {
 	a := 10

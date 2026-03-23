@@ -2,8 +2,8 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"github.com/brunoga/deep/v5"
+	"log"
 )
 
 type Item struct {

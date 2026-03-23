@@ -80,12 +80,12 @@ type Patch[T any] struct {
 
 // Operation represents a single change.
 type Operation struct {
-	Kind      OpKind     `json:"k"`
-	Path      string     `json:"p"` // JSON Pointer path; created via Field selectors.
-	Old       any        `json:"o,omitempty"`
-	New       any        `json:"n,omitempty"`
-	If        *Condition `json:"if,omitempty"`
-	Unless    *Condition `json:"un,omitempty"`
+	Kind   OpKind     `json:"k"`
+	Path   string     `json:"p"` // JSON Pointer path; created via Field selectors.
+	Old    any        `json:"o,omitempty"`
+	New    any        `json:"n,omitempty"`
+	If     *Condition `json:"if,omitempty"`
+	Unless *Condition `json:"un,omitempty"`
 
 	// Strict is stamped from Patch.Strict at apply time; not serialized.
 	Strict bool `json:"-"`
@@ -412,4 +412,3 @@ func FromJSONPatch[T any](data []byte) (Patch[T], error) {
 	}
 	return res, nil
 }
-

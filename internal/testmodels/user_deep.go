@@ -3,9 +3,9 @@ package testmodels
 
 import (
 	"fmt"
-	"log/slog"
 	deep "github.com/brunoga/deep/v5"
 	crdt "github.com/brunoga/deep/v5/crdt"
+	"log/slog"
 	"reflect"
 	"regexp"
 	"strings"

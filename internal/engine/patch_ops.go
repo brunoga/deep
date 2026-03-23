@@ -24,7 +24,6 @@ type diffPatch interface {
 	dependencies(path string) (reads []string, writes []string)
 }
 
-
 // valuePatch handles replacement of basic types and full replacement of complex types.
 type valuePatch struct {
 	oldVal reflect.Value
@@ -284,7 +283,6 @@ func (p *movePatch) toJSONPatch(path string) []map[string]any {
 	return []map[string]any{op}
 }
 
-
 func (p *movePatch) summary(path string) string {
 	return fmt.Sprintf("Moved %s to %s", p.from, path)
 }
@@ -435,7 +433,6 @@ func (p *interfacePatch) toJSONPatch(path string) []map[string]any {
 func (p *interfacePatch) summary(path string) string {
 	return p.elemPatch.summary(path)
 }
-
 
 // structPatch handles field-level modifications in a struct.
 type structPatch struct {
@@ -961,10 +958,10 @@ func (p *mapPatch) reverse() diffPatch {
 		newModified[k] = v.reverse()
 	}
 	return &mapPatch{
-		added:     p.removed,
-		removed:   p.added,
-		modified:  newModified,
-		keyType:   p.keyType,
+		added:    p.removed,
+		removed:  p.added,
+		modified: newModified,
+		keyType:  p.keyType,
 	}
 }
 
@@ -1026,7 +1023,6 @@ func (p *mapPatch) toJSONPatch(path string) []map[string]any {
 	}
 	return ops
 }
-
 
 func (p *mapPatch) summary(path string) string {
 	var summaries []string
@@ -1636,4 +1632,3 @@ func (p *customDiffPatch) toJSONPatch(path string) []map[string]any {
 func (p *customDiffPatch) summary(path string) string {
 	return "CustomPatch"
 }
-

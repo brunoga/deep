@@ -121,7 +121,7 @@ func Apply[T any](target *T, p Patch[T], opts ...ApplyOption) error {
 						break
 					}
 				}
-				
+
 				if found {
 					if tag.Ignore {
 						continue
@@ -334,4 +334,3 @@ func checkType(v any, typeName string) bool {
 	}
 	return false
 }
-

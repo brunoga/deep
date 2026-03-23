@@ -53,4 +53,3 @@ func GetTypeInfo(typ reflect.Type) *TypeInfo {
 	typeCache.Store(typ, info)
 	return info
 }
-

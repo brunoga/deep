@@ -72,7 +72,6 @@ type Patch[T any] interface {
 	Summary() string
 }
 
-
 // ApplyError represents one or more errors that occurred during patch application.
 type ApplyError struct {
 	errors []error
@@ -200,4 +199,3 @@ func (p *typedPatch[T]) String() string {
 	}
 	return p.inner.format(0)
 }
-

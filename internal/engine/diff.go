@@ -140,29 +140,6 @@ func RegisterCustomDiff[T any](fn func(a, b T) (Patch[T], error)) {
 	}
 }
 
-// Diff compares two values a and b and returns a Patch that can be applied.
-func (d *Differ) Diff(a, b any) (Patch[any], error) {
-	va := reflect.ValueOf(&a).Elem()
-	vb := reflect.ValueOf(&b).Elem()
-
-	ctx := getDiffContext()
-	defer releaseDiffContext(ctx)
-	ctx.rootB = vb
-
-	if d.config.detectMoves {
-		d.indexValues(va, ctx)
-		d.detectMovesRecursive(vb, ctx)
-	}
-
-	patch, err := d.diffRecursive(va, vb, false, ctx)
-	if err != nil {
-		return nil, err
-	}
-	if patch == nil {
-		return nil, nil
-	}
-	return &typedPatch[any]{inner: patch, strict: true}, nil
-}
 
 func (d *Differ) detectMovesRecursive(v reflect.Value, ctx *diffContext) {
 	if !v.IsValid() {
@@ -277,15 +254,6 @@ func MustDiff[T any](a, b T, opts ...DiffOption) Patch[T] {
 	return p
 }
 
-// MustDiffUsing compares two values a and b using the specified Differ and returns a Patch.
-// It panics if the comparison fails.
-func MustDiffUsing[T any](d *Differ, a, b T) Patch[T] {
-	p, err := DiffUsing(d, a, b)
-	if err != nil {
-		panic(err)
-	}
-	return p
-}
 
 func isHashable(v reflect.Value) bool {
 	kind := v.Kind()
