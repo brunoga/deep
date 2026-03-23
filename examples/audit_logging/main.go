@@ -5,6 +5,8 @@ package main
 import (
 	"fmt"
 	"log"
+	"log/slog"
+	"os"
 
 	"github.com/brunoga/deep/v5"
 )
@@ -28,7 +30,8 @@ func main() {
 		Tags:  map[string]bool{"user": true, "admin": true},
 	}
 
-	// Diff captures old and new values for every changed field.
+	// --- Pattern 1: diff-based audit trail ---
+	// Diff captures the old and new values for every changed field.
 	patch, err := deep.Diff(u1, u2)
 	if err != nil {
 		log.Fatal(err)
@@ -45,4 +48,31 @@ func main() {
 			fmt.Printf("  REMOVE  %s: %v\n", op.Path, op.Old)
 		}
 	}
+
+	// --- Pattern 2: embedded OpLog + injectable logger ---
+	// OpLog operations fire structured log messages during Apply.
+	// WithLogger routes them to any slog.Logger — useful for tracing,
+	// per-request loggers, or test capture.
+	namePath := deep.Field(func(u *User) *string { return &u.Name })
+
+	tracePatch := deep.Edit(&u1).
+		Log("applying name update").
+		With(deep.Set(namePath, "Alice Smith")).
+		Log("name update complete").
+		Build()
+
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		ReplaceAttr: func(_ []string, a slog.Attr) slog.Attr {
+			if a.Key == slog.TimeKey {
+				return slog.Attr{} // omit timestamp for stable output
+			}
+			return a
+		},
+	}))
+
+	fmt.Println("\n--- TRACED APPLY ---")
+	if err := deep.Apply(&u1, tracePatch, deep.WithLogger(logger)); err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("Result: %+v\n", u1)
 }

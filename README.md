@@ -89,8 +89,8 @@ Convert any field into a convergent register:
 
 ```go
 type Document struct {
-    Title   deep.LWW[string] // Native Last-Write-Wins
-    Content deep.Text        // Collaborative Text CRDT
+    Title   crdt.LWW[string] // Native Last-Write-Wins
+    Content crdt.Text        // Collaborative Text CRDT
 }
 ```
 
@@ -112,6 +112,30 @@ Apply a patch only if a global guard condition holds:
 ```go
 patch = patch.WithGuard(deep.Gt(deep.Field(func(u *User) *int { return &u.ID }), 0))
 ```
+
+### Observability
+
+Embed `OpLog` operations in a patch to emit structured trace messages during `Apply`.
+Route them to any `*slog.Logger` — useful for request-scoped loggers, test capture, or
+tracing without touching your model types:
+
+```go
+namePath := deep.Field(func(u *User) *string { return &u.Name })
+
+patch := deep.Edit(&u).
+    Log("starting update").
+    With(deep.Set(namePath, "Alice Smith")).
+    Log("update complete").
+    Build()
+
+logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+deep.Apply(&u, patch, deep.WithLogger(logger))
+// {"level":"INFO","msg":"deep log","message":"starting update","path":"/"}
+// {"level":"INFO","msg":"deep log","message":"update complete","path":"/"}
+```
+
+When no logger is provided, `slog.Default()` is used — so existing `slog.SetDefault`
+configuration is respected without any extra wiring.
 
 ### Standard Interop
 
