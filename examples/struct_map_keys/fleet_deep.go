@@ -3,12 +3,13 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
 	deep "github.com/brunoga/deep/v5"
 	"reflect"
 )
 
 // ApplyOperation applies a single operation to Fleet efficiently.
-func (t *Fleet) ApplyOperation(op deep.Operation) (bool, error) {
+func (t *Fleet) ApplyOperation(op deep.Operation, logger *slog.Logger) (bool, error) {
 	if op.If != nil {
 		ok, err := t.EvaluateCondition(*op.If)
 		if err != nil || !ok {
@@ -29,7 +30,7 @@ func (t *Fleet) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 		if m, ok := op.New.(map[string]any); ok {
 			for k, v := range m {
-				t.ApplyOperation(deep.Operation{Kind: op.Kind, Path: "/" + k, New: v})
+				t.ApplyOperation(deep.Operation{Kind: op.Kind, Path: "/" + k, New: v}, logger)
 			}
 			return true, nil
 		}
@@ -38,7 +39,7 @@ func (t *Fleet) ApplyOperation(op deep.Operation) (bool, error) {
 	switch op.Path {
 	case "/devices", "/Devices":
 		if op.Kind == deep.OpLog {
-			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.Devices)
+			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Devices)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {

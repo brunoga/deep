@@ -3,6 +3,7 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
 	deep "github.com/brunoga/deep/v5"
 	"reflect"
 	"regexp"
@@ -10,7 +11,7 @@ import (
 )
 
 // ApplyOperation applies a single operation to SystemConfig efficiently.
-func (t *SystemConfig) ApplyOperation(op deep.Operation) (bool, error) {
+func (t *SystemConfig) ApplyOperation(op deep.Operation, logger *slog.Logger) (bool, error) {
 	if op.If != nil {
 		ok, err := t.EvaluateCondition(*op.If)
 		if err != nil || !ok {
@@ -31,7 +32,7 @@ func (t *SystemConfig) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 		if m, ok := op.New.(map[string]any); ok {
 			for k, v := range m {
-				t.ApplyOperation(deep.Operation{Kind: op.Kind, Path: "/" + k, New: v})
+				t.ApplyOperation(deep.Operation{Kind: op.Kind, Path: "/" + k, New: v}, logger)
 			}
 			return true, nil
 		}
@@ -40,7 +41,7 @@ func (t *SystemConfig) ApplyOperation(op deep.Operation) (bool, error) {
 	switch op.Path {
 	case "/app", "/AppName":
 		if op.Kind == deep.OpLog {
-			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.AppName)
+			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.AppName)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
@@ -54,7 +55,7 @@ func (t *SystemConfig) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 	case "/threads", "/MaxThreads":
 		if op.Kind == deep.OpLog {
-			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.MaxThreads)
+			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.MaxThreads)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
@@ -81,7 +82,7 @@ func (t *SystemConfig) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 	case "/endpoints", "/Endpoints":
 		if op.Kind == deep.OpLog {
-			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.Endpoints)
+			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Endpoints)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
@@ -186,7 +187,7 @@ func (t *SystemConfig) EvaluateCondition(c deep.Condition) (bool, error) {
 			return checkType(t.AppName, c.Value.(string)), nil
 		}
 		if c.Op == "log" {
-			deep.Logger().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.AppName)
+			slog.Default().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.AppName)
 			return true, nil
 		}
 		if c.Op == "matches" {
@@ -234,7 +235,7 @@ func (t *SystemConfig) EvaluateCondition(c deep.Condition) (bool, error) {
 			return checkType(t.MaxThreads, c.Value.(string)), nil
 		}
 		if c.Op == "log" {
-			deep.Logger().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.MaxThreads)
+			slog.Default().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.MaxThreads)
 			return true, nil
 		}
 		if c.Op == "matches" {

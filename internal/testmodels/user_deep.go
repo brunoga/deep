@@ -3,6 +3,7 @@ package testmodels
 
 import (
 	"fmt"
+	"log/slog"
 	deep "github.com/brunoga/deep/v5"
 	crdt "github.com/brunoga/deep/v5/crdt"
 	"reflect"
@@ -11,7 +12,7 @@ import (
 )
 
 // ApplyOperation applies a single operation to User efficiently.
-func (t *User) ApplyOperation(op deep.Operation) (bool, error) {
+func (t *User) ApplyOperation(op deep.Operation, logger *slog.Logger) (bool, error) {
 	if op.If != nil {
 		ok, err := t.EvaluateCondition(*op.If)
 		if err != nil || !ok {
@@ -32,7 +33,7 @@ func (t *User) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 		if m, ok := op.New.(map[string]any); ok {
 			for k, v := range m {
-				t.ApplyOperation(deep.Operation{Kind: op.Kind, Path: "/" + k, New: v})
+				t.ApplyOperation(deep.Operation{Kind: op.Kind, Path: "/" + k, New: v}, logger)
 			}
 			return true, nil
 		}
@@ -41,7 +42,7 @@ func (t *User) ApplyOperation(op deep.Operation) (bool, error) {
 	switch op.Path {
 	case "/id", "/ID":
 		if op.Kind == deep.OpLog {
-			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.ID)
+			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.ID)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
@@ -68,7 +69,7 @@ func (t *User) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 	case "/full_name", "/Name":
 		if op.Kind == deep.OpLog {
-			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.Name)
+			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Name)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
@@ -82,7 +83,7 @@ func (t *User) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 	case "/info", "/Info":
 		if op.Kind == deep.OpLog {
-			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.Info)
+			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Info)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
@@ -96,7 +97,7 @@ func (t *User) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 	case "/roles", "/Roles":
 		if op.Kind == deep.OpLog {
-			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.Roles)
+			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Roles)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
@@ -110,7 +111,7 @@ func (t *User) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 	case "/score", "/Score":
 		if op.Kind == deep.OpLog {
-			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.Score)
+			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Score)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
@@ -124,7 +125,7 @@ func (t *User) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 	case "/bio", "/Bio":
 		if op.Kind == deep.OpLog {
-			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.Bio)
+			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Bio)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
@@ -133,10 +134,10 @@ func (t *User) ApplyOperation(op deep.Operation) (bool, error) {
 			}
 		}
 		op.Path = "/"
-		return t.Bio.ApplyOperation(op)
+		return t.Bio.ApplyOperation(op, logger)
 	case "/age":
 		if op.Kind == deep.OpLog {
-			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.age)
+			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.age)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
@@ -164,7 +165,7 @@ func (t *User) ApplyOperation(op deep.Operation) (bool, error) {
 	default:
 		if strings.HasPrefix(op.Path, "/info/") {
 			op.Path = op.Path[len("/info/")-1:]
-			return (&t.Info).ApplyOperation(op)
+			return (&t.Info).ApplyOperation(op, logger)
 		}
 		if strings.HasPrefix(op.Path, "/score/") {
 			parts := strings.Split(op.Path[len("/score/"):], "/")
@@ -507,7 +508,7 @@ func (t *User) Copy() *User {
 }
 
 // ApplyOperation applies a single operation to Detail efficiently.
-func (t *Detail) ApplyOperation(op deep.Operation) (bool, error) {
+func (t *Detail) ApplyOperation(op deep.Operation, logger *slog.Logger) (bool, error) {
 	if op.If != nil {
 		ok, err := t.EvaluateCondition(*op.If)
 		if err != nil || !ok {
@@ -528,7 +529,7 @@ func (t *Detail) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 		if m, ok := op.New.(map[string]any); ok {
 			for k, v := range m {
-				t.ApplyOperation(deep.Operation{Kind: op.Kind, Path: "/" + k, New: v})
+				t.ApplyOperation(deep.Operation{Kind: op.Kind, Path: "/" + k, New: v}, logger)
 			}
 			return true, nil
 		}
@@ -537,7 +538,7 @@ func (t *Detail) ApplyOperation(op deep.Operation) (bool, error) {
 	switch op.Path {
 	case "/Age":
 		if op.Kind == deep.OpLog {
-			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.Age)
+			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Age)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
@@ -564,7 +565,7 @@ func (t *Detail) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 	case "/addr", "/Address":
 		if op.Kind == deep.OpLog {
-			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.Address)
+			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Address)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {

@@ -92,7 +92,7 @@ func fieldApplyCase(f FieldInfo, p string) string {
 	}
 	// OpLog
 	fmt.Fprintf(&b, "\t\tif op.Kind == %sOpLog {\n", p)
-	fmt.Fprintf(&b, "\t\t\t%sLogger().Info(\"deep log\", \"message\", op.New, \"path\", op.Path, \"field\", t.%s)\n", p, f.Name)
+	fmt.Fprintf(&b, "\t\t\tlogger.Info(\"deep log\", \"message\", op.New, \"path\", op.Path, \"field\", t.%s)\n", f.Name)
 	b.WriteString("\t\t\treturn true, nil\n\t\t}\n")
 	// Strict check
 	fmt.Fprintf(&b, "\t\tif op.Kind == %sOpReplace && op.Strict {\n", p)
@@ -474,6 +474,7 @@ package {{.PkgName}}
 
 import (
 	"fmt"
+	"log/slog"
 {{- if .NeedsRegexp}}
 	"regexp"
 {{- end}}
@@ -494,7 +495,7 @@ import (
 
 var applyOpTmpl = template.Must(template.New("applyOp").Funcs(tmplFuncs).Parse(
 	`// ApplyOperation applies a single operation to {{.TypeName}} efficiently.
-func (t *{{.TypeName}}) ApplyOperation(op {{.P}}Operation) (bool, error) {
+func (t *{{.TypeName}}) ApplyOperation(op {{.P}}Operation, logger *slog.Logger) (bool, error) {
 	if op.If != nil {
 		ok, err := t.EvaluateCondition(*op.If)
 		if err != nil || !ok { return true, err }

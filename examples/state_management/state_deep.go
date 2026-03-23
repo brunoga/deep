@@ -3,6 +3,7 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
 	deep "github.com/brunoga/deep/v5"
 	"reflect"
 	"regexp"
@@ -10,7 +11,7 @@ import (
 )
 
 // ApplyOperation applies a single operation to DocState efficiently.
-func (t *DocState) ApplyOperation(op deep.Operation) (bool, error) {
+func (t *DocState) ApplyOperation(op deep.Operation, logger *slog.Logger) (bool, error) {
 	if op.If != nil {
 		ok, err := t.EvaluateCondition(*op.If)
 		if err != nil || !ok {
@@ -31,7 +32,7 @@ func (t *DocState) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 		if m, ok := op.New.(map[string]any); ok {
 			for k, v := range m {
-				t.ApplyOperation(deep.Operation{Kind: op.Kind, Path: "/" + k, New: v})
+				t.ApplyOperation(deep.Operation{Kind: op.Kind, Path: "/" + k, New: v}, logger)
 			}
 			return true, nil
 		}
@@ -40,7 +41,7 @@ func (t *DocState) ApplyOperation(op deep.Operation) (bool, error) {
 	switch op.Path {
 	case "/title", "/Title":
 		if op.Kind == deep.OpLog {
-			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.Title)
+			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Title)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
@@ -54,7 +55,7 @@ func (t *DocState) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 	case "/content", "/Content":
 		if op.Kind == deep.OpLog {
-			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.Content)
+			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Content)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
@@ -68,7 +69,7 @@ func (t *DocState) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 	case "/metadata", "/Metadata":
 		if op.Kind == deep.OpLog {
-			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.Metadata)
+			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Metadata)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
@@ -173,7 +174,7 @@ func (t *DocState) EvaluateCondition(c deep.Condition) (bool, error) {
 			return checkType(t.Title, c.Value.(string)), nil
 		}
 		if c.Op == "log" {
-			deep.Logger().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Title)
+			slog.Default().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Title)
 			return true, nil
 		}
 		if c.Op == "matches" {
@@ -221,7 +222,7 @@ func (t *DocState) EvaluateCondition(c deep.Condition) (bool, error) {
 			return checkType(t.Content, c.Value.(string)), nil
 		}
 		if c.Op == "log" {
-			deep.Logger().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Content)
+			slog.Default().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Content)
 			return true, nil
 		}
 		if c.Op == "matches" {

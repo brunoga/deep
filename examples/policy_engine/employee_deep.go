@@ -3,13 +3,14 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
 	deep "github.com/brunoga/deep/v5"
 	"reflect"
 	"regexp"
 )
 
 // ApplyOperation applies a single operation to Employee efficiently.
-func (t *Employee) ApplyOperation(op deep.Operation) (bool, error) {
+func (t *Employee) ApplyOperation(op deep.Operation, logger *slog.Logger) (bool, error) {
 	if op.If != nil {
 		ok, err := t.EvaluateCondition(*op.If)
 		if err != nil || !ok {
@@ -30,7 +31,7 @@ func (t *Employee) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 		if m, ok := op.New.(map[string]any); ok {
 			for k, v := range m {
-				t.ApplyOperation(deep.Operation{Kind: op.Kind, Path: "/" + k, New: v})
+				t.ApplyOperation(deep.Operation{Kind: op.Kind, Path: "/" + k, New: v}, logger)
 			}
 			return true, nil
 		}
@@ -39,7 +40,7 @@ func (t *Employee) ApplyOperation(op deep.Operation) (bool, error) {
 	switch op.Path {
 	case "/id", "/ID":
 		if op.Kind == deep.OpLog {
-			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.ID)
+			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.ID)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
@@ -66,7 +67,7 @@ func (t *Employee) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 	case "/name", "/Name":
 		if op.Kind == deep.OpLog {
-			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.Name)
+			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Name)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
@@ -80,7 +81,7 @@ func (t *Employee) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 	case "/role", "/Role":
 		if op.Kind == deep.OpLog {
-			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.Role)
+			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Role)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
@@ -94,7 +95,7 @@ func (t *Employee) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 	case "/rating", "/Rating":
 		if op.Kind == deep.OpLog {
-			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.Rating)
+			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Rating)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
@@ -181,7 +182,7 @@ func (t *Employee) EvaluateCondition(c deep.Condition) (bool, error) {
 			return checkType(t.ID, c.Value.(string)), nil
 		}
 		if c.Op == "log" {
-			deep.Logger().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.ID)
+			slog.Default().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.ID)
 			return true, nil
 		}
 		if c.Op == "matches" {
@@ -242,7 +243,7 @@ func (t *Employee) EvaluateCondition(c deep.Condition) (bool, error) {
 			return checkType(t.Name, c.Value.(string)), nil
 		}
 		if c.Op == "log" {
-			deep.Logger().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Name)
+			slog.Default().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Name)
 			return true, nil
 		}
 		if c.Op == "matches" {
@@ -290,7 +291,7 @@ func (t *Employee) EvaluateCondition(c deep.Condition) (bool, error) {
 			return checkType(t.Role, c.Value.(string)), nil
 		}
 		if c.Op == "log" {
-			deep.Logger().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Role)
+			slog.Default().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Role)
 			return true, nil
 		}
 		if c.Op == "matches" {
@@ -338,7 +339,7 @@ func (t *Employee) EvaluateCondition(c deep.Condition) (bool, error) {
 			return checkType(t.Rating, c.Value.(string)), nil
 		}
 		if c.Op == "log" {
-			deep.Logger().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Rating)
+			slog.Default().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Rating)
 			return true, nil
 		}
 		if c.Op == "matches" {

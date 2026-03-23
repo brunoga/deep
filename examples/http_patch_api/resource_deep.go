@@ -3,13 +3,14 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
 	deep "github.com/brunoga/deep/v5"
 	"reflect"
 	"regexp"
 )
 
 // ApplyOperation applies a single operation to Resource efficiently.
-func (t *Resource) ApplyOperation(op deep.Operation) (bool, error) {
+func (t *Resource) ApplyOperation(op deep.Operation, logger *slog.Logger) (bool, error) {
 	if op.If != nil {
 		ok, err := t.EvaluateCondition(*op.If)
 		if err != nil || !ok {
@@ -30,7 +31,7 @@ func (t *Resource) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 		if m, ok := op.New.(map[string]any); ok {
 			for k, v := range m {
-				t.ApplyOperation(deep.Operation{Kind: op.Kind, Path: "/" + k, New: v})
+				t.ApplyOperation(deep.Operation{Kind: op.Kind, Path: "/" + k, New: v}, logger)
 			}
 			return true, nil
 		}
@@ -39,7 +40,7 @@ func (t *Resource) ApplyOperation(op deep.Operation) (bool, error) {
 	switch op.Path {
 	case "/id", "/ID":
 		if op.Kind == deep.OpLog {
-			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.ID)
+			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.ID)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
@@ -53,7 +54,7 @@ func (t *Resource) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 	case "/data", "/Data":
 		if op.Kind == deep.OpLog {
-			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.Data)
+			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Data)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
@@ -67,7 +68,7 @@ func (t *Resource) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 	case "/value", "/Value":
 		if op.Kind == deep.OpLog {
-			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.Value)
+			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Value)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
@@ -151,7 +152,7 @@ func (t *Resource) EvaluateCondition(c deep.Condition) (bool, error) {
 			return checkType(t.ID, c.Value.(string)), nil
 		}
 		if c.Op == "log" {
-			deep.Logger().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.ID)
+			slog.Default().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.ID)
 			return true, nil
 		}
 		if c.Op == "matches" {
@@ -199,7 +200,7 @@ func (t *Resource) EvaluateCondition(c deep.Condition) (bool, error) {
 			return checkType(t.Data, c.Value.(string)), nil
 		}
 		if c.Op == "log" {
-			deep.Logger().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Data)
+			slog.Default().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Data)
 			return true, nil
 		}
 		if c.Op == "matches" {
@@ -247,7 +248,7 @@ func (t *Resource) EvaluateCondition(c deep.Condition) (bool, error) {
 			return checkType(t.Value, c.Value.(string)), nil
 		}
 		if c.Op == "log" {
-			deep.Logger().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Value)
+			slog.Default().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Value)
 			return true, nil
 		}
 		if c.Op == "matches" {

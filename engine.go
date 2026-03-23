@@ -2,17 +2,35 @@ package deep
 
 import (
 	"fmt"
+	"log/slog"
 	"reflect"
 	"regexp"
 	"sort"
 
-	"github.com/brunoga/deep/v5/crdt/hlc"
 	"github.com/brunoga/deep/v5/internal/core"
 )
 
+// ApplyOption configures the behaviour of [Apply].
+type ApplyOption func(*applyConfig)
+
+type applyConfig struct {
+	logger *slog.Logger
+}
+
+// WithLogger sets the [slog.Logger] used for [OpLog] operations within a
+// single [Apply] call. If not provided, [slog.Default] is used.
+func WithLogger(l *slog.Logger) ApplyOption {
+	return func(c *applyConfig) { c.logger = l }
+}
+
 // Apply applies a Patch to a target pointer.
 // v5 prioritizes generated Apply methods but falls back to reflection if needed.
-func Apply[T any](target *T, p Patch[T]) error {
+func Apply[T any](target *T, p Patch[T], opts ...ApplyOption) error {
+	cfg := applyConfig{logger: slog.Default()}
+	for _, o := range opts {
+		o(&cfg)
+	}
+
 	v := reflect.ValueOf(target)
 	if v.Kind() != reflect.Pointer || v.IsNil() {
 		return fmt.Errorf("target must be a non-nil pointer")
@@ -43,7 +61,7 @@ func Apply[T any](target *T, p Patch[T]) error {
 	var errors []error
 
 	applier, hasGenerated := any(target).(interface {
-		ApplyOperation(Operation) (bool, error)
+		ApplyOperation(Operation, *slog.Logger) (bool, error)
 	})
 
 	for _, op := range p.Operations {
@@ -52,7 +70,7 @@ func Apply[T any](target *T, p Patch[T]) error {
 
 		// Try generated path first.
 		if hasGenerated {
-			handled, err := applier.ApplyOperation(op)
+			handled, err := applier.ApplyOperation(op, cfg.logger)
 			if err != nil {
 				errors = append(errors, err)
 				continue
@@ -120,32 +138,6 @@ func Apply[T any](target *T, p Patch[T]) error {
 		switch op.Kind {
 		case OpAdd, OpReplace:
 			newVal := reflect.ValueOf(op.New)
-
-			// LWW logic
-			if op.Timestamp != nil {
-				current, err := core.DeepPath(op.Path).Resolve(v.Elem())
-				if err == nil && current.IsValid() {
-					if current.Kind() == reflect.Struct {
-						info := core.GetTypeInfo(current.Type())
-						var tsField reflect.Value
-						for _, fInfo := range info.Fields {
-							if fInfo.Name == "Timestamp" {
-								tsField = current.Field(fInfo.Index)
-								break
-							}
-						}
-						if tsField.IsValid() {
-							if currentTS, ok := tsField.Interface().(hlc.HLC); ok {
-								if !op.Timestamp.After(currentTS) {
-									continue
-								}
-							}
-						}
-					}
-				}
-			}
-
-			// We use core.DeepPath for set logic
 			err = core.DeepPath(op.Path).Set(v.Elem(), newVal)
 		case OpRemove:
 			err = core.DeepPath(op.Path).Delete(v.Elem())
@@ -171,7 +163,7 @@ func Apply[T any](target *T, p Patch[T]) error {
 				err = core.DeepPath(op.Path).Set(v.Elem(), val)
 			}
 		case OpLog:
-			Logger().Info("deep log", "message", op.New, "path", op.Path)
+			cfg.logger.Info("deep log", "message", op.New, "path", op.Path)
 		}
 
 		if err != nil {
@@ -209,8 +201,8 @@ func Merge[T any](base, other Patch[T], r ConflictResolver) Patch[T] {
 				resolvedVal := r.Resolve(op.Path, existing.New, op.New)
 				op.New = resolvedVal
 				latest[op.Path] = op
-			} else if hlcAfter(op.Timestamp, existing.Timestamp) || (isOther && !hlcAfter(existing.Timestamp, op.Timestamp)) {
-				// Newer timestamp wins; on tie (equal or zero) other wins over base.
+			} else if isOther {
+				// other wins over base on conflict
 				latest[op.Path] = op
 			}
 		}
@@ -316,14 +308,6 @@ func evaluateCondition(root reflect.Value, c *Condition) (bool, error) {
 	}
 
 	return core.CompareValues(val, reflect.ValueOf(c.Value), c.Op, false)
-}
-
-// hlcAfter reports whether a is strictly after b. Returns false if either is nil.
-func hlcAfter(a, b *hlc.HLC) bool {
-	if a == nil || b == nil {
-		return false
-	}
-	return a.After(*b)
 }
 
 func checkType(v any, typeName string) bool {

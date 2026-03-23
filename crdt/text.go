@@ -2,6 +2,7 @@ package crdt
 
 import (
 	"encoding/json"
+	"log/slog"
 	"sort"
 	"strings"
 
@@ -206,7 +207,7 @@ func (t Text) Diff(other Text) deep.Patch[Text] {
 }
 
 // ApplyOperation implements the Applier interface for optimized patch application.
-func (t *Text) ApplyOperation(op deep.Operation) (bool, error) {
+func (t *Text) ApplyOperation(op deep.Operation, _ *slog.Logger) (bool, error) {
 	if op.Path == "" || op.Path == "/" {
 		if other, ok := op.New.(Text); ok {
 			*t = MergeTextRuns(*t, other)

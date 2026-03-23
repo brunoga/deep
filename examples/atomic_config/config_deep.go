@@ -3,13 +3,14 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
 	deep "github.com/brunoga/deep/v5"
 	"reflect"
 	"regexp"
 )
 
 // ApplyOperation applies a single operation to ProxyConfig efficiently.
-func (t *ProxyConfig) ApplyOperation(op deep.Operation) (bool, error) {
+func (t *ProxyConfig) ApplyOperation(op deep.Operation, logger *slog.Logger) (bool, error) {
 	if op.If != nil {
 		ok, err := t.EvaluateCondition(*op.If)
 		if err != nil || !ok {
@@ -30,7 +31,7 @@ func (t *ProxyConfig) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 		if m, ok := op.New.(map[string]any); ok {
 			for k, v := range m {
-				t.ApplyOperation(deep.Operation{Kind: op.Kind, Path: "/" + k, New: v})
+				t.ApplyOperation(deep.Operation{Kind: op.Kind, Path: "/" + k, New: v}, logger)
 			}
 			return true, nil
 		}
@@ -39,7 +40,7 @@ func (t *ProxyConfig) ApplyOperation(op deep.Operation) (bool, error) {
 	switch op.Path {
 	case "/host", "/Host":
 		if op.Kind == deep.OpLog {
-			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.Host)
+			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Host)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
@@ -53,7 +54,7 @@ func (t *ProxyConfig) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 	case "/port", "/Port":
 		if op.Kind == deep.OpLog {
-			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.Port)
+			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Port)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
@@ -134,7 +135,7 @@ func (t *ProxyConfig) EvaluateCondition(c deep.Condition) (bool, error) {
 			return checkType(t.Host, c.Value.(string)), nil
 		}
 		if c.Op == "log" {
-			deep.Logger().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Host)
+			slog.Default().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Host)
 			return true, nil
 		}
 		if c.Op == "matches" {
@@ -182,7 +183,7 @@ func (t *ProxyConfig) EvaluateCondition(c deep.Condition) (bool, error) {
 			return checkType(t.Port, c.Value.(string)), nil
 		}
 		if c.Op == "log" {
-			deep.Logger().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Port)
+			slog.Default().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Port)
 			return true, nil
 		}
 		if c.Op == "matches" {
@@ -260,7 +261,7 @@ func (t *ProxyConfig) Copy() *ProxyConfig {
 }
 
 // ApplyOperation applies a single operation to SystemMeta efficiently.
-func (t *SystemMeta) ApplyOperation(op deep.Operation) (bool, error) {
+func (t *SystemMeta) ApplyOperation(op deep.Operation, logger *slog.Logger) (bool, error) {
 	if op.If != nil {
 		ok, err := t.EvaluateCondition(*op.If)
 		if err != nil || !ok {
@@ -281,7 +282,7 @@ func (t *SystemMeta) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 		if m, ok := op.New.(map[string]any); ok {
 			for k, v := range m {
-				t.ApplyOperation(deep.Operation{Kind: op.Kind, Path: "/" + k, New: v})
+				t.ApplyOperation(deep.Operation{Kind: op.Kind, Path: "/" + k, New: v}, logger)
 			}
 			return true, nil
 		}
@@ -292,7 +293,7 @@ func (t *SystemMeta) ApplyOperation(op deep.Operation) (bool, error) {
 		return true, fmt.Errorf("field %s is read-only", op.Path)
 	case "/proxy", "/Settings":
 		if op.Kind == deep.OpLog {
-			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.Settings)
+			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Settings)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
@@ -360,7 +361,7 @@ func (t *SystemMeta) EvaluateCondition(c deep.Condition) (bool, error) {
 			return checkType(t.ClusterID, c.Value.(string)), nil
 		}
 		if c.Op == "log" {
-			deep.Logger().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.ClusterID)
+			slog.Default().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.ClusterID)
 			return true, nil
 		}
 		if c.Op == "matches" {

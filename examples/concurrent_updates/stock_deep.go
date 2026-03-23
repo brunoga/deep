@@ -3,13 +3,14 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
 	deep "github.com/brunoga/deep/v5"
 	"reflect"
 	"regexp"
 )
 
 // ApplyOperation applies a single operation to Stock efficiently.
-func (t *Stock) ApplyOperation(op deep.Operation) (bool, error) {
+func (t *Stock) ApplyOperation(op deep.Operation, logger *slog.Logger) (bool, error) {
 	if op.If != nil {
 		ok, err := t.EvaluateCondition(*op.If)
 		if err != nil || !ok {
@@ -30,7 +31,7 @@ func (t *Stock) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 		if m, ok := op.New.(map[string]any); ok {
 			for k, v := range m {
-				t.ApplyOperation(deep.Operation{Kind: op.Kind, Path: "/" + k, New: v})
+				t.ApplyOperation(deep.Operation{Kind: op.Kind, Path: "/" + k, New: v}, logger)
 			}
 			return true, nil
 		}
@@ -39,7 +40,7 @@ func (t *Stock) ApplyOperation(op deep.Operation) (bool, error) {
 	switch op.Path {
 	case "/sku", "/SKU":
 		if op.Kind == deep.OpLog {
-			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.SKU)
+			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.SKU)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
@@ -53,7 +54,7 @@ func (t *Stock) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 	case "/q", "/Quantity":
 		if op.Kind == deep.OpLog {
-			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.Quantity)
+			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Quantity)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
@@ -134,7 +135,7 @@ func (t *Stock) EvaluateCondition(c deep.Condition) (bool, error) {
 			return checkType(t.SKU, c.Value.(string)), nil
 		}
 		if c.Op == "log" {
-			deep.Logger().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.SKU)
+			slog.Default().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.SKU)
 			return true, nil
 		}
 		if c.Op == "matches" {
@@ -182,7 +183,7 @@ func (t *Stock) EvaluateCondition(c deep.Condition) (bool, error) {
 			return checkType(t.Quantity, c.Value.(string)), nil
 		}
 		if c.Op == "log" {
-			deep.Logger().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Quantity)
+			slog.Default().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Quantity)
 			return true, nil
 		}
 		if c.Op == "matches" {

@@ -3,6 +3,7 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
 	deep "github.com/brunoga/deep/v5"
 	"reflect"
 	"regexp"
@@ -10,7 +11,7 @@ import (
 )
 
 // ApplyOperation applies a single operation to GameWorld efficiently.
-func (t *GameWorld) ApplyOperation(op deep.Operation) (bool, error) {
+func (t *GameWorld) ApplyOperation(op deep.Operation, logger *slog.Logger) (bool, error) {
 	if op.If != nil {
 		ok, err := t.EvaluateCondition(*op.If)
 		if err != nil || !ok {
@@ -31,7 +32,7 @@ func (t *GameWorld) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 		if m, ok := op.New.(map[string]any); ok {
 			for k, v := range m {
-				t.ApplyOperation(deep.Operation{Kind: op.Kind, Path: "/" + k, New: v})
+				t.ApplyOperation(deep.Operation{Kind: op.Kind, Path: "/" + k, New: v}, logger)
 			}
 			return true, nil
 		}
@@ -40,7 +41,7 @@ func (t *GameWorld) ApplyOperation(op deep.Operation) (bool, error) {
 	switch op.Path {
 	case "/players", "/Players":
 		if op.Kind == deep.OpLog {
-			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.Players)
+			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Players)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
@@ -54,7 +55,7 @@ func (t *GameWorld) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 	case "/time", "/Time":
 		if op.Kind == deep.OpLog {
-			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.Time)
+			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Time)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
@@ -169,7 +170,7 @@ func (t *GameWorld) EvaluateCondition(c deep.Condition) (bool, error) {
 			return checkType(t.Time, c.Value.(string)), nil
 		}
 		if c.Op == "log" {
-			deep.Logger().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Time)
+			slog.Default().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Time)
 			return true, nil
 		}
 		if c.Op == "matches" {
@@ -261,7 +262,7 @@ func (t *GameWorld) Copy() *GameWorld {
 }
 
 // ApplyOperation applies a single operation to Player efficiently.
-func (t *Player) ApplyOperation(op deep.Operation) (bool, error) {
+func (t *Player) ApplyOperation(op deep.Operation, logger *slog.Logger) (bool, error) {
 	if op.If != nil {
 		ok, err := t.EvaluateCondition(*op.If)
 		if err != nil || !ok {
@@ -282,7 +283,7 @@ func (t *Player) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 		if m, ok := op.New.(map[string]any); ok {
 			for k, v := range m {
-				t.ApplyOperation(deep.Operation{Kind: op.Kind, Path: "/" + k, New: v})
+				t.ApplyOperation(deep.Operation{Kind: op.Kind, Path: "/" + k, New: v}, logger)
 			}
 			return true, nil
 		}
@@ -291,7 +292,7 @@ func (t *Player) ApplyOperation(op deep.Operation) (bool, error) {
 	switch op.Path {
 	case "/x", "/X":
 		if op.Kind == deep.OpLog {
-			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.X)
+			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.X)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
@@ -318,7 +319,7 @@ func (t *Player) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 	case "/y", "/Y":
 		if op.Kind == deep.OpLog {
-			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.Y)
+			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Y)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
@@ -345,7 +346,7 @@ func (t *Player) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 	case "/name", "/Name":
 		if op.Kind == deep.OpLog {
-			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.Name)
+			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Name)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
@@ -416,7 +417,7 @@ func (t *Player) EvaluateCondition(c deep.Condition) (bool, error) {
 			return checkType(t.X, c.Value.(string)), nil
 		}
 		if c.Op == "log" {
-			deep.Logger().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.X)
+			slog.Default().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.X)
 			return true, nil
 		}
 		if c.Op == "matches" {
@@ -477,7 +478,7 @@ func (t *Player) EvaluateCondition(c deep.Condition) (bool, error) {
 			return checkType(t.Y, c.Value.(string)), nil
 		}
 		if c.Op == "log" {
-			deep.Logger().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Y)
+			slog.Default().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Y)
 			return true, nil
 		}
 		if c.Op == "matches" {
@@ -538,7 +539,7 @@ func (t *Player) EvaluateCondition(c deep.Condition) (bool, error) {
 			return checkType(t.Name, c.Value.(string)), nil
 		}
 		if c.Op == "log" {
-			deep.Logger().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Name)
+			slog.Default().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Name)
 			return true, nil
 		}
 		if c.Op == "matches" {

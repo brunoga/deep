@@ -3,13 +3,14 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
 	deep "github.com/brunoga/deep/v5"
 	"reflect"
 	"regexp"
 )
 
 // ApplyOperation applies a single operation to UIState efficiently.
-func (t *UIState) ApplyOperation(op deep.Operation) (bool, error) {
+func (t *UIState) ApplyOperation(op deep.Operation, logger *slog.Logger) (bool, error) {
 	if op.If != nil {
 		ok, err := t.EvaluateCondition(*op.If)
 		if err != nil || !ok {
@@ -30,7 +31,7 @@ func (t *UIState) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 		if m, ok := op.New.(map[string]any); ok {
 			for k, v := range m {
-				t.ApplyOperation(deep.Operation{Kind: op.Kind, Path: "/" + k, New: v})
+				t.ApplyOperation(deep.Operation{Kind: op.Kind, Path: "/" + k, New: v}, logger)
 			}
 			return true, nil
 		}
@@ -39,7 +40,7 @@ func (t *UIState) ApplyOperation(op deep.Operation) (bool, error) {
 	switch op.Path {
 	case "/theme", "/Theme":
 		if op.Kind == deep.OpLog {
-			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.Theme)
+			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Theme)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
@@ -53,7 +54,7 @@ func (t *UIState) ApplyOperation(op deep.Operation) (bool, error) {
 		}
 	case "/sidebar_open", "/Open":
 		if op.Kind == deep.OpLog {
-			deep.Logger().Info("deep log", "message", op.New, "path", op.Path, "field", t.Open)
+			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Open)
 			return true, nil
 		}
 		if op.Kind == deep.OpReplace && op.Strict {
@@ -121,7 +122,7 @@ func (t *UIState) EvaluateCondition(c deep.Condition) (bool, error) {
 			return checkType(t.Theme, c.Value.(string)), nil
 		}
 		if c.Op == "log" {
-			deep.Logger().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Theme)
+			slog.Default().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Theme)
 			return true, nil
 		}
 		if c.Op == "matches" {
@@ -169,7 +170,7 @@ func (t *UIState) EvaluateCondition(c deep.Condition) (bool, error) {
 			return checkType(t.Open, c.Value.(string)), nil
 		}
 		if c.Op == "log" {
-			deep.Logger().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Open)
+			slog.Default().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Open)
 			return true, nil
 		}
 		if c.Op == "matches" {
