@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-	//"github.com/brunoga/deep/v5/internal/core"
+	//"github.com/brunoga/deep/v5/core"
 )
 
 func TestPatch_String_Basic(t *testing.T) {

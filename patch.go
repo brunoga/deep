@@ -1,28 +1,13 @@
 package deep
 
 import (
-	"encoding/gob"
 	"encoding/json"
 	"fmt"
-	"github.com/brunoga/deep/v5/internal/engine"
 	"strings"
+
+	"github.com/brunoga/deep/v5/core"
+	"github.com/brunoga/deep/v5/internal/engine"
 )
-
-func init() {
-	gob.Register(&Condition{})
-	gob.Register(Operation{})
-}
-
-// Register registers the Patch type for T with the gob package.
-// It also registers []T and map[string]T because gob requires concrete types
-// to be registered when they appear inside interface-typed fields (such as
-// Operation.Old / Operation.New). Call Register[T] for every type T that
-// will flow through those fields during gob encoding.
-func Register[T any]() {
-	gob.Register(Patch[T]{})
-	gob.Register([]T{})
-	gob.Register(map[string]T{})
-}
 
 // ApplyError represents one or more errors that occurred during patch application.
 type ApplyError struct {
@@ -69,7 +54,7 @@ type Patch[T any] struct {
 
 	// Guard is a global Condition that must be satisfied before any operation
 	// in this patch is applied. Set via WithGuard or Builder.Guard.
-	Guard *Condition `json:"cond,omitempty"`
+	Guard *core.Condition `json:"cond,omitempty"`
 
 	// Operations is a flat list of changes.
 	Operations []Operation `json:"ops"`
@@ -80,41 +65,15 @@ type Patch[T any] struct {
 
 // Operation represents a single change.
 type Operation struct {
-	Kind   OpKind     `json:"k"`
-	Path   string     `json:"p"` // JSON Pointer path; created via Field selectors.
-	Old    any        `json:"o,omitempty"`
-	New    any        `json:"n,omitempty"`
-	If     *Condition `json:"if,omitempty"`
-	Unless *Condition `json:"un,omitempty"`
+	Kind   OpKind          `json:"k"`
+	Path   string          `json:"p"` // JSON Pointer path; created via Field selectors.
+	Old    any             `json:"o,omitempty"`
+	New    any             `json:"n,omitempty"`
+	If     *core.Condition `json:"if,omitempty"`
+	Unless *core.Condition `json:"un,omitempty"`
 
 	// Strict is stamped from Patch.Strict at apply time; not serialized.
 	Strict bool `json:"-"`
-}
-
-// Condition operator constants. Use these when constructing Condition values
-// manually. Prefer the typed builder functions (Eq, Ne, And, etc.) where possible.
-const (
-	CondEq      = "=="
-	CondNe      = "!="
-	CondGt      = ">"
-	CondLt      = "<"
-	CondGe      = ">="
-	CondLe      = "<="
-	CondExists  = "exists"
-	CondIn      = "in"
-	CondMatches = "matches"
-	CondType    = "type"
-	CondAnd     = "and"
-	CondOr      = "or"
-	CondNot     = "not"
-)
-
-// Condition represents a serializable predicate for conditional application.
-type Condition struct {
-	Path  string       `json:"p,omitempty"`
-	Op    string       `json:"o"` // see Op* constants above
-	Value any          `json:"v,omitempty"`
-	Sub   []*Condition `json:"apply,omitempty"` // Sub-conditions for logical operators (and, or, not)
 }
 
 // IsEmpty reports whether the patch contains no operations.
@@ -131,7 +90,7 @@ func (p Patch[T]) AsStrict() Patch[T] {
 }
 
 // WithGuard returns a new patch with the global guard condition set.
-func (p Patch[T]) WithGuard(c *Condition) Patch[T] {
+func (p Patch[T]) WithGuard(c *core.Condition) Patch[T] {
 	p.Guard = c
 	return p
 }
@@ -212,7 +171,7 @@ func (p Patch[T]) ToJSONPatch() ([]byte, error) {
 		res = append(res, map[string]any{
 			"op":   "test",
 			"path": "/",
-			"if":   p.Guard.toPredicateInternal(),
+			"if":   p.Guard.ToPredicateInternal(),
 		})
 	}
 
@@ -232,130 +191,16 @@ func (p Patch[T]) ToJSONPatch() ([]byte, error) {
 		}
 
 		if op.If != nil {
-			m["if"] = op.If.toPredicateInternal()
+			m["if"] = op.If.ToPredicateInternal()
 		}
 		if op.Unless != nil {
-			m["unless"] = op.Unless.toPredicateInternal()
+			m["unless"] = op.Unless.ToPredicateInternal()
 		}
 
 		res = append(res, m)
 	}
 
 	return json.Marshal(res)
-}
-
-func (c *Condition) toPredicateInternal() map[string]any {
-	if c == nil {
-		return nil
-	}
-
-	op := c.Op
-	switch op {
-	case "==":
-		op = "test"
-	case "!=":
-		// Not equal is a 'not' predicate in some extensions
-		return map[string]any{
-			"op": "not",
-			"apply": []map[string]any{
-				{"op": "test", "path": c.Path, "value": c.Value},
-			},
-		}
-	case ">":
-		op = "more"
-	case ">=":
-		op = "more-or-equal"
-	case "<":
-		op = "less"
-	case "<=":
-		op = "less-or-equal"
-	case "exists":
-		op = "defined"
-	case "in":
-		op = "contains"
-	case "log":
-		op = "log"
-	case "matches":
-		op = "matches"
-	case "type":
-		op = "type"
-	case "and", "or", "not":
-		res := map[string]any{
-			"op": op,
-		}
-		var apply []map[string]any
-		for _, sub := range c.Sub {
-			apply = append(apply, sub.toPredicateInternal())
-		}
-		res["apply"] = apply
-		return res
-	}
-
-	return map[string]any{
-		"op":    op,
-		"path":  c.Path,
-		"value": c.Value,
-	}
-}
-
-// fromPredicateInternal is the inverse of toPredicateInternal.
-func fromPredicateInternal(m map[string]any) *Condition {
-	if m == nil {
-		return nil
-	}
-	op, _ := m["op"].(string)
-	path, _ := m["path"].(string)
-	value := m["value"]
-
-	switch op {
-	case "test":
-		return &Condition{Path: path, Op: "==", Value: value}
-	case "not":
-		// Could be encoded != or a logical not.
-		// If it wraps a single test on the same path, treat as !=.
-		if apply, ok := m["apply"].([]any); ok && len(apply) == 1 {
-			if inner, ok := apply[0].(map[string]any); ok {
-				if inner["op"] == "test" {
-					innerPath, _ := inner["path"].(string)
-					return &Condition{Path: innerPath, Op: "!=", Value: inner["value"]}
-				}
-			}
-		}
-		return &Condition{Op: "not", Sub: parseApply(m["apply"])}
-	case "more":
-		return &Condition{Path: path, Op: ">", Value: value}
-	case "more-or-equal":
-		return &Condition{Path: path, Op: ">=", Value: value}
-	case "less":
-		return &Condition{Path: path, Op: "<", Value: value}
-	case "less-or-equal":
-		return &Condition{Path: path, Op: "<=", Value: value}
-	case "defined":
-		return &Condition{Path: path, Op: "exists"}
-	case "contains":
-		return &Condition{Path: path, Op: "in", Value: value}
-	case "and", "or":
-		return &Condition{Op: op, Sub: parseApply(m["apply"])}
-	default:
-		// log, matches, type — same op name, pass through
-		return &Condition{Path: path, Op: op, Value: value}
-	}
-}
-
-func parseApply(raw any) []*Condition {
-	items, ok := raw.([]any)
-	if !ok {
-		return nil
-	}
-	out := make([]*Condition, 0, len(items))
-	for _, item := range items {
-		if m, ok := item.(map[string]any); ok {
-			if c := fromPredicateInternal(m); c != nil {
-				out = append(out, c)
-			}
-		}
-	}
-	return out
 }
 
 // ParseJSONPatch parses a JSON Patch document (RFC 6902 plus deep extensions)
@@ -373,7 +218,7 @@ func ParseJSONPatch[T any](data []byte) (Patch[T], error) {
 		// Global condition is encoded as a test op on "/" with an "if" predicate.
 		if opStr == "test" && path == "/" {
 			if ifPred, ok := m["if"].(map[string]any); ok {
-				res.Guard = fromPredicateInternal(ifPred)
+				res.Guard = core.FromPredicateInternal(ifPred)
 			}
 			continue
 		}
@@ -382,10 +227,10 @@ func ParseJSONPatch[T any](data []byte) (Patch[T], error) {
 
 		// Per-op conditions
 		if ifPred, ok := m["if"].(map[string]any); ok {
-			op.If = fromPredicateInternal(ifPred)
+			op.If = core.FromPredicateInternal(ifPred)
 		}
 		if unlessPred, ok := m["unless"].(map[string]any); ok {
-			op.Unless = fromPredicateInternal(unlessPred)
+			op.Unless = core.FromPredicateInternal(unlessPred)
 		}
 
 		switch opStr {
@@ -413,4 +258,169 @@ func ParseJSONPatch[T any](data []byte) (Patch[T], error) {
 		res.Operations = append(res.Operations, op)
 	}
 	return res, nil
+}
+
+// Edit returns a Builder for constructing a Patch[T]. The target argument is
+// used only for type inference and is not stored; the builder produces a
+// standalone Patch, not a live view of the target.
+func Edit[T any](_ *T) *Builder[T] {
+	return &Builder[T]{}
+}
+
+// Op is a pending patch operation. Obtain one from [Set], [Add], [Remove],
+// [Move], or [Copy]; attach per-operation conditions with [Op.If] or
+// [Op.Unless] before passing to [Builder.With].
+type Op struct {
+	op Operation
+}
+
+// If attaches a condition that must hold for this operation to be applied.
+func (o Op) If(c *core.Condition) Op {
+	o.op.If = c
+	return o
+}
+
+// Unless attaches a condition that must NOT hold for this operation to be applied.
+func (o Op) Unless(c *core.Condition) Op {
+	o.op.Unless = c
+	return o
+}
+
+// Set returns a type-safe replace operation.
+func Set[T, V any](p Path[T, V], val V) Op {
+	return Op{op: Operation{Kind: OpReplace, Path: p.String(), New: val}}
+}
+
+// Add returns a type-safe add (insert) operation.
+func Add[T, V any](p Path[T, V], val V) Op {
+	return Op{op: Operation{Kind: OpAdd, Path: p.String(), New: val}}
+}
+
+// Remove returns a type-safe remove operation.
+func Remove[T, V any](p Path[T, V]) Op {
+	return Op{op: Operation{Kind: OpRemove, Path: p.String()}}
+}
+
+// Move returns a type-safe move operation that relocates the value at from to to.
+// Both paths must share the same value type V.
+func Move[T, V any](from, to Path[T, V]) Op {
+	return Op{op: Operation{Kind: OpMove, Path: to.String(), Old: from.String()}}
+}
+
+// Copy returns a type-safe copy operation that duplicates the value at from to to.
+// Both paths must share the same value type V.
+func Copy[T, V any](from, to Path[T, V]) Op {
+	return Op{op: Operation{Kind: OpCopy, Path: to.String(), Old: from.String()}}
+}
+
+// Builder constructs a [Patch] via a fluent chain.
+type Builder[T any] struct {
+	global *core.Condition
+	ops    []Operation
+}
+
+// Guard sets the global guard condition on the patch. If Guard has already been
+// called, the new condition is ANDed with the existing one rather than
+// replacing it — calling Guard twice is equivalent to Guard(And(c1, c2)).
+func (b *Builder[T]) Guard(c *core.Condition) *Builder[T] {
+	if b.global == nil {
+		b.global = c
+	} else {
+		b.global = And(b.global, c)
+	}
+	return b
+}
+
+// With appends one or more operations to the patch being built.
+// Obtain operations from the typed constructors [Set], [Add], [Remove],
+// [Move], and [Copy]; per-operation conditions can be attached with
+// [Op.If] and [Op.Unless] before passing here.
+func (b *Builder[T]) With(ops ...Op) *Builder[T] {
+	for _, o := range ops {
+		b.ops = append(b.ops, o.op)
+	}
+	return b
+}
+
+// Log appends a log operation.
+func (b *Builder[T]) Log(msg string) *Builder[T] {
+	b.ops = append(b.ops, Operation{
+		Kind: OpLog,
+		Path: "/",
+		New:  msg,
+	})
+	return b
+}
+
+// Build assembles and returns the completed Patch.
+func (b *Builder[T]) Build() Patch[T] {
+	return Patch[T]{
+		Guard:      b.global,
+		Operations: b.ops,
+	}
+}
+
+// Eq creates an equality condition.
+func Eq[T, V any](p Path[T, V], val V) *core.Condition {
+	return &core.Condition{Path: p.String(), Op: core.CondEq, Value: val}
+}
+
+// Ne creates a non-equality condition.
+func Ne[T, V any](p Path[T, V], val V) *core.Condition {
+	return &core.Condition{Path: p.String(), Op: core.CondNe, Value: val}
+}
+
+// Gt creates a greater-than condition.
+func Gt[T, V any](p Path[T, V], val V) *core.Condition {
+	return &core.Condition{Path: p.String(), Op: core.CondGt, Value: val}
+}
+
+// Ge creates a greater-than-or-equal condition.
+func Ge[T, V any](p Path[T, V], val V) *core.Condition {
+	return &core.Condition{Path: p.String(), Op: core.CondGe, Value: val}
+}
+
+// Lt creates a less-than condition.
+func Lt[T, V any](p Path[T, V], val V) *core.Condition {
+	return &core.Condition{Path: p.String(), Op: core.CondLt, Value: val}
+}
+
+// Le creates a less-than-or-equal condition.
+func Le[T, V any](p Path[T, V], val V) *core.Condition {
+	return &core.Condition{Path: p.String(), Op: core.CondLe, Value: val}
+}
+
+// Exists creates a condition that checks if a path exists.
+func Exists[T, V any](p Path[T, V]) *core.Condition {
+	return &core.Condition{Path: p.String(), Op: core.CondExists}
+}
+
+// In creates a condition that checks if a value is in a list.
+func In[T, V any](p Path[T, V], vals []V) *core.Condition {
+	return &core.Condition{Path: p.String(), Op: core.CondIn, Value: vals}
+}
+
+// Matches creates a regex condition.
+func Matches[T, V any](p Path[T, V], regex string) *core.Condition {
+	return &core.Condition{Path: p.String(), Op: core.CondMatches, Value: regex}
+}
+
+// Type creates a type-check condition.
+func Type[T, V any](p Path[T, V], typeName string) *core.Condition {
+	return &core.Condition{Path: p.String(), Op: core.CondType, Value: typeName}
+}
+
+// And combines multiple conditions with logical AND.
+func And(conds ...*core.Condition) *core.Condition {
+	return &core.Condition{Op: core.CondAnd, Sub: conds}
+}
+
+// Or combines multiple conditions with logical OR.
+func Or(conds ...*core.Condition) *core.Condition {
+	return &core.Condition{Op: core.CondOr, Sub: conds}
+}
+
+// Not inverts a condition.
+func Not(c *core.Condition) *core.Condition {
+	return &core.Condition{Op: core.CondNot, Sub: []*core.Condition{c}}
 }

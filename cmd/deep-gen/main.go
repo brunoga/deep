@@ -46,8 +46,8 @@ type Generator struct {
 type headerData struct {
 	PkgName      string
 	NeedsRegexp  bool
-	NeedsReflect bool
 	NeedsStrings bool
+	NeedsCore    bool
 	NeedsDeep    bool
 	NeedsCrdt    bool
 }
@@ -116,9 +116,9 @@ func fieldApplyCase(f FieldInfo, p string) string {
 	b.WriteString("\t\t}\n")
 	// Value assignment
 	if f.IsText {
-		// Text is a convergent CRDT type — delegate to its own ApplyOperation which calls MergeTextRuns.
+		// Text is a convergent CRDT type — delegate via Patch with a single-op sub-patch.
 		fmt.Fprintf(&b, "\t\top.Path = \"/\"\n")
-		fmt.Fprintf(&b, "\t\treturn t.%s.ApplyOperation(op)\n", f.Name)
+		fmt.Fprintf(&b, "\t\treturn true, t.%s.Patch(%sPatch[crdt.Text]{Operations: []%sOperation{op}}, logger)\n", f.Name, p, p)
 		return b.String()
 	}
 	fmt.Fprintf(&b, "\t\tif v, ok := op.New.(%s); ok {\n\t\t\tt.%s = v\n\t\t\treturn true, nil\n\t\t}\n", f.Type, f.Name)
@@ -145,10 +145,10 @@ func delegateCase(f FieldInfo, p string) string {
 				selfArg = "t." + f.Name
 				fmt.Fprintf(&b, "\t\t\tif %s != nil {\n", selfArg)
 				fmt.Fprintf(&b, "\t\t\t\top.Path = op.Path[len(\"/%s/\")-1:]\n", f.JSONName)
-				fmt.Fprintf(&b, "\t\t\t\treturn %s.ApplyOperation(op)\n\t\t\t}\n", selfArg)
+				fmt.Fprintf(&b, "\t\t\t\treturn %s.applyOperation(op, logger)\n\t\t\t}\n", selfArg)
 			} else {
 				fmt.Fprintf(&b, "\t\t\top.Path = op.Path[len(\"/%s/\")-1:]\n", f.JSONName)
-				fmt.Fprintf(&b, "\t\t\treturn %s.ApplyOperation(op)\n", selfArg)
+				fmt.Fprintf(&b, "\t\t\treturn %s.applyOperation(op, logger)\n", selfArg)
 			}
 		}
 		b.WriteString("\t\t}\n")
@@ -164,7 +164,7 @@ func delegateCase(f FieldInfo, p string) string {
 			fmt.Fprintf(&b, "\t\t\tif val, ok := t.%s[key]; ok && val != nil {\n", f.Name)
 			b.WriteString("\t\t\t\top.Path = \"/\"\n")
 			b.WriteString("\t\t\t\tif len(parts) > 1 { op.Path = \"/\" + strings.Join(parts[1:], \"/\") }\n")
-			b.WriteString("\t\t\t\treturn val.ApplyOperation(op)\n\t\t\t}\n")
+			b.WriteString("\t\t\t\treturn val.applyOperation(op, logger)\n\t\t\t}\n")
 		} else {
 			fmt.Fprintf(&b, "\t\t\tparts := strings.Split(op.Path[len(\"/%s/\"):], \"/\")\n", f.JSONName)
 			b.WriteString("\t\t\tkey := parts[0]\n")
@@ -270,7 +270,7 @@ func evalCondCase(f FieldInfo, pkgPrefix string) string {
 	n, typ := f.Name, f.Type
 
 	b.WriteString("\t\tif c.Op == \"exists\" { return true, nil }\n")
-	fmt.Fprintf(&b, "\t\tif c.Op == \"type\" { return checkType(t.%s, c.Value.(string)), nil }\n", n)
+	fmt.Fprintf(&b, "\t\tif c.Op == \"type\" { return core.CheckType(t.%s, c.Value.(string)), nil }\n", n)
 	fmt.Fprintf(&b, "\t\tif c.Op == \"matches\" { return regexp.MatchString(c.Value.(string), fmt.Sprintf(\"%%v\", t.%s)) }\n", n)
 
 	switch {
@@ -425,27 +425,27 @@ func copyFieldPost(f FieldInfo) string {
 		self := "(&t." + f.Name + ")"
 		if isPtr(f.Type) {
 			self = "t." + f.Name
-			fmt.Fprintf(&b, "\tif %s != nil { res.%s = %s.Copy() }\n", self, f.Name, self)
+			fmt.Fprintf(&b, "\tif %s != nil { res.%s = %s.Clone() }\n", self, f.Name, self)
 		} else {
-			fmt.Fprintf(&b, "\tres.%s = *%s.Copy()\n", f.Name, self)
+			fmt.Fprintf(&b, "\tres.%s = *%s.Clone()\n", f.Name, self)
 		}
 	}
 	if f.IsCollection {
 		if strings.HasPrefix(f.Type, "[]") {
 			et := sliceElem(f.Type)
 			if isPtr(et) {
-				fmt.Fprintf(&b, "\tfor i, v := range t.%s { if v != nil { res.%s[i] = v.Copy() } }\n", f.Name, f.Name)
+				fmt.Fprintf(&b, "\tfor i, v := range t.%s { if v != nil { res.%s[i] = v.Clone() } }\n", f.Name, f.Name)
 			} else if f.IsStruct {
-				fmt.Fprintf(&b, "\tfor i := range t.%s { res.%s[i] = *t.%s[i].Copy() }\n", f.Name, f.Name, f.Name)
+				fmt.Fprintf(&b, "\tfor i := range t.%s { res.%s[i] = *t.%s[i].Clone() }\n", f.Name, f.Name, f.Name)
 			}
 		} else if strings.HasPrefix(f.Type, "map[") {
 			vt := mapVal(f.Type)
 			fmt.Fprintf(&b, "\tif t.%s != nil {\n\t\tres.%s = make(%s)\n", f.Name, f.Name, f.Type)
 			fmt.Fprintf(&b, "\t\tfor k, v := range t.%s {\n", f.Name)
 			if isPtr(vt) {
-				fmt.Fprintf(&b, "\t\t\tif v != nil { res.%s[k] = v.Copy() }\n", f.Name)
+				fmt.Fprintf(&b, "\t\t\tif v != nil { res.%s[k] = v.Clone() }\n", f.Name)
 			} else if f.IsStruct {
-				fmt.Fprintf(&b, "\t\t\tres.%s[k] = *v.Copy()\n", f.Name)
+				fmt.Fprintf(&b, "\t\t\tres.%s[k] = *v.Clone()\n", f.Name)
 			} else {
 				fmt.Fprintf(&b, "\t\t\tres.%s[k] = v\n", f.Name)
 			}
@@ -478,11 +478,11 @@ import (
 {{- if .NeedsRegexp}}
 	"regexp"
 {{- end}}
-{{- if .NeedsReflect}}
-	"reflect"
-{{- end}}
 {{- if .NeedsStrings}}
 	"strings"
+{{- end}}
+{{- if .NeedsCore}}
+	core "github.com/brunoga/deep/v5/core"
 {{- end}}
 {{- if .NeedsDeep}}
 	deep "github.com/brunoga/deep/v5"
@@ -493,32 +493,68 @@ import (
 )
 `))
 
+var patchTmpl = template.Must(template.New("patch").Funcs(tmplFuncs).Parse(
+	`// Patch applies p to t using the generated fast path.
+func (t *{{.TypeName}}) Patch(p {{.P}}Patch[{{.TypeName}}], logger *slog.Logger) error {
+	if logger == nil { logger = slog.Default() }
+	if p.Guard != nil {
+		ok, err := t.evaluateCondition(*p.Guard)
+		if err != nil {
+			return fmt.Errorf("global condition evaluation failed: %w", err)
+		}
+		if !ok {
+			return fmt.Errorf("global condition not met")
+		}
+	}
+	var errs []error
+	for _, op := range p.Operations {
+		op.Strict = p.Strict
+		handled, err := t.applyOperation(op, logger)
+		if err != nil {
+			errs = append(errs, err)
+		} else if !handled {
+			if err := {{.P}}ApplyOpReflection(t, op, logger); err != nil {
+				errs = append(errs, err)
+			}
+		}
+	}
+	if len(errs) > 0 {
+		return &{{.P}}ApplyError{Errors: errs}
+	}
+	return nil
+}
+
+`))
+
 var applyOpTmpl = template.Must(template.New("applyOp").Funcs(tmplFuncs).Parse(
-	`// ApplyOperation applies a single operation to {{.TypeName}} efficiently.
-func (t *{{.TypeName}}) ApplyOperation(op {{.P}}Operation, logger *slog.Logger) (bool, error) {
+	`func (t *{{.TypeName}}) applyOperation(op {{.P}}Operation, logger *slog.Logger) (bool, error) {
 	if op.If != nil {
-		ok, err := t.EvaluateCondition(*op.If)
-		if err != nil || !ok { return true, err }
+		ok, err := t.evaluateCondition(*op.If)
+		if err != nil || !ok { return true, nil }
 	}
 	if op.Unless != nil {
-		ok, err := t.EvaluateCondition(*op.Unless)
-		if err == nil && ok { return true, nil }
+		ok, err := t.evaluateCondition(*op.Unless)
+		if err != nil || ok { return true, nil }
 	}
-
-	if op.Path == "" || op.Path == "/" {
-		if v, ok := op.New.({{.TypeName}}); ok {
-			*t = v
-			return true, nil
-		}
-		if m, ok := op.New.(map[string]any); ok {
-			for k, v := range m {
-				t.ApplyOperation({{.P}}Operation{Kind: op.Kind, Path: "/" + k, New: v})
-			}
-			return true, nil
-		}
+	if op.Kind == {{.P}}OpLog {
+		logger.Info("deep log", "message", op.New, "path", op.Path)
+		return true, nil
 	}
 
 	switch op.Path {
+	case "/":
+		if op.Strict && (op.Kind == {{.P}}OpReplace || op.Kind == {{.P}}OpRemove) {
+			if !{{.P}}Equal(*t, op.Old.({{.TypeName}})) {
+				return true, fmt.Errorf("strict check failed at root: expected %v, got %v", op.Old, *t)
+			}
+		}
+		if op.Kind == {{.P}}OpReplace {
+			if v, ok := op.New.({{.TypeName}}); ok {
+				*t = v
+				return true, nil
+			}
+		}
+		return true, fmt.Errorf("unsupported root operation: %s", op.Kind)
 {{range .Fields}}{{if not .Ignore}}{{fieldApplyCase . $.P}}{{end}}{{end -}}
 	default:
 {{range .Fields}}{{delegateCase . $.P}}{{end -}}
@@ -539,23 +575,23 @@ func (t *{{.TypeName}}) Diff(other *{{.TypeName}}) {{.P}}Patch[{{.TypeName}}] {
 `))
 
 var evalCondTmpl = template.Must(template.New("evalCond").Funcs(tmplFuncs).Parse(
-	`func (t *{{.TypeName}}) EvaluateCondition(c {{.P}}Condition) (bool, error) {
+	`func (t *{{.TypeName}}) evaluateCondition(c core.Condition) (bool, error) {
 	switch c.Op {
 	case "and":
 		for _, sub := range c.Sub {
-			ok, err := t.EvaluateCondition(*sub)
+			ok, err := t.evaluateCondition(*sub)
 			if err != nil || !ok { return false, err }
 		}
 		return true, nil
 	case "or":
 		for _, sub := range c.Sub {
-			ok, err := t.EvaluateCondition(*sub)
+			ok, err := t.evaluateCondition(*sub)
 			if err == nil && ok { return true, nil }
 		}
 		return false, nil
 	case "not":
 		if len(c.Sub) > 0 {
-			ok, err := t.EvaluateCondition(*c.Sub[0])
+			ok, err := t.evaluateCondition(*c.Sub[0])
 			if err != nil { return false, err }
 			return !ok, nil
 		}
@@ -582,8 +618,8 @@ func (t *{{.TypeName}}) Equal(other *{{.TypeName}}) bool {
 `))
 
 var copyTmpl = template.Must(template.New("copy").Funcs(tmplFuncs).Parse(
-	`// Copy returns a deep copy of t.
-func (t *{{.TypeName}}) Copy() *{{.TypeName}} {
+	`// Clone returns a deep copy of t.
+func (t *{{.TypeName}}) Clone() *{{.TypeName}} {
 	res := &{{.TypeName}}{
 {{range .Fields}}{{if not .Ignore}}{{copyFieldInit .}}{{end}}{{end -}}
 	}
@@ -597,34 +633,6 @@ var helpersTmpl = template.Must(template.New("helpers").Funcs(tmplFuncs).Parse(
 func contains[M ~map[K]V, K comparable, V any](m M, k K) bool {
 	_, ok := m[k]
 	return ok
-}
-
-func checkType(v any, typeName string) bool {
-	switch typeName {
-	case "string":
-		_, ok := v.(string)
-		return ok
-	case "number":
-		switch v.(type) {
-		case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
-			return true
-		}
-	case "boolean":
-		_, ok := v.(bool)
-		return ok
-	case "object":
-		rv := reflect.ValueOf(v)
-		return rv.Kind() == reflect.Struct || rv.Kind() == reflect.Map
-	case "array":
-		rv := reflect.ValueOf(v)
-		return rv.Kind() == reflect.Slice || rv.Kind() == reflect.Array
-	case "null":
-		if v == nil { return true }
-		rv := reflect.ValueOf(v)
-		return (rv.Kind() == reflect.Pointer || rv.Kind() == reflect.Interface ||
-			rv.Kind() == reflect.Slice || rv.Kind() == reflect.Map) && rv.IsNil()
-	}
-	return false
 }
 `))
 
@@ -649,8 +657,8 @@ func (g *Generator) writeHeader(allFields []FieldInfo) {
 	must(headerTmpl.Execute(&g.buf, headerData{
 		PkgName:      g.pkgName,
 		NeedsRegexp:  needsRegexp,
-		NeedsReflect: g.pkgName != "deep",
 		NeedsStrings: needsStrings,
+		NeedsCore:    true,
 		NeedsDeep:    g.pkgName != "deep",
 		NeedsCrdt:    needsCrdt && g.pkgName != "deep",
 	}))
@@ -661,6 +669,7 @@ func (g *Generator) writeType(typeName string, fields []FieldInfo) {
 		g.pkgPrefix = "deep."
 	}
 	d := typeData{TypeName: typeName, P: g.pkgPrefix, Fields: fields, TypeKeys: g.typeKeys}
+	must(patchTmpl.Execute(&g.buf, d))
 	must(applyOpTmpl.Execute(&g.buf, d))
 	must(diffTmpl.Execute(&g.buf, d))
 	must(evalCondTmpl.Execute(&g.buf, d))
@@ -802,17 +811,17 @@ func parseFields(st *ast.StructType) []FieldInfo {
 	var fields []FieldInfo
 	for _, field := range st.Fields.List {
 		if len(field.Names) == 0 {
-			continue
+			continue // embedded field
 		}
-		name := field.Names[0].Name
-		jsonName := name
 		var ignore, readOnly, atomic bool
-
+		// Tags apply to all names in the declaration (e.g. `X, Y int \`json:"x"\``
+		// is unusual but syntactically valid; we honour the tag for every name).
 		if field.Tag != nil {
 			tagVal := strings.Trim(field.Tag.Value, "`")
 			tag := reflect.StructTag(tagVal)
-			if jt := tag.Get("json"); jt != "" {
-				jsonName = strings.Split(jt, ",")[0]
+			// json:"-" marks the whole field as ignored
+			if jt := tag.Get("json"); strings.Split(jt, ",")[0] == "-" {
+				ignore = true
 			}
 			for _, p := range strings.Split(tag.Get("deep"), ",") {
 				switch strings.TrimSpace(p) {
@@ -827,17 +836,30 @@ func parseFields(st *ast.StructType) []FieldInfo {
 		}
 
 		typeName, isStruct, isCollection, isText := resolveType(field.Type)
-		fields = append(fields, FieldInfo{
-			Name:         name,
-			JSONName:     jsonName,
-			Type:         typeName,
-			IsStruct:     isStruct,
-			IsCollection: isCollection,
-			IsText:       isText,
-			Ignore:       ignore,
-			ReadOnly:     readOnly,
-			Atomic:       atomic,
-		})
+		for _, nameIdent := range field.Names {
+			name := nameIdent.Name
+			jsonName := name
+			if field.Tag != nil {
+				tagVal := strings.Trim(field.Tag.Value, "`")
+				tag := reflect.StructTag(tagVal)
+				if jt := tag.Get("json"); jt != "" {
+					if part := strings.Split(jt, ",")[0]; part != "" && part != "-" {
+						jsonName = part
+					}
+				}
+			}
+			fields = append(fields, FieldInfo{
+				Name:         name,
+				JSONName:     jsonName,
+				Type:         typeName,
+				IsStruct:     isStruct,
+				IsCollection: isCollection,
+				IsText:       isText,
+				Ignore:       ignore,
+				ReadOnly:     readOnly,
+				Atomic:       atomic,
+			})
+		}
 	}
 	return fields
 }

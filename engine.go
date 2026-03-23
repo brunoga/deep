@@ -4,18 +4,25 @@ import (
 	"fmt"
 	"log/slog"
 	"reflect"
-	"regexp"
 	"sort"
 
-	"github.com/brunoga/deep/v5/internal/core"
+	"github.com/brunoga/deep/v5/core"
 )
-
-// ApplyOption configures the behaviour of [Apply].
-type ApplyOption func(*applyConfig)
 
 type applyConfig struct {
 	logger *slog.Logger
 }
+
+func newApplyConfig(opts ...ApplyOption) applyConfig {
+	cfg := applyConfig{logger: slog.Default()}
+	for _, o := range opts {
+		o(&cfg)
+	}
+	return cfg
+}
+
+// ApplyOption configures the behaviour of [Apply].
+type ApplyOption func(*applyConfig)
 
 // WithLogger sets the [slog.Logger] used for [OpLog] operations within a
 // single [Apply] call. If not provided, [slog.Default] is used.
@@ -24,32 +31,26 @@ func WithLogger(l *slog.Logger) ApplyOption {
 }
 
 // Apply applies a Patch to a target pointer.
-// v5 prioritizes generated Apply methods but falls back to reflection if needed.
+// v5 prioritizes the generated Patch method but falls back to reflection if needed.
 func Apply[T any](target *T, p Patch[T], opts ...ApplyOption) error {
-	cfg := applyConfig{logger: slog.Default()}
-	for _, o := range opts {
-		o(&cfg)
-	}
-
 	v := reflect.ValueOf(target)
 	if v.Kind() != reflect.Pointer || v.IsNil() {
 		return fmt.Errorf("target must be a non-nil pointer")
 	}
 
-	// Global condition check — prefer generated EvaluateCondition, fall back to reflection.
+	cfg := newApplyConfig(opts...)
+
+	// Dispatch to generated Patch method if available.
+	if patcher, ok := any(target).(interface {
+		Patch(Patch[T], *slog.Logger) error
+	}); ok {
+		return patcher.Patch(p, cfg.logger)
+	}
+
+	// Reflection fallback.
+
 	if p.Guard != nil {
-		type condEvaluator interface {
-			EvaluateCondition(Condition) (bool, error)
-		}
-		var (
-			ok  bool
-			err error
-		)
-		if ce, hasGenCond := any(target).(condEvaluator); hasGenCond {
-			ok, err = ce.EvaluateCondition(*p.Guard)
-		} else {
-			ok, err = evaluateCondition(v.Elem(), p.Guard)
-		}
+		ok, err := core.EvaluateCondition(v.Elem(), p.Guard)
 		if err != nil {
 			return fmt.Errorf("global condition evaluation failed: %w", err)
 		}
@@ -59,120 +60,101 @@ func Apply[T any](target *T, p Patch[T], opts ...ApplyOption) error {
 	}
 
 	var errors []error
-
-	applier, hasGenerated := any(target).(interface {
-		ApplyOperation(Operation, *slog.Logger) (bool, error)
-	})
-
 	for _, op := range p.Operations {
-		// Stamp strict from the patch onto each operation before dispatch.
 		op.Strict = p.Strict
-
-		// Try generated path first.
-		if hasGenerated {
-			handled, err := applier.ApplyOperation(op, cfg.logger)
-			if err != nil {
-				errors = append(errors, err)
-				continue
-			}
-			if handled {
-				continue
-			}
-		}
-
-		// Fallback to reflection.
-		// Strict check (Old value verification for Replace and Remove).
-		if p.Strict && (op.Kind == OpReplace || op.Kind == OpRemove) {
-			current, err := core.DeepPath(op.Path).Resolve(v.Elem())
-			if err == nil && current.IsValid() {
-				if !core.Equal(current.Interface(), op.Old) {
-					errors = append(errors, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, current.Interface()))
-					continue
-				}
-			}
-		}
-
-		// Per-operation conditions
-		if op.If != nil {
-			ok, err := evaluateCondition(v.Elem(), op.If)
-			if err != nil || !ok {
-				continue // Skip operation
-			}
-		}
-		if op.Unless != nil {
-			ok, err := evaluateCondition(v.Elem(), op.Unless)
-			if err == nil && ok {
-				continue // Skip operation
-			}
-		}
-
-		// Struct Tag Enforcement
-
-		if v.Elem().Kind() == reflect.Struct {
-			parts := core.ParsePath(op.Path)
-			if len(parts) > 0 {
-				info := core.GetTypeInfo(v.Elem().Type())
-				var tag core.StructTag
-				found := false
-				for _, fInfo := range info.Fields {
-					if fInfo.Name == parts[0].Key || (fInfo.JSONTag != "" && fInfo.JSONTag == parts[0].Key) {
-						tag = fInfo.Tag
-						found = true
-						break
-					}
-				}
-
-				if found {
-					if tag.Ignore {
-						continue
-					}
-					if tag.ReadOnly && op.Kind != OpLog {
-						errors = append(errors, fmt.Errorf("field %s is read-only", op.Path))
-						continue
-					}
-				}
-			}
-		}
-
-		var err error
-		switch op.Kind {
-		case OpAdd, OpReplace:
-			newVal := reflect.ValueOf(op.New)
-			err = core.DeepPath(op.Path).Set(v.Elem(), newVal)
-		case OpRemove:
-			err = core.DeepPath(op.Path).Delete(v.Elem())
-		case OpMove:
-			fromPath := op.Old.(string)
-			var val reflect.Value
-			val, err = core.DeepPath(fromPath).Resolve(v.Elem())
-			if err == nil {
-				// Copy the resolved value before deleting the source: Resolve
-				// returns a reference into the struct, so Delete would zero val
-				// in place before it is written to the destination.
-				copied := reflect.New(val.Type()).Elem()
-				copied.Set(val)
-				if err = core.DeepPath(fromPath).Delete(v.Elem()); err == nil {
-					err = core.DeepPath(op.Path).Set(v.Elem(), copied)
-				}
-			}
-		case OpCopy:
-			fromPath := op.Old.(string)
-			var val reflect.Value
-			val, err = core.DeepPath(fromPath).Resolve(v.Elem())
-			if err == nil {
-				err = core.DeepPath(op.Path).Set(v.Elem(), val)
-			}
-		case OpLog:
-			cfg.logger.Info("deep log", "message", op.New, "path", op.Path)
-		}
-
-		if err != nil {
-			errors = append(errors, fmt.Errorf("failed to apply %s at %s: %w", op.Kind, op.Path, err))
+		if err := applyOpReflection(v.Elem(), op, cfg.logger); err != nil {
+			errors = append(errors, err)
 		}
 	}
 
 	if len(errors) > 0 {
 		return &ApplyError{Errors: errors}
+	}
+	return nil
+}
+
+// ApplyOpReflection applies a single operation to target via reflection.
+// This is called by generated Patch methods for operations the generated fast-path does not handle.
+func ApplyOpReflection[T any](target *T, op Operation, logger *slog.Logger) error {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return applyOpReflection(reflect.ValueOf(target).Elem(), op, logger)
+}
+
+func applyOpReflection(v reflect.Value, op Operation, logger *slog.Logger) error {
+	// Strict check.
+	if op.Strict && (op.Kind == OpReplace || op.Kind == OpRemove) {
+		current, err := core.DeepPath(op.Path).Resolve(v)
+		if err == nil && current.IsValid() {
+			if !core.Equal(current.Interface(), op.Old) {
+				return fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, current.Interface())
+			}
+		}
+	}
+
+	// Per-operation conditions.
+	if op.If != nil {
+		ok, err := core.EvaluateCondition(v, op.If)
+		if err != nil || !ok {
+			return nil
+		}
+	}
+	if op.Unless != nil {
+		ok, err := core.EvaluateCondition(v, op.Unless)
+		if err != nil || ok {
+			return nil
+		}
+	}
+
+	// Struct tag enforcement.
+	if v.Kind() == reflect.Struct {
+		parts := core.ParsePath(op.Path)
+		if len(parts) > 0 {
+			info := core.GetTypeInfo(v.Type())
+			for _, fInfo := range info.Fields {
+				if fInfo.Name == parts[0].Key || (fInfo.JSONTag != "" && fInfo.JSONTag == parts[0].Key) {
+					if fInfo.Tag.Ignore {
+						return nil
+					}
+					if fInfo.Tag.ReadOnly && op.Kind != OpLog {
+						return fmt.Errorf("field %s is read-only", op.Path)
+					}
+					break
+				}
+			}
+		}
+	}
+
+	var err error
+	switch op.Kind {
+	case OpAdd, OpReplace:
+		err = core.DeepPath(op.Path).Set(v, reflect.ValueOf(op.New))
+	case OpRemove:
+		err = core.DeepPath(op.Path).Delete(v)
+	case OpMove:
+		fromPath := op.Old.(string)
+		var val reflect.Value
+		val, err = core.DeepPath(fromPath).Resolve(v)
+		if err == nil {
+			copied := reflect.New(val.Type()).Elem()
+			copied.Set(val)
+			if err = core.DeepPath(fromPath).Delete(v); err == nil {
+				err = core.DeepPath(op.Path).Set(v, copied)
+			}
+		}
+	case OpCopy:
+		fromPath := op.Old.(string)
+		var val reflect.Value
+		val, err = core.DeepPath(fromPath).Resolve(v)
+		if err == nil {
+			err = core.DeepPath(op.Path).Set(v, val)
+		}
+	case OpLog:
+		logger.Info("deep log", "message", op.New, "path", op.Path)
+	}
+	if err != nil {
+		return fmt.Errorf("failed to apply %s at %s: %w", op.Kind, op.Path, err)
 	}
 	return nil
 }
@@ -236,101 +218,11 @@ func Equal[T any](a, b T) bool {
 // Clone returns a deep copy of v.
 func Clone[T any](v T) T {
 	if copyable, ok := any(&v).(interface {
-		Copy() *T
+		Clone() *T
 	}); ok {
-		return *copyable.Copy()
+		return *copyable.Clone()
 	}
 
 	res, _ := core.Copy(v)
 	return res
-}
-
-func evaluateCondition(root reflect.Value, c *Condition) (bool, error) {
-	if c == nil {
-		return true, nil
-	}
-
-	if c.Op == "and" {
-		for _, sub := range c.Sub {
-			ok, err := evaluateCondition(root, sub)
-			if err != nil || !ok {
-				return false, err
-			}
-		}
-		return true, nil
-	}
-	if c.Op == "or" {
-		for _, sub := range c.Sub {
-			ok, err := evaluateCondition(root, sub)
-			if err == nil && ok {
-				return true, nil
-			}
-		}
-		return false, nil
-	}
-	if c.Op == "not" {
-		if len(c.Sub) > 0 {
-			ok, err := evaluateCondition(root, c.Sub[0])
-			if err != nil {
-				return false, err
-			}
-			return !ok, nil
-		}
-	}
-
-	val, err := core.DeepPath(c.Path).Resolve(root)
-	if err != nil {
-		if c.Op == "exists" {
-			return false, nil
-		}
-		return false, err
-	}
-
-	if c.Op == "exists" {
-		return val.IsValid(), nil
-	}
-
-	if c.Op == "matches" {
-		pattern, ok := c.Value.(string)
-		if !ok {
-			return false, fmt.Errorf("matches requires string pattern")
-		}
-		matched, err := regexp.MatchString(pattern, fmt.Sprintf("%v", val.Interface()))
-		return matched, err
-	}
-
-	if c.Op == "type" {
-		expectedType, ok := c.Value.(string)
-		if !ok {
-			return false, fmt.Errorf("type requires string value")
-		}
-		return checkType(val.Interface(), expectedType), nil
-	}
-
-	return core.CompareValues(val, reflect.ValueOf(c.Value), c.Op, false)
-}
-
-func checkType(v any, typeName string) bool {
-	rv := reflect.ValueOf(v)
-	switch typeName {
-	case "string":
-		return rv.Kind() == reflect.String
-	case "number":
-		k := rv.Kind()
-		return (k >= reflect.Int && k <= reflect.Int64) ||
-			(k >= reflect.Uint && k <= reflect.Uintptr) ||
-			(k == reflect.Float32 || k == reflect.Float64)
-	case "boolean":
-		return rv.Kind() == reflect.Bool
-	case "object":
-		return rv.Kind() == reflect.Struct || rv.Kind() == reflect.Map
-	case "array":
-		return rv.Kind() == reflect.Slice || rv.Kind() == reflect.Array
-	case "null":
-		if !rv.IsValid() {
-			return true
-		}
-		return (rv.Kind() == reflect.Pointer || rv.Kind() == reflect.Interface || rv.Kind() == reflect.Slice || rv.Kind() == reflect.Map) && rv.IsNil()
-	}
-	return false
 }

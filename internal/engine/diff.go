@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/brunoga/deep/v5/internal/core"
+	"github.com/brunoga/deep/v5/core"
 	"github.com/brunoga/deep/v5/internal/unsafe"
 )
 
@@ -140,7 +140,6 @@ func RegisterCustomDiff[T any](fn func(a, b T) (Patch[T], error)) {
 	}
 }
 
-
 func (d *Differ) detectMovesRecursive(v reflect.Value, ctx *diffContext) {
 	if !v.IsValid() {
 		return
@@ -253,7 +252,6 @@ func MustDiff[T any](a, b T, opts ...DiffOption) Patch[T] {
 	}
 	return p
 }
-
 
 func isHashable(v reflect.Value) bool {
 	kind := v.Kind()

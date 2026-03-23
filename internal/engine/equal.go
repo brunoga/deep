@@ -1,7 +1,7 @@
 package engine
 
 import (
-	"github.com/brunoga/deep/v5/internal/core"
+	"github.com/brunoga/deep/v5/core"
 )
 
 // Equal performs a deep equality check between a and b.

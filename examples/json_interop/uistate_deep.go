@@ -4,40 +4,75 @@ package main
 import (
 	"fmt"
 	deep "github.com/brunoga/deep/v5"
+	core "github.com/brunoga/deep/v5/core"
 	"log/slog"
-	"reflect"
 	"regexp"
 )
 
-// ApplyOperation applies a single operation to UIState efficiently.
-func (t *UIState) ApplyOperation(op deep.Operation, logger *slog.Logger) (bool, error) {
+// Patch applies p to t using the generated fast path.
+func (t *UIState) Patch(p deep.Patch[UIState], logger *slog.Logger) error {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	if p.Guard != nil {
+		ok, err := t.evaluateCondition(*p.Guard)
+		if err != nil {
+			return fmt.Errorf("global condition evaluation failed: %w", err)
+		}
+		if !ok {
+			return fmt.Errorf("global condition not met")
+		}
+	}
+	var errs []error
+	for _, op := range p.Operations {
+		op.Strict = p.Strict
+		handled, err := t.applyOperation(op, logger)
+		if err != nil {
+			errs = append(errs, err)
+		} else if !handled {
+			if err := deep.ApplyOpReflection(t, op, logger); err != nil {
+				errs = append(errs, err)
+			}
+		}
+	}
+	if len(errs) > 0 {
+		return &deep.ApplyError{Errors: errs}
+	}
+	return nil
+}
+
+func (t *UIState) applyOperation(op deep.Operation, logger *slog.Logger) (bool, error) {
 	if op.If != nil {
-		ok, err := t.EvaluateCondition(*op.If)
+		ok, err := t.evaluateCondition(*op.If)
 		if err != nil || !ok {
-			return true, err
+			return true, nil
 		}
 	}
 	if op.Unless != nil {
-		ok, err := t.EvaluateCondition(*op.Unless)
-		if err == nil && ok {
+		ok, err := t.evaluateCondition(*op.Unless)
+		if err != nil || ok {
 			return true, nil
 		}
 	}
-
-	if op.Path == "" || op.Path == "/" {
-		if v, ok := op.New.(UIState); ok {
-			*t = v
-			return true, nil
-		}
-		if m, ok := op.New.(map[string]any); ok {
-			for k, v := range m {
-				t.ApplyOperation(deep.Operation{Kind: op.Kind, Path: "/" + k, New: v}, logger)
-			}
-			return true, nil
-		}
+	if op.Kind == deep.OpLog {
+		logger.Info("deep log", "message", op.New, "path", op.Path)
+		return true, nil
 	}
 
 	switch op.Path {
+	case "/":
+		if op.Strict && (op.Kind == deep.OpReplace || op.Kind == deep.OpRemove) {
+			if !deep.Equal(*t, op.Old.(UIState)) {
+				return true, fmt.Errorf("strict check failed at root: expected %v, got %v", op.Old, *t)
+			}
+		}
+		if op.Kind == deep.OpReplace {
+			if v, ok := op.New.(UIState); ok {
+				*t = v
+				return true, nil
+			}
+		}
+		return true, fmt.Errorf("unsupported root operation: %s", op.Kind)
 	case "/theme", "/Theme":
 		if op.Kind == deep.OpLog {
 			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Theme)
@@ -84,11 +119,11 @@ func (t *UIState) Diff(other *UIState) deep.Patch[UIState] {
 	return p
 }
 
-func (t *UIState) EvaluateCondition(c deep.Condition) (bool, error) {
+func (t *UIState) evaluateCondition(c core.Condition) (bool, error) {
 	switch c.Op {
 	case "and":
 		for _, sub := range c.Sub {
-			ok, err := t.EvaluateCondition(*sub)
+			ok, err := t.evaluateCondition(*sub)
 			if err != nil || !ok {
 				return false, err
 			}
@@ -96,7 +131,7 @@ func (t *UIState) EvaluateCondition(c deep.Condition) (bool, error) {
 		return true, nil
 	case "or":
 		for _, sub := range c.Sub {
-			ok, err := t.EvaluateCondition(*sub)
+			ok, err := t.evaluateCondition(*sub)
 			if err == nil && ok {
 				return true, nil
 			}
@@ -104,7 +139,7 @@ func (t *UIState) EvaluateCondition(c deep.Condition) (bool, error) {
 		return false, nil
 	case "not":
 		if len(c.Sub) > 0 {
-			ok, err := t.EvaluateCondition(*c.Sub[0])
+			ok, err := t.evaluateCondition(*c.Sub[0])
 			if err != nil {
 				return false, err
 			}
@@ -119,11 +154,7 @@ func (t *UIState) EvaluateCondition(c deep.Condition) (bool, error) {
 			return true, nil
 		}
 		if c.Op == "type" {
-			return checkType(t.Theme, c.Value.(string)), nil
-		}
-		if c.Op == "log" {
-			slog.Default().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Theme)
-			return true, nil
+			return core.CheckType(t.Theme, c.Value.(string)), nil
 		}
 		if c.Op == "matches" {
 			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Theme))
@@ -167,11 +198,7 @@ func (t *UIState) EvaluateCondition(c deep.Condition) (bool, error) {
 			return true, nil
 		}
 		if c.Op == "type" {
-			return checkType(t.Open, c.Value.(string)), nil
-		}
-		if c.Op == "log" {
-			slog.Default().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Open)
-			return true, nil
+			return core.CheckType(t.Open, c.Value.(string)), nil
 		}
 		if c.Op == "matches" {
 			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Open))
@@ -201,8 +228,8 @@ func (t *UIState) Equal(other *UIState) bool {
 	return true
 }
 
-// Copy returns a deep copy of t.
-func (t *UIState) Copy() *UIState {
+// Clone returns a deep copy of t.
+func (t *UIState) Clone() *UIState {
 	res := &UIState{
 		Theme: t.Theme,
 		Open:  t.Open,
@@ -213,34 +240,4 @@ func (t *UIState) Copy() *UIState {
 func contains[M ~map[K]V, K comparable, V any](m M, k K) bool {
 	_, ok := m[k]
 	return ok
-}
-
-func checkType(v any, typeName string) bool {
-	switch typeName {
-	case "string":
-		_, ok := v.(string)
-		return ok
-	case "number":
-		switch v.(type) {
-		case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
-			return true
-		}
-	case "boolean":
-		_, ok := v.(bool)
-		return ok
-	case "object":
-		rv := reflect.ValueOf(v)
-		return rv.Kind() == reflect.Struct || rv.Kind() == reflect.Map
-	case "array":
-		rv := reflect.ValueOf(v)
-		return rv.Kind() == reflect.Slice || rv.Kind() == reflect.Array
-	case "null":
-		if v == nil {
-			return true
-		}
-		rv := reflect.ValueOf(v)
-		return (rv.Kind() == reflect.Pointer || rv.Kind() == reflect.Interface ||
-			rv.Kind() == reflect.Slice || rv.Kind() == reflect.Map) && rv.IsNil()
-	}
-	return false
 }

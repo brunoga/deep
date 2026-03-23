@@ -3,7 +3,7 @@ package engine
 import (
 	"reflect"
 
-	"github.com/brunoga/deep/v5/internal/core"
+	"github.com/brunoga/deep/v5/core"
 )
 
 // DiffOption allows configuring the behavior of the Diff function.

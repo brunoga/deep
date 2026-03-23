@@ -206,8 +206,24 @@ func (t Text) Diff(other Text) deep.Patch[Text] {
 	}
 }
 
-// ApplyOperation implements the Applier interface for optimized patch application.
-func (t *Text) ApplyOperation(op deep.Operation, _ *slog.Logger) (bool, error) {
+// Patch applies p to t.
+func (t *Text) Patch(p deep.Patch[Text], logger *slog.Logger) error {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	var errs []error
+	for _, op := range p.Operations {
+		if _, err := t.applyOperation(op, logger); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if len(errs) > 0 {
+		return &deep.ApplyError{Errors: errs}
+	}
+	return nil
+}
+
+func (t *Text) applyOperation(op deep.Operation, _ *slog.Logger) (bool, error) {
 	if op.Path == "" || op.Path == "/" {
 		if other, ok := op.New.(Text); ok {
 			*t = MergeTextRuns(*t, other)

@@ -193,14 +193,11 @@ func TestTextAdvanced(t *testing.T) {
 		t.Errorf("expected hello world, got %q", s)
 	}
 
-	// deep.ApplyOperation
 	text2 := crdt.Text{{Value: "old"}}
-	op := deep.Operation{
-		Kind: deep.OpReplace,
-		Path: "/",
-		New:  crdt.Text{{Value: "new"}},
-	}
-	text2.ApplyOperation(op, nil)
+	p2 := deep.Patch[crdt.Text]{Operations: []deep.Operation{
+		{Kind: deep.OpReplace, Path: "/", New: crdt.Text{{Value: "new"}}},
+	}}
+	text2.Patch(p2, nil)
 }
 
 func BenchmarkDiffGenerated(b *testing.B) {

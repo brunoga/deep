@@ -4,40 +4,75 @@ package main
 import (
 	"fmt"
 	deep "github.com/brunoga/deep/v5"
+	core "github.com/brunoga/deep/v5/core"
 	"log/slog"
-	"reflect"
 	"regexp"
 )
 
-// ApplyOperation applies a single operation to ProxyConfig efficiently.
-func (t *ProxyConfig) ApplyOperation(op deep.Operation, logger *slog.Logger) (bool, error) {
+// Patch applies p to t using the generated fast path.
+func (t *ProxyConfig) Patch(p deep.Patch[ProxyConfig], logger *slog.Logger) error {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	if p.Guard != nil {
+		ok, err := t.evaluateCondition(*p.Guard)
+		if err != nil {
+			return fmt.Errorf("global condition evaluation failed: %w", err)
+		}
+		if !ok {
+			return fmt.Errorf("global condition not met")
+		}
+	}
+	var errs []error
+	for _, op := range p.Operations {
+		op.Strict = p.Strict
+		handled, err := t.applyOperation(op, logger)
+		if err != nil {
+			errs = append(errs, err)
+		} else if !handled {
+			if err := deep.ApplyOpReflection(t, op, logger); err != nil {
+				errs = append(errs, err)
+			}
+		}
+	}
+	if len(errs) > 0 {
+		return &deep.ApplyError{Errors: errs}
+	}
+	return nil
+}
+
+func (t *ProxyConfig) applyOperation(op deep.Operation, logger *slog.Logger) (bool, error) {
 	if op.If != nil {
-		ok, err := t.EvaluateCondition(*op.If)
+		ok, err := t.evaluateCondition(*op.If)
 		if err != nil || !ok {
-			return true, err
+			return true, nil
 		}
 	}
 	if op.Unless != nil {
-		ok, err := t.EvaluateCondition(*op.Unless)
-		if err == nil && ok {
+		ok, err := t.evaluateCondition(*op.Unless)
+		if err != nil || ok {
 			return true, nil
 		}
 	}
-
-	if op.Path == "" || op.Path == "/" {
-		if v, ok := op.New.(ProxyConfig); ok {
-			*t = v
-			return true, nil
-		}
-		if m, ok := op.New.(map[string]any); ok {
-			for k, v := range m {
-				t.ApplyOperation(deep.Operation{Kind: op.Kind, Path: "/" + k, New: v}, logger)
-			}
-			return true, nil
-		}
+	if op.Kind == deep.OpLog {
+		logger.Info("deep log", "message", op.New, "path", op.Path)
+		return true, nil
 	}
 
 	switch op.Path {
+	case "/":
+		if op.Strict && (op.Kind == deep.OpReplace || op.Kind == deep.OpRemove) {
+			if !deep.Equal(*t, op.Old.(ProxyConfig)) {
+				return true, fmt.Errorf("strict check failed at root: expected %v, got %v", op.Old, *t)
+			}
+		}
+		if op.Kind == deep.OpReplace {
+			if v, ok := op.New.(ProxyConfig); ok {
+				*t = v
+				return true, nil
+			}
+		}
+		return true, fmt.Errorf("unsupported root operation: %s", op.Kind)
 	case "/host", "/Host":
 		if op.Kind == deep.OpLog {
 			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Host)
@@ -97,11 +132,11 @@ func (t *ProxyConfig) Diff(other *ProxyConfig) deep.Patch[ProxyConfig] {
 	return p
 }
 
-func (t *ProxyConfig) EvaluateCondition(c deep.Condition) (bool, error) {
+func (t *ProxyConfig) evaluateCondition(c core.Condition) (bool, error) {
 	switch c.Op {
 	case "and":
 		for _, sub := range c.Sub {
-			ok, err := t.EvaluateCondition(*sub)
+			ok, err := t.evaluateCondition(*sub)
 			if err != nil || !ok {
 				return false, err
 			}
@@ -109,7 +144,7 @@ func (t *ProxyConfig) EvaluateCondition(c deep.Condition) (bool, error) {
 		return true, nil
 	case "or":
 		for _, sub := range c.Sub {
-			ok, err := t.EvaluateCondition(*sub)
+			ok, err := t.evaluateCondition(*sub)
 			if err == nil && ok {
 				return true, nil
 			}
@@ -117,7 +152,7 @@ func (t *ProxyConfig) EvaluateCondition(c deep.Condition) (bool, error) {
 		return false, nil
 	case "not":
 		if len(c.Sub) > 0 {
-			ok, err := t.EvaluateCondition(*c.Sub[0])
+			ok, err := t.evaluateCondition(*c.Sub[0])
 			if err != nil {
 				return false, err
 			}
@@ -132,11 +167,7 @@ func (t *ProxyConfig) EvaluateCondition(c deep.Condition) (bool, error) {
 			return true, nil
 		}
 		if c.Op == "type" {
-			return checkType(t.Host, c.Value.(string)), nil
-		}
-		if c.Op == "log" {
-			slog.Default().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Host)
-			return true, nil
+			return core.CheckType(t.Host, c.Value.(string)), nil
 		}
 		if c.Op == "matches" {
 			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Host))
@@ -180,11 +211,7 @@ func (t *ProxyConfig) EvaluateCondition(c deep.Condition) (bool, error) {
 			return true, nil
 		}
 		if c.Op == "type" {
-			return checkType(t.Port, c.Value.(string)), nil
-		}
-		if c.Op == "log" {
-			slog.Default().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Port)
-			return true, nil
+			return core.CheckType(t.Port, c.Value.(string)), nil
 		}
 		if c.Op == "matches" {
 			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Port))
@@ -251,8 +278,8 @@ func (t *ProxyConfig) Equal(other *ProxyConfig) bool {
 	return true
 }
 
-// Copy returns a deep copy of t.
-func (t *ProxyConfig) Copy() *ProxyConfig {
+// Clone returns a deep copy of t.
+func (t *ProxyConfig) Clone() *ProxyConfig {
 	res := &ProxyConfig{
 		Host: t.Host,
 		Port: t.Port,
@@ -260,35 +287,70 @@ func (t *ProxyConfig) Copy() *ProxyConfig {
 	return res
 }
 
-// ApplyOperation applies a single operation to SystemMeta efficiently.
-func (t *SystemMeta) ApplyOperation(op deep.Operation, logger *slog.Logger) (bool, error) {
+// Patch applies p to t using the generated fast path.
+func (t *SystemMeta) Patch(p deep.Patch[SystemMeta], logger *slog.Logger) error {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	if p.Guard != nil {
+		ok, err := t.evaluateCondition(*p.Guard)
+		if err != nil {
+			return fmt.Errorf("global condition evaluation failed: %w", err)
+		}
+		if !ok {
+			return fmt.Errorf("global condition not met")
+		}
+	}
+	var errs []error
+	for _, op := range p.Operations {
+		op.Strict = p.Strict
+		handled, err := t.applyOperation(op, logger)
+		if err != nil {
+			errs = append(errs, err)
+		} else if !handled {
+			if err := deep.ApplyOpReflection(t, op, logger); err != nil {
+				errs = append(errs, err)
+			}
+		}
+	}
+	if len(errs) > 0 {
+		return &deep.ApplyError{Errors: errs}
+	}
+	return nil
+}
+
+func (t *SystemMeta) applyOperation(op deep.Operation, logger *slog.Logger) (bool, error) {
 	if op.If != nil {
-		ok, err := t.EvaluateCondition(*op.If)
+		ok, err := t.evaluateCondition(*op.If)
 		if err != nil || !ok {
-			return true, err
+			return true, nil
 		}
 	}
 	if op.Unless != nil {
-		ok, err := t.EvaluateCondition(*op.Unless)
-		if err == nil && ok {
+		ok, err := t.evaluateCondition(*op.Unless)
+		if err != nil || ok {
 			return true, nil
 		}
 	}
-
-	if op.Path == "" || op.Path == "/" {
-		if v, ok := op.New.(SystemMeta); ok {
-			*t = v
-			return true, nil
-		}
-		if m, ok := op.New.(map[string]any); ok {
-			for k, v := range m {
-				t.ApplyOperation(deep.Operation{Kind: op.Kind, Path: "/" + k, New: v}, logger)
-			}
-			return true, nil
-		}
+	if op.Kind == deep.OpLog {
+		logger.Info("deep log", "message", op.New, "path", op.Path)
+		return true, nil
 	}
 
 	switch op.Path {
+	case "/":
+		if op.Strict && (op.Kind == deep.OpReplace || op.Kind == deep.OpRemove) {
+			if !deep.Equal(*t, op.Old.(SystemMeta)) {
+				return true, fmt.Errorf("strict check failed at root: expected %v, got %v", op.Old, *t)
+			}
+		}
+		if op.Kind == deep.OpReplace {
+			if v, ok := op.New.(SystemMeta); ok {
+				*t = v
+				return true, nil
+			}
+		}
+		return true, fmt.Errorf("unsupported root operation: %s", op.Kind)
 	case "/cid", "/ClusterID":
 		return true, fmt.Errorf("field %s is read-only", op.Path)
 	case "/proxy", "/Settings":
@@ -323,11 +385,11 @@ func (t *SystemMeta) Diff(other *SystemMeta) deep.Patch[SystemMeta] {
 	return p
 }
 
-func (t *SystemMeta) EvaluateCondition(c deep.Condition) (bool, error) {
+func (t *SystemMeta) evaluateCondition(c core.Condition) (bool, error) {
 	switch c.Op {
 	case "and":
 		for _, sub := range c.Sub {
-			ok, err := t.EvaluateCondition(*sub)
+			ok, err := t.evaluateCondition(*sub)
 			if err != nil || !ok {
 				return false, err
 			}
@@ -335,7 +397,7 @@ func (t *SystemMeta) EvaluateCondition(c deep.Condition) (bool, error) {
 		return true, nil
 	case "or":
 		for _, sub := range c.Sub {
-			ok, err := t.EvaluateCondition(*sub)
+			ok, err := t.evaluateCondition(*sub)
 			if err == nil && ok {
 				return true, nil
 			}
@@ -343,7 +405,7 @@ func (t *SystemMeta) EvaluateCondition(c deep.Condition) (bool, error) {
 		return false, nil
 	case "not":
 		if len(c.Sub) > 0 {
-			ok, err := t.EvaluateCondition(*c.Sub[0])
+			ok, err := t.evaluateCondition(*c.Sub[0])
 			if err != nil {
 				return false, err
 			}
@@ -358,11 +420,7 @@ func (t *SystemMeta) EvaluateCondition(c deep.Condition) (bool, error) {
 			return true, nil
 		}
 		if c.Op == "type" {
-			return checkType(t.ClusterID, c.Value.(string)), nil
-		}
-		if c.Op == "log" {
-			slog.Default().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.ClusterID)
-			return true, nil
+			return core.CheckType(t.ClusterID, c.Value.(string)), nil
 		}
 		if c.Op == "matches" {
 			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.ClusterID))
@@ -416,46 +474,16 @@ func (t *SystemMeta) Equal(other *SystemMeta) bool {
 	return true
 }
 
-// Copy returns a deep copy of t.
-func (t *SystemMeta) Copy() *SystemMeta {
+// Clone returns a deep copy of t.
+func (t *SystemMeta) Clone() *SystemMeta {
 	res := &SystemMeta{
 		ClusterID: t.ClusterID,
 	}
-	res.Settings = *(&t.Settings).Copy()
+	res.Settings = *(&t.Settings).Clone()
 	return res
 }
 
 func contains[M ~map[K]V, K comparable, V any](m M, k K) bool {
 	_, ok := m[k]
 	return ok
-}
-
-func checkType(v any, typeName string) bool {
-	switch typeName {
-	case "string":
-		_, ok := v.(string)
-		return ok
-	case "number":
-		switch v.(type) {
-		case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
-			return true
-		}
-	case "boolean":
-		_, ok := v.(bool)
-		return ok
-	case "object":
-		rv := reflect.ValueOf(v)
-		return rv.Kind() == reflect.Struct || rv.Kind() == reflect.Map
-	case "array":
-		rv := reflect.ValueOf(v)
-		return rv.Kind() == reflect.Slice || rv.Kind() == reflect.Array
-	case "null":
-		if v == nil {
-			return true
-		}
-		rv := reflect.ValueOf(v)
-		return (rv.Kind() == reflect.Pointer || rv.Kind() == reflect.Interface ||
-			rv.Kind() == reflect.Slice || rv.Kind() == reflect.Map) && rv.IsNil()
-	}
-	return false
 }

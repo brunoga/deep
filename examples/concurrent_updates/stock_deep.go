@@ -4,40 +4,75 @@ package main
 import (
 	"fmt"
 	deep "github.com/brunoga/deep/v5"
+	core "github.com/brunoga/deep/v5/core"
 	"log/slog"
-	"reflect"
 	"regexp"
 )
 
-// ApplyOperation applies a single operation to Stock efficiently.
-func (t *Stock) ApplyOperation(op deep.Operation, logger *slog.Logger) (bool, error) {
+// Patch applies p to t using the generated fast path.
+func (t *Stock) Patch(p deep.Patch[Stock], logger *slog.Logger) error {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	if p.Guard != nil {
+		ok, err := t.evaluateCondition(*p.Guard)
+		if err != nil {
+			return fmt.Errorf("global condition evaluation failed: %w", err)
+		}
+		if !ok {
+			return fmt.Errorf("global condition not met")
+		}
+	}
+	var errs []error
+	for _, op := range p.Operations {
+		op.Strict = p.Strict
+		handled, err := t.applyOperation(op, logger)
+		if err != nil {
+			errs = append(errs, err)
+		} else if !handled {
+			if err := deep.ApplyOpReflection(t, op, logger); err != nil {
+				errs = append(errs, err)
+			}
+		}
+	}
+	if len(errs) > 0 {
+		return &deep.ApplyError{Errors: errs}
+	}
+	return nil
+}
+
+func (t *Stock) applyOperation(op deep.Operation, logger *slog.Logger) (bool, error) {
 	if op.If != nil {
-		ok, err := t.EvaluateCondition(*op.If)
+		ok, err := t.evaluateCondition(*op.If)
 		if err != nil || !ok {
-			return true, err
+			return true, nil
 		}
 	}
 	if op.Unless != nil {
-		ok, err := t.EvaluateCondition(*op.Unless)
-		if err == nil && ok {
+		ok, err := t.evaluateCondition(*op.Unless)
+		if err != nil || ok {
 			return true, nil
 		}
 	}
-
-	if op.Path == "" || op.Path == "/" {
-		if v, ok := op.New.(Stock); ok {
-			*t = v
-			return true, nil
-		}
-		if m, ok := op.New.(map[string]any); ok {
-			for k, v := range m {
-				t.ApplyOperation(deep.Operation{Kind: op.Kind, Path: "/" + k, New: v}, logger)
-			}
-			return true, nil
-		}
+	if op.Kind == deep.OpLog {
+		logger.Info("deep log", "message", op.New, "path", op.Path)
+		return true, nil
 	}
 
 	switch op.Path {
+	case "/":
+		if op.Strict && (op.Kind == deep.OpReplace || op.Kind == deep.OpRemove) {
+			if !deep.Equal(*t, op.Old.(Stock)) {
+				return true, fmt.Errorf("strict check failed at root: expected %v, got %v", op.Old, *t)
+			}
+		}
+		if op.Kind == deep.OpReplace {
+			if v, ok := op.New.(Stock); ok {
+				*t = v
+				return true, nil
+			}
+		}
+		return true, fmt.Errorf("unsupported root operation: %s", op.Kind)
 	case "/sku", "/SKU":
 		if op.Kind == deep.OpLog {
 			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.SKU)
@@ -97,11 +132,11 @@ func (t *Stock) Diff(other *Stock) deep.Patch[Stock] {
 	return p
 }
 
-func (t *Stock) EvaluateCondition(c deep.Condition) (bool, error) {
+func (t *Stock) evaluateCondition(c core.Condition) (bool, error) {
 	switch c.Op {
 	case "and":
 		for _, sub := range c.Sub {
-			ok, err := t.EvaluateCondition(*sub)
+			ok, err := t.evaluateCondition(*sub)
 			if err != nil || !ok {
 				return false, err
 			}
@@ -109,7 +144,7 @@ func (t *Stock) EvaluateCondition(c deep.Condition) (bool, error) {
 		return true, nil
 	case "or":
 		for _, sub := range c.Sub {
-			ok, err := t.EvaluateCondition(*sub)
+			ok, err := t.evaluateCondition(*sub)
 			if err == nil && ok {
 				return true, nil
 			}
@@ -117,7 +152,7 @@ func (t *Stock) EvaluateCondition(c deep.Condition) (bool, error) {
 		return false, nil
 	case "not":
 		if len(c.Sub) > 0 {
-			ok, err := t.EvaluateCondition(*c.Sub[0])
+			ok, err := t.evaluateCondition(*c.Sub[0])
 			if err != nil {
 				return false, err
 			}
@@ -132,11 +167,7 @@ func (t *Stock) EvaluateCondition(c deep.Condition) (bool, error) {
 			return true, nil
 		}
 		if c.Op == "type" {
-			return checkType(t.SKU, c.Value.(string)), nil
-		}
-		if c.Op == "log" {
-			slog.Default().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.SKU)
-			return true, nil
+			return core.CheckType(t.SKU, c.Value.(string)), nil
 		}
 		if c.Op == "matches" {
 			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.SKU))
@@ -180,11 +211,7 @@ func (t *Stock) EvaluateCondition(c deep.Condition) (bool, error) {
 			return true, nil
 		}
 		if c.Op == "type" {
-			return checkType(t.Quantity, c.Value.(string)), nil
-		}
-		if c.Op == "log" {
-			slog.Default().Info("deep condition log", "message", c.Value, "path", c.Path, "value", t.Quantity)
-			return true, nil
+			return core.CheckType(t.Quantity, c.Value.(string)), nil
 		}
 		if c.Op == "matches" {
 			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Quantity))
@@ -251,8 +278,8 @@ func (t *Stock) Equal(other *Stock) bool {
 	return true
 }
 
-// Copy returns a deep copy of t.
-func (t *Stock) Copy() *Stock {
+// Clone returns a deep copy of t.
+func (t *Stock) Clone() *Stock {
 	res := &Stock{
 		SKU:      t.SKU,
 		Quantity: t.Quantity,
@@ -263,34 +290,4 @@ func (t *Stock) Copy() *Stock {
 func contains[M ~map[K]V, K comparable, V any](m M, k K) bool {
 	_, ok := m[k]
 	return ok
-}
-
-func checkType(v any, typeName string) bool {
-	switch typeName {
-	case "string":
-		_, ok := v.(string)
-		return ok
-	case "number":
-		switch v.(type) {
-		case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
-			return true
-		}
-	case "boolean":
-		_, ok := v.(bool)
-		return ok
-	case "object":
-		rv := reflect.ValueOf(v)
-		return rv.Kind() == reflect.Struct || rv.Kind() == reflect.Map
-	case "array":
-		rv := reflect.ValueOf(v)
-		return rv.Kind() == reflect.Slice || rv.Kind() == reflect.Array
-	case "null":
-		if v == nil {
-			return true
-		}
-		rv := reflect.ValueOf(v)
-		return (rv.Kind() == reflect.Pointer || rv.Kind() == reflect.Interface ||
-			rv.Kind() == reflect.Slice || rv.Kind() == reflect.Map) && rv.IsNil()
-	}
-	return false
 }

@@ -8,13 +8,18 @@ import (
 	"testing"
 
 	"github.com/brunoga/deep/v5"
+	"github.com/brunoga/deep/v5/core"
 	"github.com/brunoga/deep/v5/crdt"
 	"github.com/brunoga/deep/v5/crdt/hlc"
 	"github.com/brunoga/deep/v5/internal/testmodels"
 )
 
 func TestGobSerialization(t *testing.T) {
-	deep.Register[testmodels.User]()
+	gob.Register(deep.Patch[testmodels.User]{})
+	gob.Register(deep.Operation{})
+	gob.Register(testmodels.User{})
+	gob.Register([]testmodels.User{})
+	gob.Register(map[string]testmodels.User{})
 
 	u1 := testmodels.User{ID: 1, Name: "Alice"}
 	u2 := testmodels.User{ID: 2, Name: "Bob"}
@@ -68,7 +73,6 @@ func TestReverse(t *testing.T) {
 }
 
 func TestPatchToJSONPatch(t *testing.T) {
-	deep.Register[testmodels.User]()
 
 	p := deep.Patch[testmodels.User]{}
 	p.Operations = []deep.Operation{
@@ -129,15 +133,15 @@ func TestPatchUtilities(t *testing.T) {
 
 func TestConditionToPredicate(t *testing.T) {
 	tests := []struct {
-		c    *deep.Condition
+		c    *core.Condition
 		want string
 	}{
-		{c: &deep.Condition{Op: "!=", Path: "/a", Value: 1}, want: `"op":"not"`},
-		{c: &deep.Condition{Op: ">", Path: "/a", Value: 1}, want: `"op":"more"`},
-		{c: &deep.Condition{Op: "<", Path: "/a", Value: 1}, want: `"op":"less"`},
-		{c: &deep.Condition{Op: "exists", Path: "/a"}, want: `"op":"defined"`},
-		{c: &deep.Condition{Op: "matches", Path: "/a", Value: ".*"}, want: `"op":"matches"`},
-		{c: &deep.Condition{Op: "type", Path: "/a", Value: "string"}, want: `"op":"type"`},
+		{c: &core.Condition{Op: "!=", Path: "/a", Value: 1}, want: `"op":"not"`},
+		{c: &core.Condition{Op: ">", Path: "/a", Value: 1}, want: `"op":"more"`},
+		{c: &core.Condition{Op: "<", Path: "/a", Value: 1}, want: `"op":"less"`},
+		{c: &core.Condition{Op: "exists", Path: "/a"}, want: `"op":"defined"`},
+		{c: &core.Condition{Op: "matches", Path: "/a", Value: ".*"}, want: `"op":"matches"`},
+		{c: &core.Condition{Op: "type", Path: "/a", Value: "string"}, want: `"op":"type"`},
 		{c: deep.Or(deep.Eq(deep.Field(func(u *testmodels.User) *int { return &u.ID }), 1)), want: `"op":"or"`},
 	}
 
@@ -286,7 +290,6 @@ func TestBuilderMoveCopy(t *testing.T) {
 }
 
 func TestLWWSet(t *testing.T) {
-	deep.Register[string]()
 	clock := hlc.NewClock("test")
 	ts1 := clock.Now()
 	ts2 := clock.Now()
