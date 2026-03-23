@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"reflect"
 	"regexp"
+
+	icore "github.com/brunoga/deep/v5/internal/core"
 )
 
 // Condition operator constants.
@@ -65,7 +67,7 @@ func EvaluateCondition(root reflect.Value, c *Condition) (bool, error) {
 		}
 	}
 
-	val, err := DeepPath(c.Path).Resolve(root)
+	val, err := icore.DeepPath(c.Path).Resolve(root)
 	if err != nil {
 		if c.Op == CondExists {
 			return false, nil
@@ -95,7 +97,7 @@ func EvaluateCondition(root reflect.Value, c *Condition) (bool, error) {
 			return false, fmt.Errorf("in requires slice or array")
 		}
 		for i := 0; i < v.Len(); i++ {
-			if Equal(val.Interface(), v.Index(i).Interface()) {
+			if icore.Equal(val.Interface(), v.Index(i).Interface()) {
 				return true, nil
 			}
 		}
@@ -110,7 +112,7 @@ func EvaluateCondition(root reflect.Value, c *Condition) (bool, error) {
 		return CheckType(val.Interface(), typeName), nil
 	}
 
-	return CompareValues(val, reflect.ValueOf(c.Value), c.Op, false)
+	return icore.CompareValues(val, reflect.ValueOf(c.Value), c.Op, false)
 }
 
 // ToPredicateInternal returns a JSON-serializable map for the condition.

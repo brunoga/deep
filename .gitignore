@@ -8,3 +8,6 @@
 # Test binaries and coverage
 *.test
 coverage.out
+
+# Compiled generator binary
+/deep-gen

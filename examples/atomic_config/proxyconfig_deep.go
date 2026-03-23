@@ -5,6 +5,7 @@ import (
 	"fmt"
 	deep "github.com/brunoga/deep/v5"
 	core "github.com/brunoga/deep/v5/core"
+	_deepengine "github.com/brunoga/deep/v5/internal/engine"
 	"log/slog"
 	"regexp"
 )
@@ -30,7 +31,7 @@ func (t *ProxyConfig) Patch(p deep.Patch[ProxyConfig], logger *slog.Logger) erro
 		if err != nil {
 			errs = append(errs, err)
 		} else if !handled {
-			if err := deep.ApplyOpReflection(t, op, logger); err != nil {
+			if err := _deepengine.ApplyOpReflection(t, op, logger); err != nil {
 				errs = append(errs, err)
 			}
 		}
@@ -308,7 +309,7 @@ func (t *SystemMeta) Patch(p deep.Patch[SystemMeta], logger *slog.Logger) error 
 		if err != nil {
 			errs = append(errs, err)
 		} else if !handled {
-			if err := deep.ApplyOpReflection(t, op, logger); err != nil {
+			if err := _deepengine.ApplyOpReflection(t, op, logger); err != nil {
 				errs = append(errs, err)
 			}
 		}

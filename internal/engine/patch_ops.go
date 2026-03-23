@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/brunoga/deep/v5/core"
+	icore "github.com/brunoga/deep/v5/internal/core"
 	"github.com/brunoga/deep/v5/internal/unsafe"
 )
 
@@ -41,14 +41,14 @@ func (p *valuePatch) apply(root, v reflect.Value, path string) {
 	if !v.CanSet() {
 		unsafe.DisableRO(&v)
 	}
-	core.SetValue(v, p.newVal)
+	icore.SetValue(v, p.newVal)
 }
 
 func (p *valuePatch) applyChecked(root, v reflect.Value, strict bool, path string) error {
 	if strict && p.oldVal.IsValid() {
 		if v.IsValid() {
-			convertedOldVal := core.ConvertValue(p.oldVal, v.Type())
-			if !core.Equal(v.Interface(), convertedOldVal.Interface()) {
+			convertedOldVal := icore.ConvertValue(p.oldVal, v.Type())
+			if !icore.Equal(v.Interface(), convertedOldVal.Interface()) {
 				return fmt.Errorf("value mismatch: expected %v, got %v", convertedOldVal, v)
 			}
 		} else {
@@ -87,7 +87,7 @@ func (p *valuePatch) walk(path string, fn func(path string, op OpKind, old, new 
 	} else if isNilValue(p.oldVal) {
 		op = OpAdd
 	}
-	return fn(path, op, core.ValueToInterface(p.oldVal), core.ValueToInterface(p.newVal))
+	return fn(path, op, icore.ValueToInterface(p.oldVal), icore.ValueToInterface(p.newVal))
 }
 
 func (p *valuePatch) format(indent int) string {
@@ -114,21 +114,21 @@ func (p *valuePatch) toJSONPatch(path string) []map[string]any {
 	if !p.newVal.IsValid() {
 		op = map[string]any{"op": "remove", "path": fullPath}
 	} else if !p.oldVal.IsValid() {
-		op = map[string]any{"op": "add", "path": fullPath, "value": core.ValueToInterface(p.newVal)}
+		op = map[string]any{"op": "add", "path": fullPath, "value": icore.ValueToInterface(p.newVal)}
 	} else {
-		op = map[string]any{"op": "replace", "path": fullPath, "value": core.ValueToInterface(p.newVal)}
+		op = map[string]any{"op": "replace", "path": fullPath, "value": icore.ValueToInterface(p.newVal)}
 	}
 	return []map[string]any{op}
 }
 
 func (p *valuePatch) summary(path string) string {
 	if !p.newVal.IsValid() {
-		return fmt.Sprintf("Removed %s (was %v)", path, core.ValueToInterface(p.oldVal))
+		return fmt.Sprintf("Removed %s (was %v)", path, icore.ValueToInterface(p.oldVal))
 	}
 	if !p.oldVal.IsValid() {
-		return fmt.Sprintf("Added %s: %v", path, core.ValueToInterface(p.newVal))
+		return fmt.Sprintf("Added %s: %v", path, icore.ValueToInterface(p.newVal))
 	}
-	return fmt.Sprintf("Updated %s from %v to %v", path, core.ValueToInterface(p.oldVal), core.ValueToInterface(p.newVal))
+	return fmt.Sprintf("Updated %s from %v to %v", path, icore.ValueToInterface(p.oldVal), icore.ValueToInterface(p.newVal))
 }
 
 // copyPatch copies a value from another path.
@@ -198,28 +198,28 @@ func applyCopyOrMoveInternal(from, to, currentPath string, root, v reflect.Value
 	if rvRoot.Kind() == reflect.Pointer {
 		rvRoot = rvRoot.Elem()
 	}
-	fromVal, err := core.DeepPath(from).Resolve(rvRoot)
+	fromVal, err := icore.DeepPath(from).Resolve(rvRoot)
 	if err != nil {
 		return err
 	}
 
-	fromVal = core.DeepCopyValue(fromVal)
+	fromVal = icore.DeepCopyValue(fromVal)
 
 	if isMove {
-		if err := core.DeepPath(from).Delete(rvRoot); err != nil {
+		if err := icore.DeepPath(from).Delete(rvRoot); err != nil {
 			return err
 		}
 	}
 
 	if v.IsValid() && v.CanSet() && (to == "" || to == currentPath) {
-		core.SetValue(v, fromVal)
+		icore.SetValue(v, fromVal)
 	} else if to != "" && to != "/" {
-		if err := core.DeepPath(to).Set(rvRoot, fromVal); err != nil {
+		if err := icore.DeepPath(to).Set(rvRoot, fromVal); err != nil {
 			return err
 		}
 	} else if to == "" || to == "/" {
 		if rvRoot.CanSet() {
-			core.SetValue(rvRoot, fromVal)
+			icore.SetValue(rvRoot, fromVal)
 		}
 	}
 	return nil
@@ -447,7 +447,7 @@ func (p *structPatch) apply(root, v reflect.Value, path string) {
 
 	for _, name := range order {
 		patch := effectivePatches[name]
-		info := core.GetTypeInfo(v.Type())
+		info := icore.GetTypeInfo(v.Type())
 		var f reflect.Value
 		for _, fInfo := range info.Fields {
 			if fInfo.Name == name {
@@ -459,7 +459,7 @@ func (p *structPatch) apply(root, v reflect.Value, path string) {
 			if !f.CanSet() {
 				unsafe.DisableRO(&f)
 			}
-			subPath := core.JoinPath(path, name)
+			subPath := icore.JoinPath(path, name)
 			patch.apply(root, f, subPath)
 		}
 	}
@@ -475,7 +475,7 @@ func (p *structPatch) applyChecked(root, v reflect.Value, strict bool, path stri
 
 	processField := func(name string) {
 		patch := effectivePatches[name]
-		info := core.GetTypeInfo(v.Type())
+		info := icore.GetTypeInfo(v.Type())
 		var f reflect.Value
 		for _, fInfo := range info.Fields {
 			if fInfo.Name == name {
@@ -491,7 +491,7 @@ func (p *structPatch) applyChecked(root, v reflect.Value, strict bool, path stri
 			unsafe.DisableRO(&f)
 		}
 
-		subPath := core.JoinPath(path, name)
+		subPath := icore.JoinPath(path, name)
 
 		if err := patch.applyChecked(root, f, strict, subPath); err != nil {
 			errs = append(errs, fmt.Errorf("field %s: %w", name, err))
@@ -515,7 +515,7 @@ func (p *structPatch) applyResolved(root, v reflect.Value, path string, resolver
 
 	processField := func(name string) error {
 		patch := effectivePatches[name]
-		info := core.GetTypeInfo(v.Type())
+		info := icore.GetTypeInfo(v.Type())
 		var f reflect.Value
 		for _, fInfo := range info.Fields {
 			if fInfo.Name == name {
@@ -530,7 +530,7 @@ func (p *structPatch) applyResolved(root, v reflect.Value, path string, resolver
 			unsafe.DisableRO(&f)
 		}
 
-		subPath := core.JoinPath(path, name)
+		subPath := icore.JoinPath(path, name)
 
 		if err := patch.applyResolved(root, f, subPath, resolver); err != nil {
 			return fmt.Errorf("field %s: %w", name, err)
@@ -548,7 +548,7 @@ func (p *structPatch) applyResolved(root, v reflect.Value, path string, resolver
 
 func (p *structPatch) dependencies(path string) (reads []string, writes []string) {
 	for name, patch := range p.fields {
-		fieldPath := core.JoinPath(path, name)
+		fieldPath := icore.JoinPath(path, name)
 
 		r, w := patch.dependencies(fieldPath)
 		reads = append(reads, r...)
@@ -623,7 +623,7 @@ func (p *arrayPatch) apply(root, v reflect.Value, path string) {
 			if !e.CanSet() {
 				unsafe.DisableRO(&e)
 			}
-			fullPath := core.JoinPath(path, strconv.Itoa(i))
+			fullPath := icore.JoinPath(path, strconv.Itoa(i))
 			patch.apply(root, e, fullPath)
 		}
 	}
@@ -640,7 +640,7 @@ func (p *arrayPatch) applyChecked(root, v reflect.Value, strict bool, path strin
 		if !e.CanSet() {
 			unsafe.DisableRO(&e)
 		}
-		fullPath := core.JoinPath(path, strconv.Itoa(i))
+		fullPath := icore.JoinPath(path, strconv.Itoa(i))
 		if err := patch.applyChecked(root, e, strict, fullPath); err != nil {
 			errs = append(errs, fmt.Errorf("index %d: %w", i, err))
 		}
@@ -661,7 +661,7 @@ func (p *arrayPatch) applyResolved(root, v reflect.Value, path string, resolver 
 			unsafe.DisableRO(&e)
 		}
 
-		subPath := core.JoinPath(path, strconv.Itoa(i))
+		subPath := icore.JoinPath(path, strconv.Itoa(i))
 
 		if err := patch.applyResolved(root, e, subPath, resolver); err != nil {
 			return fmt.Errorf("index %d: %w", i, err)
@@ -672,7 +672,7 @@ func (p *arrayPatch) applyResolved(root, v reflect.Value, path string, resolver 
 
 func (p *arrayPatch) dependencies(path string) (reads []string, writes []string) {
 	for i, patch := range p.indices {
-		fullPath := core.JoinPath(path, strconv.Itoa(i))
+		fullPath := icore.JoinPath(path, strconv.Itoa(i))
 		r, w := patch.dependencies(fullPath)
 		reads = append(reads, r...)
 		writes = append(writes, w...)
@@ -757,7 +757,7 @@ func (p *mapPatch) apply(root, v reflect.Value, path string) {
 	}
 	for k, patch := range p.modified {
 		keyVal := p.getOriginalKey(k, v.Type().Key(), v)
-		fullPath := core.JoinPath(path, fmt.Sprintf("%v", k))
+		fullPath := icore.JoinPath(path, fmt.Sprintf("%v", k))
 		if cp, ok := patch.(*copyPatch); ok {
 			_ = applyCopyOrMoveInternal(cp.from, fullPath, fullPath, root, reflect.Value{}, false)
 			continue
@@ -776,13 +776,13 @@ func (p *mapPatch) apply(root, v reflect.Value, path string) {
 	}
 	for k, val := range p.added {
 		keyVal := p.getOriginalKey(k, v.Type().Key(), v)
-		v.SetMapIndex(keyVal, core.ConvertValue(val, v.Type().Elem()))
+		v.SetMapIndex(keyVal, icore.ConvertValue(val, v.Type().Elem()))
 	}
 }
 
 func (p *mapPatch) getOriginalKey(k any, targetType reflect.Type, v reflect.Value) reflect.Value {
 	if orig, ok := p.originalKeys[k]; ok {
-		return core.ConvertValue(reflect.ValueOf(orig), targetType)
+		return icore.ConvertValue(reflect.ValueOf(orig), targetType)
 	}
 
 	// If it's a Keyer, we can search the target map for a matching canonical key.
@@ -808,7 +808,7 @@ func (p *mapPatch) getOriginalKey(k any, targetType reflect.Type, v reflect.Valu
 		}
 	}
 
-	return core.ConvertValue(reflect.ValueOf(k), targetType)
+	return icore.ConvertValue(reflect.ValueOf(k), targetType)
 }
 
 func (p *mapPatch) applyChecked(root, v reflect.Value, strict bool, path string) error {
@@ -828,13 +828,13 @@ func (p *mapPatch) applyChecked(root, v reflect.Value, strict bool, path string)
 			errs = append(errs, fmt.Errorf("key %v not found for removal", k))
 			continue
 		}
-		if strict && !core.Equal(val.Interface(), oldVal.Interface()) {
+		if strict && !icore.Equal(val.Interface(), oldVal.Interface()) {
 			errs = append(errs, fmt.Errorf("map removal mismatch for key %v: expected %v, got %v", k, oldVal, val))
 		}
 	}
 	for k, patch := range p.modified {
 		keyVal := p.getOriginalKey(k, v.Type().Key(), v)
-		fullPath := core.JoinPath(path, fmt.Sprintf("%v", k))
+		fullPath := icore.JoinPath(path, fmt.Sprintf("%v", k))
 		if cp, ok := patch.(*copyPatch); ok {
 			if err := applyCopyOrMoveInternal(cp.from, fullPath, fullPath, root, reflect.Value{}, false); err != nil {
 				errs = append(errs, fmt.Errorf("map copy from %s failed: %w", cp.from, err))
@@ -868,7 +868,7 @@ func (p *mapPatch) applyChecked(root, v reflect.Value, strict bool, path string)
 		if strict && curr.IsValid() {
 			errs = append(errs, fmt.Errorf("key %v already exists", k))
 		}
-		v.SetMapIndex(keyVal, core.ConvertValue(val, v.Type().Elem()))
+		v.SetMapIndex(keyVal, icore.ConvertValue(val, v.Type().Elem()))
 	}
 	if len(errs) > 0 {
 		return &ApplyError{errors: errs}
@@ -888,7 +888,7 @@ func (p *mapPatch) applyResolved(root, v reflect.Value, path string, resolver Co
 
 	// Removals
 	for k, val := range p.removed {
-		subPath := core.JoinPath(path, fmt.Sprintf("%v", k))
+		subPath := icore.JoinPath(path, fmt.Sprintf("%v", k))
 		keyVal := p.getOriginalKey(k, v.Type().Key(), v)
 		current := v.MapIndex(keyVal)
 
@@ -910,7 +910,7 @@ func (p *mapPatch) applyResolved(root, v reflect.Value, path string, resolver Co
 			continue
 		}
 
-		subPath := core.JoinPath(path, fmt.Sprintf("%v", k))
+		subPath := icore.JoinPath(path, fmt.Sprintf("%v", k))
 
 		newElem := reflect.New(val.Type()).Elem()
 		newElem.Set(val)
@@ -922,7 +922,7 @@ func (p *mapPatch) applyResolved(root, v reflect.Value, path string, resolver Co
 
 	// Additions
 	for k, val := range p.added {
-		subPath := core.JoinPath(path, fmt.Sprintf("%v", k))
+		subPath := icore.JoinPath(path, fmt.Sprintf("%v", k))
 
 		if resolver != nil {
 			resolved, ok := resolver.Resolve(subPath, OpAdd, k, nil, reflect.Value{}, val)
@@ -931,23 +931,23 @@ func (p *mapPatch) applyResolved(root, v reflect.Value, path string, resolver Co
 			}
 			val = resolved
 		}
-		v.SetMapIndex(p.getOriginalKey(k, v.Type().Key(), v), core.ConvertValue(val, v.Type().Elem()))
+		v.SetMapIndex(p.getOriginalKey(k, v.Type().Key(), v), icore.ConvertValue(val, v.Type().Elem()))
 	}
 	return nil
 }
 
 func (p *mapPatch) dependencies(path string) (reads []string, writes []string) {
 	for k, patch := range p.modified {
-		fullPath := core.JoinPath(path, fmt.Sprintf("%v", k))
+		fullPath := icore.JoinPath(path, fmt.Sprintf("%v", k))
 		r, w := patch.dependencies(fullPath)
 		reads = append(reads, r...)
 		writes = append(writes, w...)
 	}
 	for k := range p.added {
-		writes = append(writes, core.JoinPath(path, fmt.Sprintf("%v", k)))
+		writes = append(writes, icore.JoinPath(path, fmt.Sprintf("%v", k)))
 	}
 	for k := range p.removed {
-		writes = append(writes, core.JoinPath(path, fmt.Sprintf("%v", k)))
+		writes = append(writes, icore.JoinPath(path, fmt.Sprintf("%v", k)))
 	}
 	return
 }
@@ -968,13 +968,13 @@ func (p *mapPatch) reverse() diffPatch {
 func (p *mapPatch) walk(path string, fn func(path string, op OpKind, old, new any) error) error {
 	for k, val := range p.added {
 		fullPath := fmt.Sprintf("%s/%v", path, k)
-		if err := fn(fullPath, OpAdd, nil, core.ValueToInterface(val)); err != nil {
+		if err := fn(fullPath, OpAdd, nil, icore.ValueToInterface(val)); err != nil {
 			return err
 		}
 	}
 	for k, oldVal := range p.removed {
 		fullPath := fmt.Sprintf("%s/%v", path, k)
-		if err := fn(fullPath, OpRemove, core.ValueToInterface(oldVal), nil); err != nil {
+		if err := fn(fullPath, OpRemove, icore.ValueToInterface(oldVal), nil); err != nil {
 			return err
 		}
 	}
@@ -1018,7 +1018,7 @@ func (p *mapPatch) toJSONPatch(path string) []map[string]any {
 	}
 	for k, val := range p.added {
 		fullPath := fmt.Sprintf("%s/%v", path, k)
-		op := map[string]any{"op": "add", "path": fullPath, "value": core.ValueToInterface(val)}
+		op := map[string]any{"op": "add", "path": fullPath, "value": icore.ValueToInterface(val)}
 		ops = append(ops, op)
 	}
 	return ops
@@ -1032,11 +1032,11 @@ func (p *mapPatch) summary(path string) string {
 	}
 	for k, val := range p.added {
 		subPath := prefix + fmt.Sprintf("%v", k)
-		summaries = append(summaries, fmt.Sprintf("Added %s: %v", subPath, core.ValueToInterface(val)))
+		summaries = append(summaries, fmt.Sprintf("Added %s: %v", subPath, icore.ValueToInterface(val)))
 	}
 	for k, oldVal := range p.removed {
 		subPath := prefix + fmt.Sprintf("%v", k)
-		summaries = append(summaries, fmt.Sprintf("Removed %s (was %v)", subPath, core.ValueToInterface(oldVal)))
+		summaries = append(summaries, fmt.Sprintf("Removed %s (was %v)", subPath, icore.ValueToInterface(oldVal)))
 	}
 	for k, patch := range p.modified {
 		subPath := prefix + fmt.Sprintf("%v", k)
@@ -1083,7 +1083,7 @@ func (p *slicePatch) apply(root, v reflect.Value, path string) {
 		}
 		switch op.Kind {
 		case OpAdd:
-			newSlice = reflect.Append(newSlice, core.ConvertValue(op.Val, v.Type().Elem()))
+			newSlice = reflect.Append(newSlice, icore.ConvertValue(op.Val, v.Type().Elem()))
 		case OpRemove:
 			curIdx++
 		case OpCopy, OpMove:
@@ -1098,9 +1098,9 @@ func (p *slicePatch) apply(root, v reflect.Value, path string) {
 		case OpReplace:
 			if curIdx < v.Len() {
 				elem := reflect.New(v.Type().Elem()).Elem()
-				elem.Set(core.DeepCopyValue(v.Index(curIdx)))
+				elem.Set(icore.DeepCopyValue(v.Index(curIdx)))
 				if op.Patch != nil {
-					fullPath := core.JoinPath(path, strconv.Itoa(curIdx))
+					fullPath := icore.JoinPath(path, strconv.Itoa(curIdx))
 					op.Patch.apply(root, elem, fullPath)
 				}
 				newSlice = reflect.Append(newSlice, elem)
@@ -1129,7 +1129,7 @@ func (p *slicePatch) applyChecked(root, v reflect.Value, strict bool, path strin
 		}
 		switch op.Kind {
 		case OpAdd:
-			newSlice = reflect.Append(newSlice, core.ConvertValue(op.Val, v.Type().Elem()))
+			newSlice = reflect.Append(newSlice, icore.ConvertValue(op.Val, v.Type().Elem()))
 		case OpRemove:
 			if curIdx >= v.Len() {
 				errs = append(errs, fmt.Errorf("slice deletion index %d out of bounds", curIdx))
@@ -1137,8 +1137,8 @@ func (p *slicePatch) applyChecked(root, v reflect.Value, strict bool, path strin
 			}
 			curr := v.Index(curIdx)
 			if strict && op.Val.IsValid() {
-				convertedVal := core.ConvertValue(op.Val, v.Type().Elem())
-				if !core.Equal(curr.Interface(), convertedVal.Interface()) {
+				convertedVal := icore.ConvertValue(op.Val, v.Type().Elem())
+				if !icore.Equal(curr.Interface(), convertedVal.Interface()) {
 					errs = append(errs, fmt.Errorf("slice deletion mismatch at %d: expected %v, got %v", curIdx, convertedVal, curr))
 				}
 			}
@@ -1162,9 +1162,9 @@ func (p *slicePatch) applyChecked(root, v reflect.Value, strict bool, path strin
 				continue
 			}
 			elem := reflect.New(v.Type().Elem()).Elem()
-			elem.Set(core.DeepCopyValue(v.Index(curIdx)))
+			elem.Set(icore.DeepCopyValue(v.Index(curIdx)))
 			if op.Patch != nil {
-				fullPath := core.JoinPath(path, strconv.Itoa(curIdx))
+				fullPath := icore.JoinPath(path, strconv.Itoa(curIdx))
 				if err := op.Patch.applyChecked(root, elem, strict, fullPath); err != nil {
 					errs = append(errs, fmt.Errorf("slice index %d: %w", curIdx, err))
 				}
@@ -1188,7 +1188,7 @@ func (p *slicePatch) applyResolved(root, v reflect.Value, path string, resolver 
 		return p.applyChecked(root, v, false, path)
 	}
 
-	keyField, hasKey := core.GetKeyField(v.Type().Elem())
+	keyField, hasKey := icore.GetKeyField(v.Type().Elem())
 
 	if !hasKey {
 		newSlice := reflect.MakeSlice(v.Type(), 0, v.Len())
@@ -1203,13 +1203,13 @@ func (p *slicePatch) applyResolved(root, v reflect.Value, path string, resolver 
 				curIdx = op.Index
 			}
 
-			subPath := core.JoinPath(path, strconv.Itoa(curIdx))
+			subPath := icore.JoinPath(path, strconv.Itoa(curIdx))
 
 			switch op.Kind {
 			case OpAdd:
 				resolved, ok := resolver.Resolve(subPath, OpAdd, nil, nil, reflect.Value{}, op.Val)
 				if ok {
-					newSlice = reflect.Append(newSlice, core.ConvertValue(resolved, v.Type().Elem()))
+					newSlice = reflect.Append(newSlice, icore.ConvertValue(resolved, v.Type().Elem()))
 				}
 			case OpRemove:
 				var current reflect.Value
@@ -1228,7 +1228,7 @@ func (p *slicePatch) applyResolved(root, v reflect.Value, path string, resolver 
 			case OpReplace:
 				if curIdx < v.Len() {
 					elem := reflect.New(v.Type().Elem()).Elem()
-					elem.Set(core.DeepCopyValue(v.Index(curIdx)))
+					elem.Set(icore.DeepCopyValue(v.Index(curIdx)))
 					if op.Patch != nil {
 						if err := op.Patch.applyResolved(root, elem, subPath, resolver); err != nil {
 							return err
@@ -1255,13 +1255,13 @@ func (p *slicePatch) applyResolved(root, v reflect.Value, path string, resolver 
 
 	for i := 0; i < v.Len(); i++ {
 		val := v.Index(i)
-		k := core.ExtractKey(val, keyField)
+		k := icore.ExtractKey(val, keyField)
 		existingMap[k] = &elemInfo{val: val, index: i}
 		orderedKeys = append(orderedKeys, k)
 	}
 
 	for _, op := range p.ops {
-		subPath := core.JoinPath(path, fmt.Sprintf("%v", op.Key))
+		subPath := icore.JoinPath(path, fmt.Sprintf("%v", op.Key))
 
 		switch op.Kind {
 		case OpRemove:
@@ -1276,7 +1276,7 @@ func (p *slicePatch) applyResolved(root, v reflect.Value, path string, resolver 
 		case OpReplace:
 			if info, ok := existingMap[op.Key]; ok {
 				newVal := reflect.New(v.Type().Elem()).Elem()
-				newVal.Set(core.DeepCopyValue(info.val))
+				newVal.Set(icore.DeepCopyValue(info.val))
 				if err := op.Patch.applyResolved(root, newVal, subPath, resolver); err == nil {
 					info.val = newVal
 				}
@@ -1286,7 +1286,7 @@ func (p *slicePatch) applyResolved(root, v reflect.Value, path string, resolver 
 
 	for _, op := range p.ops {
 		if op.Kind == OpAdd {
-			subPath := core.JoinPath(path, fmt.Sprintf("%v", op.Key))
+			subPath := icore.JoinPath(path, fmt.Sprintf("%v", op.Key))
 			resolved, ok := resolver.Resolve(subPath, OpAdd, op.Key, op.PrevKey, reflect.Value{}, op.Val)
 			if ok {
 				insertIdx := 0
@@ -1322,7 +1322,7 @@ func (p *slicePatch) applyResolved(root, v reflect.Value, path string, resolver 
 					copy(orderedKeys[insertIdx+1:], orderedKeys[insertIdx:])
 					orderedKeys[insertIdx] = op.Key
 				}
-				existingMap[op.Key] = &elemInfo{val: core.ConvertValue(resolved, v.Type().Elem())}
+				existingMap[op.Key] = &elemInfo{val: icore.ConvertValue(resolved, v.Type().Elem())}
 
 			}
 		}
@@ -1346,7 +1346,7 @@ func (p *slicePatch) dependencies(path string) (reads []string, writes []string)
 	writes = append(writes, path)
 	for _, op := range p.ops {
 		if op.Patch != nil {
-			r, w := op.Patch.dependencies(core.JoinPath(path, "?"))
+			r, w := op.Patch.dependencies(icore.JoinPath(path, "?"))
 			reads = append(reads, r...)
 			writes = append(writes, w...)
 		}
@@ -1403,11 +1403,11 @@ func (p *slicePatch) walk(path string, fn func(path string, op OpKind, old, new 
 		}
 		switch op.Kind {
 		case OpAdd:
-			if err := fn(fullPath, OpAdd, nil, core.ValueToInterface(op.Val)); err != nil {
+			if err := fn(fullPath, OpAdd, nil, icore.ValueToInterface(op.Val)); err != nil {
 				return err
 			}
 		case OpRemove:
-			if err := fn(fullPath, OpRemove, core.ValueToInterface(op.Val), nil); err != nil {
+			if err := fn(fullPath, OpRemove, icore.ValueToInterface(op.Val), nil); err != nil {
 				return err
 			}
 		case OpReplace:
@@ -1461,7 +1461,7 @@ func (p *slicePatch) toJSONPatch(path string) []map[string]any {
 		fullPath := fmt.Sprintf("%s/%d", path, op.Index+shift)
 		switch op.Kind {
 		case OpAdd:
-			jsonOp := map[string]any{"op": "add", "path": fullPath, "value": core.ValueToInterface(op.Val)}
+			jsonOp := map[string]any{"op": "add", "path": fullPath, "value": icore.ValueToInterface(op.Val)}
 			ops = append(ops, jsonOp)
 			shift++
 		case OpRemove:
@@ -1489,9 +1489,9 @@ func (p *slicePatch) summary(path string) string {
 		}
 		switch op.Kind {
 		case OpAdd:
-			summaries = append(summaries, fmt.Sprintf("Added to %s: %v", subPath, core.ValueToInterface(op.Val)))
+			summaries = append(summaries, fmt.Sprintf("Added to %s: %v", subPath, icore.ValueToInterface(op.Val)))
 		case OpRemove:
-			summaries = append(summaries, fmt.Sprintf("Removed from %s: %v", subPath, core.ValueToInterface(op.Val)))
+			summaries = append(summaries, fmt.Sprintf("Removed from %s: %v", subPath, icore.ValueToInterface(op.Val)))
 		case OpReplace:
 			if op.Patch != nil {
 				summaries = append(summaries, op.Patch.summary(subPath))

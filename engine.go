@@ -7,6 +7,7 @@ import (
 	"sort"
 
 	"github.com/brunoga/deep/v5/core"
+	"github.com/brunoga/deep/v5/internal/engine"
 )
 
 type applyConfig struct {
@@ -32,6 +33,10 @@ func WithLogger(l *slog.Logger) ApplyOption {
 
 // Apply applies a Patch to a target pointer.
 // v5 prioritizes the generated Patch method but falls back to reflection if needed.
+//
+// Note: when a Patch has been serialized to JSON and decoded, numeric values in
+// Operation.Old and Operation.New will be float64 regardless of the original type.
+// This affects strict-mode Old-value checks.
 func Apply[T any](target *T, p Patch[T], opts ...ApplyOption) error {
 	v := reflect.ValueOf(target)
 	if v.Kind() != reflect.Pointer || v.IsNil() {
@@ -62,99 +67,13 @@ func Apply[T any](target *T, p Patch[T], opts ...ApplyOption) error {
 	var errors []error
 	for _, op := range p.Operations {
 		op.Strict = p.Strict
-		if err := applyOpReflection(v.Elem(), op, cfg.logger); err != nil {
+		if err := engine.ApplyOpReflectionValue(v.Elem(), op, cfg.logger); err != nil {
 			errors = append(errors, err)
 		}
 	}
 
 	if len(errors) > 0 {
 		return &ApplyError{Errors: errors}
-	}
-	return nil
-}
-
-// ApplyOpReflection applies a single operation to target via reflection.
-// This is called by generated Patch methods for operations the generated fast-path does not handle.
-func ApplyOpReflection[T any](target *T, op Operation, logger *slog.Logger) error {
-	if logger == nil {
-		logger = slog.Default()
-	}
-	return applyOpReflection(reflect.ValueOf(target).Elem(), op, logger)
-}
-
-func applyOpReflection(v reflect.Value, op Operation, logger *slog.Logger) error {
-	// Strict check.
-	if op.Strict && (op.Kind == OpReplace || op.Kind == OpRemove) {
-		current, err := core.DeepPath(op.Path).Resolve(v)
-		if err == nil && current.IsValid() {
-			if !core.Equal(current.Interface(), op.Old) {
-				return fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, current.Interface())
-			}
-		}
-	}
-
-	// Per-operation conditions.
-	if op.If != nil {
-		ok, err := core.EvaluateCondition(v, op.If)
-		if err != nil || !ok {
-			return nil
-		}
-	}
-	if op.Unless != nil {
-		ok, err := core.EvaluateCondition(v, op.Unless)
-		if err != nil || ok {
-			return nil
-		}
-	}
-
-	// Struct tag enforcement.
-	if v.Kind() == reflect.Struct {
-		parts := core.ParsePath(op.Path)
-		if len(parts) > 0 {
-			info := core.GetTypeInfo(v.Type())
-			for _, fInfo := range info.Fields {
-				if fInfo.Name == parts[0].Key || (fInfo.JSONTag != "" && fInfo.JSONTag == parts[0].Key) {
-					if fInfo.Tag.Ignore {
-						return nil
-					}
-					if fInfo.Tag.ReadOnly && op.Kind != OpLog {
-						return fmt.Errorf("field %s is read-only", op.Path)
-					}
-					break
-				}
-			}
-		}
-	}
-
-	var err error
-	switch op.Kind {
-	case OpAdd, OpReplace:
-		err = core.DeepPath(op.Path).Set(v, reflect.ValueOf(op.New))
-	case OpRemove:
-		err = core.DeepPath(op.Path).Delete(v)
-	case OpMove:
-		fromPath := op.Old.(string)
-		var val reflect.Value
-		val, err = core.DeepPath(fromPath).Resolve(v)
-		if err == nil {
-			copied := reflect.New(val.Type()).Elem()
-			copied.Set(val)
-			if err = core.DeepPath(fromPath).Delete(v); err == nil {
-				err = core.DeepPath(op.Path).Set(v, copied)
-			}
-		}
-	case OpCopy:
-		fromPath := op.Old.(string)
-		var val reflect.Value
-		val, err = core.DeepPath(fromPath).Resolve(v)
-		if err == nil {
-			err = core.DeepPath(op.Path).Set(v, val)
-		}
-	case OpLog:
-		logger.Info("deep log", "message", op.New, "path", op.Path)
-	}
-	if err != nil {
-		return fmt.Errorf("failed to apply %s at %s: %w", op.Kind, op.Path, err)
 	}
 	return nil
 }
@@ -212,7 +131,7 @@ func Equal[T any](a, b T) bool {
 		return equallable.Equal(&b)
 	}
 
-	return core.Equal(a, b)
+	return engine.Equal(a, b)
 }
 
 // Clone returns a deep copy of v.
@@ -223,6 +142,6 @@ func Clone[T any](v T) T {
 		return *copyable.Clone()
 	}
 
-	res, _ := core.Copy(v)
+	res, _ := engine.Copy(v)
 	return res
 }

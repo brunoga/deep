@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/brunoga/deep/v5/core"
+	icore "github.com/brunoga/deep/v5/internal/core"
 	"github.com/brunoga/deep/v5/internal/unsafe"
 )
 
@@ -52,7 +52,7 @@ func NewDiffer(opts ...DiffOption) *Differ {
 		if f, ok := opt.(diffOptionFunc); ok {
 			f(config)
 		} else if u, ok := opt.(unifiedOption); ok {
-			config.ignoredPaths[core.NormalizePath(string(u))] = true
+			config.ignoredPaths[icore.NormalizePath(string(u))] = true
 		}
 	}
 	return &Differ{
@@ -65,7 +65,7 @@ func NewDiffer(opts ...DiffOption) *Differ {
 type diffContext struct {
 	valueIndex map[any]string
 	movedPaths map[string]bool
-	visited    map[core.VisitKey]bool
+	visited    map[icore.VisitKey]bool
 	pathStack  []string
 	rootB      reflect.Value
 }
@@ -75,7 +75,7 @@ var diffContextPool = sync.Pool{
 		return &diffContext{
 			valueIndex: make(map[any]string),
 			movedPaths: make(map[string]bool),
-			visited:    make(map[core.VisitKey]bool),
+			visited:    make(map[icore.VisitKey]bool),
 			pathStack:  make([]string, 0, 32),
 		}
 	},
@@ -107,7 +107,7 @@ func (ctx *diffContext) buildPath() string {
 		if i > 0 {
 			b.WriteByte('/')
 		}
-		b.WriteString(core.EscapeKey(s))
+		b.WriteString(icore.EscapeKey(s))
 	}
 	return b.String()
 }
@@ -166,7 +166,7 @@ func (d *Differ) detectMovesRecursive(v reflect.Value, ctx *diffContext) {
 
 	switch v.Kind() {
 	case reflect.Struct:
-		info := core.GetTypeInfo(v.Type())
+		info := icore.GetTypeInfo(v.Type())
 		for _, fInfo := range info.Fields {
 			if fInfo.Tag.Ignore {
 				continue
@@ -347,10 +347,10 @@ func (d *Differ) indexValues(v reflect.Value, ctx *diffContext) {
 		}
 		if kind == reflect.Pointer {
 			ptr := v.Pointer()
-			if ctx.visited[core.VisitKey{A: ptr}] {
+			if ctx.visited[icore.VisitKey{A: ptr}] {
 				return
 			}
-			ctx.visited[core.VisitKey{A: ptr}] = true
+			ctx.visited[icore.VisitKey{A: ptr}] = true
 		}
 		d.indexValues(v.Elem(), ctx)
 		return
@@ -358,7 +358,7 @@ func (d *Differ) indexValues(v reflect.Value, ctx *diffContext) {
 
 	switch kind {
 	case reflect.Struct:
-		info := core.GetTypeInfo(v.Type())
+		info := icore.GetTypeInfo(v.Type())
 		for _, fInfo := range info.Fields {
 			if fInfo.Tag.Ignore {
 				continue
@@ -392,14 +392,14 @@ func (d *Differ) isValueAtTarget(path string, val any, ctx *diffContext) bool {
 	if !ctx.rootB.IsValid() {
 		return false
 	}
-	targetVal, err := core.DeepPath(path).Resolve(ctx.rootB)
+	targetVal, err := icore.DeepPath(path).Resolve(ctx.rootB)
 	if err != nil {
 		return false
 	}
 	if !targetVal.IsValid() {
 		return false
 	}
-	return core.Equal(targetVal.Interface(), val)
+	return icore.Equal(targetVal.Interface(), val)
 }
 
 func (d *Differ) diffRecursive(a, b reflect.Value, atomic bool, ctx *diffContext) (diffPatch, error) {
@@ -414,10 +414,10 @@ func (d *Differ) diffRecursive(a, b reflect.Value, atomic bool, ctx *diffContext
 	}
 
 	if atomic {
-		if core.ValueEqual(a, b, nil) {
+		if icore.ValueEqual(a, b, nil) {
 			return nil, nil
 		}
-		return newValuePatch(core.DeepCopyValue(a), core.DeepCopyValue(b)), nil
+		return newValuePatch(icore.DeepCopyValue(a), icore.DeepCopyValue(b)), nil
 	}
 
 	if !a.IsValid() || !b.IsValid() {
@@ -435,7 +435,7 @@ func (d *Differ) diffRecursive(a, b reflect.Value, atomic bool, ctx *diffContext
 		if !atomic {
 			// Skip valueEqual and recurse
 		} else {
-			if core.ValueEqual(a, b, nil) {
+			if icore.ValueEqual(a, b, nil) {
 				return nil, nil
 			}
 		}
@@ -527,7 +527,7 @@ func (d *Differ) diffRecursive(a, b reflect.Value, atomic bool, ctx *diffContext
 	if (k >= reflect.Bool && k <= reflect.String) || k == reflect.Float32 || k == reflect.Float64 || k == reflect.Complex64 || k == reflect.Complex128 {
 		return newValuePatch(a, b), nil
 	}
-	return newValuePatch(core.DeepCopyValue(a), core.DeepCopyValue(b)), nil
+	return newValuePatch(icore.DeepCopyValue(a), icore.DeepCopyValue(b)), nil
 }
 
 func (d *Differ) diffPtr(a, b reflect.Value, ctx *diffContext) (diffPatch, error) {
@@ -538,14 +538,14 @@ func (d *Differ) diffPtr(a, b reflect.Value, ctx *diffContext) (diffPatch, error
 		return newValuePatch(a, b), nil
 	}
 	if b.IsNil() {
-		return newValuePatch(core.DeepCopyValue(a), reflect.Zero(a.Type())), nil
+		return newValuePatch(icore.DeepCopyValue(a), reflect.Zero(a.Type())), nil
 	}
 
 	if a.Pointer() == b.Pointer() {
 		return nil, nil
 	}
 
-	k := core.VisitKey{A: a.Pointer(), B: b.Pointer(), Typ: a.Type()}
+	k := icore.VisitKey{A: a.Pointer(), B: b.Pointer(), Typ: a.Type()}
 	if ctx.visited[k] {
 		return nil, nil
 	}
@@ -590,7 +590,7 @@ func (d *Differ) diffInterface(a, b reflect.Value, ctx *diffContext) (diffPatch,
 
 func (d *Differ) diffStruct(a, b reflect.Value, ctx *diffContext) (diffPatch, error) {
 	var fields map[string]diffPatch
-	info := core.GetTypeInfo(b.Type())
+	info := icore.GetTypeInfo(b.Type())
 
 	for _, fInfo := range info.Fields {
 		if fInfo.Tag.Ignore {
@@ -724,7 +724,7 @@ func (d *Differ) diffMap(a, b reflect.Value, ctx *diffContext) (diffPatch, error
 					if removed == nil {
 						removed = make(map[any]reflect.Value)
 					}
-					removed[ck] = core.DeepCopyValue(vA)
+					removed[ck] = icore.DeepCopyValue(vA)
 				}
 			} else {
 				patch, err := d.diffRecursive(vA, vB, false, ctx)
@@ -746,7 +746,7 @@ func (d *Differ) diffMap(a, b reflect.Value, ctx *diffContext) (diffPatch, error
 
 	for ck, vB := range bByCanonical {
 		// Escape the key before joining
-		currentPath := core.JoinPath(ctx.buildPath(), core.EscapeKey(fmt.Sprintf("%v", ck)))
+		currentPath := icore.JoinPath(ctx.buildPath(), icore.EscapeKey(fmt.Sprintf("%v", ck)))
 		if len(d.config.ignoredPaths) == 0 || !d.config.ignoredPaths[currentPath] {
 			if fromPath, isMove, ok := d.tryDetectMove(vB, currentPath, ctx); ok {
 				if modified == nil {
@@ -763,7 +763,7 @@ func (d *Differ) diffMap(a, b reflect.Value, ctx *diffContext) (diffPatch, error
 			if added == nil {
 				added = make(map[any]reflect.Value)
 			}
-			added[ck] = core.DeepCopyValue(vB)
+			added[ck] = icore.DeepCopyValue(vB)
 		}
 	}
 
@@ -817,7 +817,7 @@ func (d *Differ) diffSlice(a, b reflect.Value, ctx *diffContext) (diffPatch, err
 		for prefix < lenA && prefix < lenB {
 			vA := a.Index(prefix)
 			vB := b.Index(prefix)
-			if core.ValueEqual(vA, vB, nil) {
+			if icore.ValueEqual(vA, vB, nil) {
 				prefix++
 			} else {
 				break
@@ -830,7 +830,7 @@ func (d *Differ) diffSlice(a, b reflect.Value, ctx *diffContext) (diffPatch, err
 		for suffix < (lenA-prefix) && suffix < (lenB-prefix) {
 			vA := a.Index(lenA - 1 - suffix)
 			vB := b.Index(lenB - 1 - suffix)
-			if core.ValueEqual(vA, vB, nil) {
+			if icore.ValueEqual(vA, vB, nil) {
 				suffix++
 			} else {
 				break
@@ -843,7 +843,7 @@ func (d *Differ) diffSlice(a, b reflect.Value, ctx *diffContext) (diffPatch, err
 	midBStart := prefix
 	midBEnd := lenB - suffix
 
-	keyField, hasKey := core.GetKeyField(b.Type().Elem())
+	keyField, hasKey := icore.GetKeyField(b.Type().Elem())
 
 	if midAStart == midAEnd && midBStart < midBEnd {
 		var ops []sliceOp
@@ -851,13 +851,13 @@ func (d *Differ) diffSlice(a, b reflect.Value, ctx *diffContext) (diffPatch, err
 			var prevKey any
 			if hasKey {
 				if i > 0 {
-					prevKey = core.ExtractKey(b.Index(i-1), keyField)
+					prevKey = icore.ExtractKey(b.Index(i-1), keyField)
 				}
 			}
 
 			// Move/Copy Detection
 			val := b.Index(i)
-			currentPath := core.JoinPath(ctx.buildPath(), strconv.Itoa(i))
+			currentPath := icore.JoinPath(ctx.buildPath(), strconv.Itoa(i))
 			if fromPath, isMove, ok := d.tryDetectMove(val, currentPath, ctx); ok {
 				var p diffPatch
 				if isMove {
@@ -873,7 +873,7 @@ func (d *Differ) diffSlice(a, b reflect.Value, ctx *diffContext) (diffPatch, err
 					PrevKey: prevKey,
 				}
 				if hasKey {
-					op.Key = core.ExtractKey(val, keyField)
+					op.Key = icore.ExtractKey(val, keyField)
 				}
 				ops = append(ops, op)
 				continue
@@ -882,11 +882,11 @@ func (d *Differ) diffSlice(a, b reflect.Value, ctx *diffContext) (diffPatch, err
 			op := sliceOp{
 				Kind:    OpAdd,
 				Index:   i,
-				Val:     core.DeepCopyValue(b.Index(i)),
+				Val:     icore.DeepCopyValue(b.Index(i)),
 				PrevKey: prevKey,
 			}
 			if hasKey {
-				op.Key = core.ExtractKey(b.Index(i), keyField)
+				op.Key = icore.ExtractKey(b.Index(i), keyField)
 			}
 			ops = append(ops, op)
 		}
@@ -896,17 +896,17 @@ func (d *Differ) diffSlice(a, b reflect.Value, ctx *diffContext) (diffPatch, err
 	if midBStart == midBEnd && midAStart < midAEnd {
 		var ops []sliceOp
 		for i := midAEnd - 1; i >= midAStart; i-- {
-			currentPath := core.JoinPath(ctx.buildPath(), strconv.Itoa(i))
+			currentPath := icore.JoinPath(ctx.buildPath(), strconv.Itoa(i))
 			if ctx.movedPaths[currentPath] {
 				continue
 			}
 			op := sliceOp{
 				Kind:  OpRemove,
 				Index: i,
-				Val:   core.DeepCopyValue(a.Index(i)),
+				Val:   icore.DeepCopyValue(a.Index(i)),
 			}
 			if hasKey {
-				op.Key = core.ExtractKey(a.Index(i), keyField)
+				op.Key = icore.ExtractKey(a.Index(i), keyField)
 			}
 			ops = append(ops, op)
 		}
@@ -940,9 +940,9 @@ func (d *Differ) computeSliceEdits(a, b reflect.Value, aStart, aEnd, bStart, bEn
 				k1 = k1.Elem()
 				k2 = k2.Elem()
 			}
-			return core.ValueEqual(k1.Field(keyField), k2.Field(keyField), nil)
+			return icore.ValueEqual(k1.Field(keyField), k2.Field(keyField), nil)
 		}
-		return core.ValueEqual(v1, v2, nil)
+		return icore.ValueEqual(v1, v2, nil)
 	}
 
 	max := n + m
@@ -999,8 +999,8 @@ func (d *Differ) backtrackMyers(a, b reflect.Value, aStart, aEnd, bStart, bEnd, 
 		for x > prevX && y > prevY {
 			vA := a.Index(aStart + x - 1)
 			vB := b.Index(bStart + y - 1)
-			if !core.ValueEqual(vA, vB, nil) {
-				ctx.pathStack = append(ctx.pathStack, fmt.Sprintf("%v", core.ExtractKey(vA, keyField)))
+			if !icore.ValueEqual(vA, vB, nil) {
+				ctx.pathStack = append(ctx.pathStack, fmt.Sprintf("%v", icore.ExtractKey(vA, keyField)))
 				p, err := d.diffRecursive(vA, vB, false, ctx)
 				ctx.pathStack = ctx.pathStack[:len(ctx.pathStack)-1]
 				if err != nil {
@@ -1012,7 +1012,7 @@ func (d *Differ) backtrackMyers(a, b reflect.Value, aStart, aEnd, bStart, bEnd, 
 					Patch: p,
 				}
 				if hasKey {
-					op.Key = core.ExtractKey(vA, keyField)
+					op.Key = icore.ExtractKey(vA, keyField)
 				}
 				ops = append(ops, op)
 			}
@@ -1021,26 +1021,26 @@ func (d *Differ) backtrackMyers(a, b reflect.Value, aStart, aEnd, bStart, bEnd, 
 		}
 
 		if x > prevX {
-			currentPath := core.JoinPath(ctx.buildPath(), strconv.Itoa(aStart+x-1))
+			currentPath := icore.JoinPath(ctx.buildPath(), strconv.Itoa(aStart+x-1))
 			if !ctx.movedPaths[currentPath] {
 				op := sliceOp{
 					Kind:  OpRemove,
 					Index: aStart + x - 1,
-					Val:   core.DeepCopyValue(a.Index(aStart + x - 1)),
+					Val:   icore.DeepCopyValue(a.Index(aStart + x - 1)),
 				}
 				if hasKey {
-					op.Key = core.ExtractKey(a.Index(aStart+x-1), keyField)
+					op.Key = icore.ExtractKey(a.Index(aStart+x-1), keyField)
 				}
 				ops = append(ops, op)
 			}
 		} else if y > prevY {
 			var prevKey any
 			if hasKey && (bStart+y-2 >= 0) {
-				prevKey = core.ExtractKey(b.Index(bStart+y-2), keyField)
+				prevKey = icore.ExtractKey(b.Index(bStart+y-2), keyField)
 			}
 			val := b.Index(bStart + y - 1)
 
-			currentPath := core.JoinPath(ctx.buildPath(), strconv.Itoa(aStart+x))
+			currentPath := icore.JoinPath(ctx.buildPath(), strconv.Itoa(aStart+x))
 			if fromPath, isMove, ok := d.tryDetectMove(val, currentPath, ctx); ok {
 				var p diffPatch
 				if isMove {
@@ -1055,7 +1055,7 @@ func (d *Differ) backtrackMyers(a, b reflect.Value, aStart, aEnd, bStart, bEnd, 
 					PrevKey: prevKey,
 				}
 				if hasKey {
-					op.Key = core.ExtractKey(val, keyField)
+					op.Key = icore.ExtractKey(val, keyField)
 				}
 				ops = append(ops, op)
 				x, y = prevX, prevY
@@ -1065,11 +1065,11 @@ func (d *Differ) backtrackMyers(a, b reflect.Value, aStart, aEnd, bStart, bEnd, 
 			op := sliceOp{
 				Kind:    OpAdd,
 				Index:   aStart + x,
-				Val:     core.DeepCopyValue(val),
+				Val:     icore.DeepCopyValue(val),
 				PrevKey: prevKey,
 			}
 			if hasKey {
-				op.Key = core.ExtractKey(b.Index(bStart+y-1), keyField)
+				op.Key = icore.ExtractKey(b.Index(bStart+y-1), keyField)
 			}
 			ops = append(ops, op)
 		}
@@ -1079,8 +1079,8 @@ func (d *Differ) backtrackMyers(a, b reflect.Value, aStart, aEnd, bStart, bEnd, 
 	for x > 0 && y > 0 {
 		vA := a.Index(aStart + x - 1)
 		vB := b.Index(bStart + y - 1)
-		if !core.ValueEqual(vA, vB, nil) {
-			ctx.pathStack = append(ctx.pathStack, fmt.Sprintf("%v", core.ExtractKey(vA, keyField)))
+		if !icore.ValueEqual(vA, vB, nil) {
+			ctx.pathStack = append(ctx.pathStack, fmt.Sprintf("%v", icore.ExtractKey(vA, keyField)))
 			p, err := d.diffRecursive(vA, vB, false, ctx)
 			ctx.pathStack = ctx.pathStack[:len(ctx.pathStack)-1]
 			if err != nil {
@@ -1092,7 +1092,7 @@ func (d *Differ) backtrackMyers(a, b reflect.Value, aStart, aEnd, bStart, bEnd, 
 				Patch: p,
 			}
 			if hasKey {
-				op.Key = core.ExtractKey(vA, keyField)
+				op.Key = icore.ExtractKey(vA, keyField)
 			}
 			ops = append(ops, op)
 		}

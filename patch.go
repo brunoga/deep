@@ -63,18 +63,10 @@ type Patch[T any] struct {
 	Strict bool `json:"strict,omitempty"`
 }
 
-// Operation represents a single change.
-type Operation struct {
-	Kind   OpKind          `json:"k"`
-	Path   string          `json:"p"` // JSON Pointer path; created via Field selectors.
-	Old    any             `json:"o,omitempty"`
-	New    any             `json:"n,omitempty"`
-	If     *core.Condition `json:"if,omitempty"`
-	Unless *core.Condition `json:"un,omitempty"`
-
-	// Strict is stamped from Patch.Strict at apply time; not serialized.
-	Strict bool `json:"-"`
-}
+// Operation is an alias for the internal engine operation type.
+//
+// Note: after JSON round-trip, numeric Old/New values become float64.
+type Operation = engine.Operation
 
 // IsEmpty reports whether the patch contains no operations.
 func (p Patch[T]) IsEmpty() bool {

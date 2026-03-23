@@ -486,6 +486,7 @@ import (
 {{- end}}
 {{- if .NeedsDeep}}
 	deep "github.com/brunoga/deep/v5"
+	_deepengine "github.com/brunoga/deep/v5/internal/engine"
 {{- end}}
 {{- if .NeedsCrdt}}
 	crdt "github.com/brunoga/deep/v5/crdt"
@@ -513,7 +514,7 @@ func (t *{{.TypeName}}) Patch(p {{.P}}Patch[{{.TypeName}}], logger *slog.Logger)
 		if err != nil {
 			errs = append(errs, err)
 		} else if !handled {
-			if err := {{.P}}ApplyOpReflection(t, op, logger); err != nil {
+			if err := _deepengine.ApplyOpReflection(t, op, logger); err != nil {
 				errs = append(errs, err)
 			}
 		}

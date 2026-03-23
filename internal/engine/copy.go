@@ -1,7 +1,7 @@
 package engine
 
 import (
-	"github.com/brunoga/deep/v5/core"
+	icore "github.com/brunoga/deep/v5/internal/core"
 )
 
 // Copier is an interface that types can implement to provide their own
@@ -15,11 +15,11 @@ type Copier[T any] interface {
 //
 // It correctly handles cyclic references and unexported fields.
 func Copy[T any](src T, opts ...CopyOption) (T, error) {
-	coreOpts := make([]core.CopyOption, len(opts))
+	coreOpts := make([]icore.CopyOption, len(opts))
 	for i, opt := range opts {
 		coreOpts[i] = opt.asCoreCopyOption()
 	}
-	return core.Copy(src, coreOpts...)
+	return icore.Copy(src, coreOpts...)
 }
 
 // MustCopy creates a deep copy of src. It returns the copy on success or panics
@@ -27,9 +27,9 @@ func Copy[T any](src T, opts ...CopyOption) (T, error) {
 //
 // It correctly handles cyclic references and unexported fields.
 func MustCopy[T any](src T, opts ...CopyOption) T {
-	coreOpts := make([]core.CopyOption, len(opts))
+	coreOpts := make([]icore.CopyOption, len(opts))
 	for i, opt := range opts {
 		coreOpts[i] = opt.asCoreCopyOption()
 	}
-	return core.MustCopy(src, coreOpts...)
+	return icore.MustCopy(src, coreOpts...)
 }

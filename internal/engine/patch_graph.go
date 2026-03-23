@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/brunoga/deep/v5/core"
+	icore "github.com/brunoga/deep/v5/internal/core"
 )
 
 // dependencyNode represents a node in the dependency graph.
@@ -139,18 +139,18 @@ func resolveStructDependencies(p *structPatch, basePath string, root reflect.Val
 		}
 
 		if cp, ok := node.patch.(*copyPatch); ok {
-			val, err := core.DeepPath(cp.from).Resolve(root)
+			val, err := icore.DeepPath(cp.from).Resolve(root)
 			if err != nil {
 				return nil, nil, fmt.Errorf("failed to resolve cycle dependency for %s (from %s): %w", name, cp.from, err)
 			}
-			valCopy := core.DeepCopyValue(val)
+			valCopy := icore.DeepCopyValue(val)
 			effectivePatches[name] = newValuePatch(reflect.Value{}, valCopy)
 		} else if mp, ok := node.patch.(*movePatch); ok {
-			val, err := core.DeepPath(mp.from).Resolve(root)
+			val, err := icore.DeepPath(mp.from).Resolve(root)
 			if err != nil {
 				return nil, nil, fmt.Errorf("failed to resolve cycle dependency for %s (from %s): %w", name, mp.from, err)
 			}
-			valCopy := core.DeepCopyValue(val)
+			valCopy := icore.DeepCopyValue(val)
 			effectivePatches[name] = newValuePatch(reflect.Value{}, valCopy)
 		} else {
 			return nil, nil, fmt.Errorf("cycle detected involving non-simple patch type for field %s", name)
