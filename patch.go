@@ -4,7 +4,6 @@ import (
 	"encoding/gob"
 	"encoding/json"
 	"fmt"
-	"github.com/brunoga/deep/v5/crdt/hlc"
 	"github.com/brunoga/deep/v5/internal/engine"
 	"strings"
 )
@@ -12,17 +11,15 @@ import (
 func init() {
 	gob.Register(&Condition{})
 	gob.Register(Operation{})
-	gob.Register(hlc.HLC{})
 }
 
-// Register registers the Patch and LWW types for T with the gob package.
+// Register registers the Patch type for T with the gob package.
 // It also registers []T and map[string]T because gob requires concrete types
 // to be registered when they appear inside interface-typed fields (such as
 // Operation.Old / Operation.New). Call Register[T] for every type T that
 // will flow through those fields during gob encoding.
 func Register[T any]() {
 	gob.Register(Patch[T]{})
-	gob.Register(LWW[T]{})
 	gob.Register([]T{})
 	gob.Register(map[string]T{})
 }
@@ -87,7 +84,6 @@ type Operation struct {
 	Path      string     `json:"p"` // JSON Pointer path; created via Field selectors.
 	Old       any        `json:"o,omitempty"`
 	New       any        `json:"n,omitempty"`
-	Timestamp *hlc.HLC   `json:"t,omitempty"` // Integrated causality via HLC; nil means no timestamp.
 	If        *Condition `json:"if,omitempty"`
 	Unless    *Condition `json:"un,omitempty"`
 
@@ -174,8 +170,7 @@ func (p Patch[T]) Reverse() Patch[T] {
 	for i := len(p.Operations) - 1; i >= 0; i-- {
 		op := p.Operations[i]
 		rev := Operation{
-			Path:      op.Path,
-			Timestamp: op.Timestamp,
+			Path: op.Path,
 		}
 		switch op.Kind {
 		case OpAdd:
@@ -418,19 +413,3 @@ func FromJSONPatch[T any](data []byte) (Patch[T], error) {
 	return res, nil
 }
 
-// LWW represents a Last-Write-Wins register for type T.
-type LWW[T any] struct {
-	Value     T       `json:"v"`
-	Timestamp hlc.HLC `json:"t"`
-}
-
-// Set updates the register's value and timestamp if ts is after the current
-// timestamp. Returns true if the update was accepted.
-func (l *LWW[T]) Set(v T, ts hlc.HLC) bool {
-	if ts.After(l.Timestamp) {
-		l.Value = v
-		l.Timestamp = ts
-		return true
-	}
-	return false
-}

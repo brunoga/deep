@@ -3,15 +3,15 @@ package main
 import (
 	"fmt"
 
-	"github.com/brunoga/deep/v5"
+	"github.com/brunoga/deep/v5/crdt"
 	"github.com/brunoga/deep/v5/crdt/hlc"
 )
 
 // Profile uses per-field LWW[T] registers so that concurrent updates to
 // independent fields can always be merged: the later timestamp wins.
 type Profile struct {
-	Name  deep.LWW[string] `json:"name"`
-	Score deep.LWW[int]    `json:"score"`
+	Name  crdt.LWW[string] `json:"name"`
+	Score crdt.LWW[int]    `json:"score"`
 }
 
 func main() {
@@ -19,41 +19,31 @@ func main() {
 	ts0 := clock.Now()
 
 	base := Profile{
-		Name:  deep.LWW[string]{Value: "Alice", Timestamp: ts0},
-		Score: deep.LWW[int]{Value: 0, Timestamp: ts0},
+		Name:  crdt.LWW[string]{Value: "Alice", Timestamp: ts0},
+		Score: crdt.LWW[int]{Value: 0, Timestamp: ts0},
 	}
 
-	// Client A renames the profile (earlier timestamp).
+	// Client A renames the profile; apply via LWW.Set which only accepts
+	// the update if the incoming timestamp is strictly newer.
 	tsA := clock.Now()
-	patchA := deep.Patch[Profile]{}
-	patchA.Operations = append(patchA.Operations, deep.Operation{
-		Kind:      deep.OpReplace,
-		Path:      "/name",
-		New:       deep.LWW[string]{Value: "Alice Smith", Timestamp: tsA},
-		Timestamp: &tsA,
-	})
+	profileA := base
+	profileA.Name.Set("Alice Smith", tsA)
 
-	// Client B increments the score concurrently (later timestamp).
+	// Client B increments the score concurrently.
 	tsB := clock.Now()
-	patchB := deep.Patch[Profile]{}
-	patchB.Operations = append(patchB.Operations, deep.Operation{
-		Kind:      deep.OpReplace,
-		Path:      "/score",
-		New:       deep.LWW[int]{Value: 42, Timestamp: tsB},
-		Timestamp: &tsB,
-	})
+	profileB := base
+	profileB.Score.Set(42, tsB)
 
 	fmt.Println("--- CONCURRENT EDITS ---")
-	fmt.Printf("Client A: name  → %q\n", "Alice Smith")
-	fmt.Printf("Client B: score → %d\n", 42)
+	fmt.Printf("Client A: name  → %q\n", profileA.Name.Value)
+	fmt.Printf("Client B: score → %d\n", profileB.Score.Value)
 
-	// Merge both patches: non-conflicting fields are combined;
-	// if both touched the same field, the later HLC timestamp would win.
-	merged := deep.Merge(patchA, patchB, nil)
-	result := base
-	deep.Apply(&result, merged)
+	// Manual merge: take the newer value for each field.
+	merged := base
+	merged.Name.Set(profileA.Name.Value, profileA.Name.Timestamp)
+	merged.Score.Set(profileB.Score.Value, profileB.Score.Timestamp)
 
 	fmt.Println("\n--- CONVERGED RESULT ---")
-	fmt.Printf("Name:  %s\n", result.Name.Value)
-	fmt.Printf("Score: %d\n", result.Score.Value)
+	fmt.Printf("Name:  %s\n", merged.Name.Value)
+	fmt.Printf("Score: %d\n", merged.Score.Value)
 }

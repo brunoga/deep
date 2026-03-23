@@ -48,9 +48,9 @@
 //
 // # Causality and CRDTs
 //
-// [LWW] is a generic Last-Write-Wins register backed by [crdt/hlc.HLC]
-// timestamps. The [crdt] sub-package provides [crdt.CRDT], a concurrency-safe
-// wrapper for any type, and [crdt.Text], a convergent collaborative text type.
+// The [crdt] sub-package provides [crdt.LWW], a generic Last-Write-Wins
+// register; [crdt.CRDT], a concurrency-safe wrapper for any type; and
+// [crdt.Text], a convergent collaborative text type.
 //
 // # Serialization
 //

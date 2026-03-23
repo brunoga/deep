@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/brunoga/deep/v5"
+	"github.com/brunoga/deep/v5/crdt"
 	"github.com/brunoga/deep/v5/crdt/hlc"
 	"github.com/brunoga/deep/v5/internal/testmodels"
 )
@@ -290,7 +291,7 @@ func TestLWWSet(t *testing.T) {
 	ts1 := clock.Now()
 	ts2 := clock.Now()
 
-	var reg deep.LWW[string]
+	var reg crdt.LWW[string]
 	if reg.Set("first", ts1); reg.Value != "first" {
 		t.Error("LWW.Set should accept first value")
 	}

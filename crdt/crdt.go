@@ -30,6 +30,25 @@ import (
 	"github.com/brunoga/deep/v5/crdt/hlc"
 )
 
+// LWW represents a Last-Write-Wins register for type T.
+// Embed LWW fields in a struct to track per-field causality.
+// Use Set to update the value; it accepts the write only if ts is strictly newer.
+type LWW[T any] struct {
+	Value     T       `json:"v"`
+	Timestamp hlc.HLC `json:"t"`
+}
+
+// Set updates the register's value and timestamp if ts is after the current
+// timestamp. Returns true if the update was accepted.
+func (l *LWW[T]) Set(v T, ts hlc.HLC) bool {
+	if ts.After(l.Timestamp) {
+		l.Value = v
+		l.Timestamp = ts
+		return true
+	}
+	return false
+}
+
 // CRDT represents a Conflict-free Replicated Data Type wrapper around type T.
 type CRDT[T any] struct {
 	mu         sync.RWMutex

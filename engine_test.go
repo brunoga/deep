@@ -13,47 +13,35 @@ import (
 
 func TestCausality(t *testing.T) {
 	type Doc struct {
-		Title deep.LWW[string]
+		Title string
+		Score int
 	}
 
-	clock := hlc.NewClock("node-a")
-	ts1 := clock.Now()
-	ts2 := clock.Now()
+	nodeA := crdt.NewCRDT(Doc{Title: "Original", Score: 0}, "node-a")
+	nodeB := crdt.NewCRDT(Doc{Title: "Original", Score: 0}, "node-b")
 
-	d1 := Doc{Title: deep.LWW[string]{Value: "Original", Timestamp: ts1}}
+	// Node A updates Title; node B updates Score concurrently.
+	deltaA := nodeA.Edit(func(d *Doc) { d.Title = "Updated" })
+	deltaB := nodeB.Edit(func(d *Doc) { d.Score = 42 })
 
-	// Newer update
-	p1 := deep.Patch[Doc]{}
-	p1.Operations = append(p1.Operations, deep.Operation{
-		Kind:      deep.OpReplace,
-		Path:      "/Title",
-		New:       deep.LWW[string]{Value: "Newer", Timestamp: ts2},
-		Timestamp: &ts2,
-	})
+	// Both nodes apply both deltas — should converge.
+	nodeA.ApplyDelta(deltaB)
+	nodeB.ApplyDelta(deltaA)
 
-	// Older update (simulating delayed arrival)
-	p2 := deep.Patch[Doc]{}
-	p2.Operations = append(p2.Operations, deep.Operation{
-		Kind:      deep.OpReplace,
-		Path:      "/Title",
-		New:       deep.LWW[string]{Value: "Older", Timestamp: ts1},
-		Timestamp: &ts1,
-	})
-
-	// 1. Apply newer then older -> newer should win
-	res1 := d1
-	deep.Apply(&res1, p1)
-	deep.Apply(&res1, p2)
-	if res1.Title.Value != "Newer" {
-		t.Errorf("newer update lost: got %s, want Newer", res1.Title.Value)
+	vA, vB := nodeA.View(), nodeB.View()
+	if vA != vB {
+		t.Errorf("nodes did not converge: A=%+v B=%+v", vA, vB)
+	}
+	if vA.Title != "Updated" || vA.Score != 42 {
+		t.Errorf("wrong converged state: %+v", vA)
 	}
 
-	// 2. Merge patches
-	merged := deep.Merge(p1, p2, nil)
-	res2 := d1
-	deep.Apply(&res2, merged)
-	if res2.Title.Value != "Newer" {
-		t.Errorf("merged update lost: got %s, want Newer", res2.Title.Value)
+	// Stale delta: applying an older edit after a newer one should be a no-op.
+	stale := nodeA.Edit(func(d *Doc) { d.Title = "Stale" })
+	_ = nodeA.Edit(func(d *Doc) { d.Title = "Definitive" })
+	nodeA.ApplyDelta(stale)
+	if nodeA.View().Title != "Definitive" {
+		t.Errorf("stale delta overwrote newer update")
 	}
 }
 
@@ -212,7 +200,7 @@ func TestTextAdvanced(t *testing.T) {
 		Path: "/",
 		New:  crdt.Text{{Value: "new"}},
 	}
-	text2.ApplyOperation(op)
+	text2.ApplyOperation(op, nil)
 }
 
 func BenchmarkDiffGenerated(b *testing.B) {

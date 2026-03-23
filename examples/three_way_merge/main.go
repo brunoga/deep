@@ -2,8 +2,8 @@ package main
 
 import (
 	"fmt"
+
 	"github.com/brunoga/deep/v5"
-	"github.com/brunoga/deep/v5/crdt/hlc"
 )
 
 type SystemConfig struct {
@@ -20,25 +20,22 @@ func (r *Resolver) Resolve(path string, local, remote any) any {
 }
 
 func main() {
-	clock := hlc.NewClock("server")
 	base := SystemConfig{
 		AppName:    "CoreAPI",
 		MaxThreads: 10,
 		Endpoints:  map[string]string{"auth": "https://auth.local"},
 	}
 
-	// User A changes Endpoints/auth
-	tsA := clock.Now()
+	// User A changes Endpoints/auth.
 	patchA := deep.Patch[SystemConfig]{}
 	patchA.Operations = append(patchA.Operations, deep.Operation{
-		Kind: deep.OpReplace, Path: "/endpoints/auth", New: "https://auth.internal", Timestamp: &tsA,
+		Kind: deep.OpReplace, Path: "/endpoints/auth", New: "https://auth.internal",
 	})
 
-	// User B also changes Endpoints/auth
-	tsB := clock.Now()
+	// User B also changes Endpoints/auth — conflict.
 	patchB := deep.Patch[SystemConfig]{}
 	patchB.Operations = append(patchB.Operations, deep.Operation{
-		Kind: deep.OpReplace, Path: "/endpoints/auth", New: "https://auth.remote", Timestamp: &tsB,
+		Kind: deep.OpReplace, Path: "/endpoints/auth", New: "https://auth.remote",
 	})
 
 	fmt.Println("--- BASE STATE ---")
