@@ -15,7 +15,7 @@ Major rewrite. Breaking changes from v4.
 | Function | Description |
 |---|---|
 | `Diff[T](a, b T) (Patch[T], error)` | Compare two values; returns error for unsupported types |
-| `Apply[T](*T, Patch[T]) error` | Apply a patch; returns `*ApplyError` with `Unwrap() []error` |
+| `Apply[T](*T, Patch[T], ...ApplyOption) error` | Apply a patch; returns `*ApplyError` with `Unwrap() []error` |
 | `Equal[T](a, b T) bool` | Deep equality |
 | `Clone[T](v T) T` | Deep copy (formerly `Copy`) |
 | `Set[T,V](Path[T,V], V) Op` | Typed replace operation constructor |

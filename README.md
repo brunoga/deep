@@ -1,6 +1,6 @@
 # Deep v5: The High-Performance Type-Safe Synchronization Toolkit
 
-`deep` is a comprehensive Go library for comparing, cloning, and synchronizing complex data structures. Deep introduces a revolutionary architecture centered on **Code Generation** and **Type-Safe Selectors**, delivering up to **26x** performance improvements over traditional reflection-based libraries.
+`deep` is a comprehensive Go library for comparing, cloning, and synchronizing complex data structures. Deep introduces a revolutionary architecture centered on **Code Generation** and **Type-Safe Selectors**, delivering up to **15x** performance improvements over traditional reflection-based libraries.
 
 ## Key Features
 
@@ -70,13 +70,13 @@ if err != nil {
 }
 
 // Operation-based Building (Fluent, Type-Safe API)
-namePath  := deep.Field(func(u *User) *string   { return &u.Name  })
-rolesPath := deep.Field(func(u *User) *[]string { return &u.Roles })
+namePath  := deep.Field(func(u *User) *string        { return &u.Name  })
+scorePath := deep.Field(func(u *User) *map[string]int { return &u.Score })
 
 patch2 := deep.Edit(&u1).
     With(
         deep.Set(namePath, "Alice Smith"),
-        deep.Add(deep.At(rolesPath, 0), "viewer"),
+        deep.Add(deep.MapKey(scorePath, "power"), 100),
     ).
     Build()
 
