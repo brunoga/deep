@@ -10,56 +10,56 @@ import (
 
 // Condition operator constants.
 const (
-	CondEq      = "=="
-	CondNe      = "!="
-	CondGt      = ">"
-	CondLt      = "<"
-	CondGe      = ">="
-	CondLe      = "<="
-	CondExists  = "exists"
-	CondIn      = "in"
-	CondMatches = "matches"
-	CondType    = "type"
-	CondAnd     = "and"
-	CondOr      = "or"
-	CondNot     = "not"
+	Eq      = "=="
+	Ne      = "!="
+	Gt      = ">"
+	Lt      = "<"
+	Ge      = ">="
+	Le      = "<="
+	Exists  = "exists"
+	In      = "in"
+	Matches = "matches"
+	Type    = "type"
+	And     = "and"
+	Or      = "or"
+	Not     = "not"
 )
 
 // Condition represents a serializable predicate for conditional application.
 type Condition struct {
 	Path  string       `json:"p,omitempty"`
-	Op    string       `json:"o"` // see Cond* constants above
+	Op    string       `json:"o"` // see operator constants above
 	Value any          `json:"v,omitempty"`
 	Sub   []*Condition `json:"apply,omitempty"` // Sub-conditions for logical operators (and, or, not)
 }
 
-// EvaluateCondition evaluates a condition against a root value.
-func EvaluateCondition(root reflect.Value, c *Condition) (bool, error) {
+// Evaluate evaluates a condition against a root value.
+func Evaluate(root reflect.Value, c *Condition) (bool, error) {
 	if c == nil {
 		return true, nil
 	}
 
-	if c.Op == CondAnd {
+	if c.Op == And {
 		for _, sub := range c.Sub {
-			ok, err := EvaluateCondition(root, sub)
+			ok, err := Evaluate(root, sub)
 			if err != nil || !ok {
 				return false, err
 			}
 		}
 		return true, nil
 	}
-	if c.Op == CondOr {
+	if c.Op == Or {
 		for _, sub := range c.Sub {
-			ok, err := EvaluateCondition(root, sub)
+			ok, err := Evaluate(root, sub)
 			if err == nil && ok {
 				return true, nil
 			}
 		}
 		return false, nil
 	}
-	if c.Op == CondNot {
+	if c.Op == Not {
 		if len(c.Sub) > 0 {
-			ok, err := EvaluateCondition(root, c.Sub[0])
+			ok, err := Evaluate(root, c.Sub[0])
 			if err != nil {
 				return false, err
 			}
@@ -69,17 +69,17 @@ func EvaluateCondition(root reflect.Value, c *Condition) (bool, error) {
 
 	val, err := icore.DeepPath(c.Path).Resolve(root)
 	if err != nil {
-		if c.Op == CondExists {
+		if c.Op == Exists {
 			return false, nil
 		}
 		return false, err
 	}
 
-	if c.Op == CondExists {
+	if c.Op == Exists {
 		return val.IsValid(), nil
 	}
 
-	if c.Op == CondMatches {
+	if c.Op == Matches {
 		pattern, ok := c.Value.(string)
 		if !ok {
 			return false, fmt.Errorf("matches requires string pattern")
@@ -91,7 +91,7 @@ func EvaluateCondition(root reflect.Value, c *Condition) (bool, error) {
 		return matched, nil
 	}
 
-	if c.Op == CondIn {
+	if c.Op == In {
 		v := reflect.ValueOf(c.Value)
 		if v.Kind() != reflect.Slice && v.Kind() != reflect.Array {
 			return false, fmt.Errorf("in requires slice or array")
@@ -104,7 +104,7 @@ func EvaluateCondition(root reflect.Value, c *Condition) (bool, error) {
 		return false, nil
 	}
 
-	if c.Op == CondType {
+	if c.Op == Type {
 		typeName, ok := c.Value.(string)
 		if !ok {
 			return false, fmt.Errorf("type requires string value")
@@ -124,9 +124,9 @@ func (c *Condition) ToPredicate() map[string]any {
 
 	op := c.Op
 	switch op {
-	case CondEq:
+	case Eq:
 		op = "test"
-	case CondNe:
+	case Ne:
 		// Not equal is a 'not' predicate in some extensions
 		return map[string]any{
 			"op": "not",
@@ -134,25 +134,25 @@ func (c *Condition) ToPredicate() map[string]any {
 				{"op": "test", "path": c.Path, "value": c.Value},
 			},
 		}
-	case CondGt:
+	case Gt:
 		op = "more"
-	case CondGe:
+	case Ge:
 		op = "more-or-equal"
-	case CondLt:
+	case Lt:
 		op = "less"
-	case CondLe:
+	case Le:
 		op = "less-or-equal"
-	case CondExists:
+	case Exists:
 		op = "defined"
-	case CondIn:
+	case In:
 		op = "contains"
 	case "log":
 		op = "log"
-	case CondMatches:
+	case Matches:
 		op = "matches"
-	case CondType:
+	case Type:
 		op = "type"
-	case CondAnd, CondOr, CondNot:
+	case And, Or, Not:
 		res := map[string]any{
 			"op": op,
 		}
@@ -183,7 +183,7 @@ func FromPredicate(m map[string]any) *Condition {
 
 	switch op {
 	case "test":
-		return &Condition{Path: path, Op: CondEq, Value: value}
+		return &Condition{Path: path, Op: Eq, Value: value}
 	case "not":
 		// Could be encoded != or a logical not.
 		// If it wraps a single test on the same path, treat as !=.
@@ -191,24 +191,24 @@ func FromPredicate(m map[string]any) *Condition {
 			if inner, ok := apply[0].(map[string]any); ok {
 				if inner["op"] == "test" {
 					innerPath, _ := inner["path"].(string)
-					return &Condition{Path: innerPath, Op: CondNe, Value: inner["value"]}
+					return &Condition{Path: innerPath, Op: Ne, Value: inner["value"]}
 				}
 			}
 		}
-		return &Condition{Op: CondNot, Sub: parseApply(m["apply"])}
+		return &Condition{Op: Not, Sub: parseApply(m["apply"])}
 	case "more":
-		return &Condition{Path: path, Op: CondGt, Value: value}
+		return &Condition{Path: path, Op: Gt, Value: value}
 	case "more-or-equal":
-		return &Condition{Path: path, Op: CondGe, Value: value}
+		return &Condition{Path: path, Op: Ge, Value: value}
 	case "less":
-		return &Condition{Path: path, Op: CondLt, Value: value}
+		return &Condition{Path: path, Op: Lt, Value: value}
 	case "less-or-equal":
-		return &Condition{Path: path, Op: CondLe, Value: value}
+		return &Condition{Path: path, Op: Le, Value: value}
 	case "defined":
-		return &Condition{Path: path, Op: CondExists}
+		return &Condition{Path: path, Op: Exists}
 	case "contains":
-		return &Condition{Path: path, Op: CondIn, Value: value}
-	case CondAnd, CondOr:
+		return &Condition{Path: path, Op: In, Value: value}
+	case And, Or:
 		return &Condition{Op: op, Sub: parseApply(m["apply"])}
 	default:
 		// log, matches, type — same op name, pass through

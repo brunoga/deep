@@ -55,7 +55,7 @@ func Apply[T any](target *T, p Patch[T], opts ...ApplyOption) error {
 	// Reflection fallback.
 
 	if p.Guard != nil {
-		ok, err := condition.EvaluateCondition(v.Elem(), p.Guard)
+		ok, err := condition.Evaluate(v.Elem(), p.Guard)
 		if err != nil {
 			return fmt.Errorf("global condition evaluation failed: %w", err)
 		}

@@ -354,65 +354,65 @@ func (b *Builder[T]) Build() Patch[T] {
 
 // Eq creates an equality condition.
 func Eq[T, V any](p Path[T, V], val V) *condition.Condition {
-	return &condition.Condition{Path: p.String(), Op: condition.CondEq, Value: val}
+	return &condition.Condition{Path: p.String(), Op: condition.Eq, Value: val}
 }
 
 // Ne creates a non-equality condition.
 func Ne[T, V any](p Path[T, V], val V) *condition.Condition {
-	return &condition.Condition{Path: p.String(), Op: condition.CondNe, Value: val}
+	return &condition.Condition{Path: p.String(), Op: condition.Ne, Value: val}
 }
 
 // Gt creates a greater-than condition.
 func Gt[T, V any](p Path[T, V], val V) *condition.Condition {
-	return &condition.Condition{Path: p.String(), Op: condition.CondGt, Value: val}
+	return &condition.Condition{Path: p.String(), Op: condition.Gt, Value: val}
 }
 
 // Ge creates a greater-than-or-equal condition.
 func Ge[T, V any](p Path[T, V], val V) *condition.Condition {
-	return &condition.Condition{Path: p.String(), Op: condition.CondGe, Value: val}
+	return &condition.Condition{Path: p.String(), Op: condition.Ge, Value: val}
 }
 
 // Lt creates a less-than condition.
 func Lt[T, V any](p Path[T, V], val V) *condition.Condition {
-	return &condition.Condition{Path: p.String(), Op: condition.CondLt, Value: val}
+	return &condition.Condition{Path: p.String(), Op: condition.Lt, Value: val}
 }
 
 // Le creates a less-than-or-equal condition.
 func Le[T, V any](p Path[T, V], val V) *condition.Condition {
-	return &condition.Condition{Path: p.String(), Op: condition.CondLe, Value: val}
+	return &condition.Condition{Path: p.String(), Op: condition.Le, Value: val}
 }
 
 // Exists creates a condition that checks if a path exists.
 func Exists[T, V any](p Path[T, V]) *condition.Condition {
-	return &condition.Condition{Path: p.String(), Op: condition.CondExists}
+	return &condition.Condition{Path: p.String(), Op: condition.Exists}
 }
 
 // In creates a condition that checks if a value is in a list.
 func In[T, V any](p Path[T, V], vals []V) *condition.Condition {
-	return &condition.Condition{Path: p.String(), Op: condition.CondIn, Value: vals}
+	return &condition.Condition{Path: p.String(), Op: condition.In, Value: vals}
 }
 
 // Matches creates a regex condition.
 func Matches[T, V any](p Path[T, V], regex string) *condition.Condition {
-	return &condition.Condition{Path: p.String(), Op: condition.CondMatches, Value: regex}
+	return &condition.Condition{Path: p.String(), Op: condition.Matches, Value: regex}
 }
 
 // Type creates a type-check condition.
 func Type[T, V any](p Path[T, V], typeName string) *condition.Condition {
-	return &condition.Condition{Path: p.String(), Op: condition.CondType, Value: typeName}
+	return &condition.Condition{Path: p.String(), Op: condition.Type, Value: typeName}
 }
 
 // And combines multiple conditions with logical AND.
 func And(conds ...*condition.Condition) *condition.Condition {
-	return &condition.Condition{Op: condition.CondAnd, Sub: conds}
+	return &condition.Condition{Op: condition.And, Sub: conds}
 }
 
 // Or combines multiple conditions with logical OR.
 func Or(conds ...*condition.Condition) *condition.Condition {
-	return &condition.Condition{Op: condition.CondOr, Sub: conds}
+	return &condition.Condition{Op: condition.Or, Sub: conds}
 }
 
 // Not inverts a condition.
 func Not(c *condition.Condition) *condition.Condition {
-	return &condition.Condition{Op: condition.CondNot, Sub: []*condition.Condition{c}}
+	return &condition.Condition{Op: condition.Not, Sub: []*condition.Condition{c}}
 }

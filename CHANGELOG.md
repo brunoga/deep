@@ -48,10 +48,10 @@ Major rewrite. Breaking changes from v4.
 Public package used directly by generated `*_deep.go` files. Most callers will not need to import it directly.
 
 - `Condition` — Serializable predicate struct (`Op`, `Path`, `Value`, `Sub`).
-- `EvaluateCondition(root reflect.Value, c *Condition) (bool, error)` — Evaluate a condition against a value.
+- `Evaluate(root reflect.Value, c *Condition) (bool, error)` — Evaluate a condition against a value.
 - `CheckType(v any, typeName string) bool` — Runtime type name check (used in generated code).
 - `ToPredicate() / FromPredicate()` — Convert `Condition` to/from the JSON Patch wire-format map.
-- `CondEq`, `CondNe`, `CondGt`, `CondGe`, `CondLt`, `CondLe`, `CondExists`, `CondIn`, `CondMatches`, `CondType`, `CondAnd`, `CondOr`, `CondNot` — Condition operator constants.
+- `Eq`, `Ne`, `Gt`, `Ge`, `Lt`, `Le`, `Exists`, `In`, `Matches`, `Type`, `And`, `Or`, `Not` — Condition operator constants.
 
 ### Condition / Guard system
 

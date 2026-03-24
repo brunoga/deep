@@ -33,13 +33,13 @@ func ApplyOpReflectionValue(v reflect.Value, op Operation, logger *slog.Logger) 
 
 	// Per-operation conditions.
 	if op.If != nil {
-		ok, err := condition.EvaluateCondition(v, op.If)
+		ok, err := condition.Evaluate(v, op.If)
 		if err != nil || !ok {
 			return nil
 		}
 	}
 	if op.Unless != nil {
-		ok, err := condition.EvaluateCondition(v, op.Unless)
+		ok, err := condition.Evaluate(v, op.Unless)
 		if err != nil || ok {
 			return nil
 		}

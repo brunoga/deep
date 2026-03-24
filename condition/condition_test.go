@@ -37,7 +37,7 @@ func TestCheckType(t *testing.T) {
 	}
 }
 
-func TestEvaluateCondition(t *testing.T) {
+func TestEvaluate(t *testing.T) {
 	type testUser struct {
 		ID   int    `json:"id"`
 		Name string `json:"full_name"`
@@ -67,12 +67,12 @@ func TestEvaluateCondition(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		got, err := EvaluateCondition(root, tt.c)
+		got, err := Evaluate(root, tt.c)
 		if err != nil {
-			t.Errorf("EvaluateCondition(%s) error: %v", tt.c.Op, err)
+			t.Errorf("Evaluate(%s) error: %v", tt.c.Op, err)
 		}
 		if got != tt.want {
-			t.Errorf("EvaluateCondition(%s) = %v, want %v", tt.c.Op, got, tt.want)
+			t.Errorf("Evaluate(%s) = %v, want %v", tt.c.Op, got, tt.want)
 		}
 	}
 }
