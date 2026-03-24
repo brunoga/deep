@@ -1,0 +1,320 @@
+package deep_test
+
+import (
+	"fmt"
+	"strings"
+	"testing"
+
+	"github.com/brunoga/deep/v5"
+	"github.com/brunoga/deep/v5/crdt"
+	"github.com/brunoga/deep/v5/crdt/hlc"
+	"github.com/brunoga/deep/v5/internal/testmodels"
+)
+
+func TestCausality(t *testing.T) {
+	type Doc struct {
+		Title string
+		Score int
+	}
+
+	nodeA := crdt.NewCRDT(Doc{Title: "Original", Score: 0}, "node-a")
+	nodeB := crdt.NewCRDT(Doc{Title: "Original", Score: 0}, "node-b")
+
+	// Node A updates Title; node B updates Score concurrently.
+	deltaA := nodeA.Edit(func(d *Doc) { d.Title = "Updated" })
+	deltaB := nodeB.Edit(func(d *Doc) { d.Score = 42 })
+
+	// Both nodes apply both deltas — should converge.
+	nodeA.ApplyDelta(deltaB)
+	nodeB.ApplyDelta(deltaA)
+
+	vA, vB := nodeA.View(), nodeB.View()
+	if vA != vB {
+		t.Errorf("nodes did not converge: A=%+v B=%+v", vA, vB)
+	}
+	if vA.Title != "Updated" || vA.Score != 42 {
+		t.Errorf("wrong converged state: %+v", vA)
+	}
+
+	// Stale delta: applying an older edit after a newer one should be a no-op.
+	stale := nodeA.Edit(func(d *Doc) { d.Title = "Stale" })
+	_ = nodeA.Edit(func(d *Doc) { d.Title = "Definitive" })
+	nodeA.ApplyDelta(stale)
+	if nodeA.View().Title != "Definitive" {
+		t.Errorf("stale delta overwrote newer update")
+	}
+}
+
+func TestApplyOperation(t *testing.T) {
+	u := testmodels.User{
+		ID:   1,
+		Name: "Alice",
+		Bio:  crdt.Text{{Value: "Hello"}},
+	}
+
+	p := deep.Patch[testmodels.User]{}
+	p.Operations = append(p.Operations, deep.Operation{
+		Kind: deep.OpReplace,
+		Path: "/full_name",
+		New:  "Bob",
+	})
+
+	if err := deep.Apply(&u, p); err != nil {
+		t.Fatalf("Apply failed: %v", err)
+	}
+
+	if u.Name != "Bob" {
+		t.Errorf("expected Bob, got %s", u.Name)
+	}
+}
+
+func TestApplyError(t *testing.T) {
+	err1 := fmt.Errorf("error 1")
+	err2 := fmt.Errorf("error 2")
+	ae := &deep.ApplyError{Errors: []error{err1, err2}}
+
+	s := ae.Error()
+	if !strings.Contains(s, "2 errors during apply") {
+		t.Errorf("expected 2 errors message, got %s", s)
+	}
+	if !strings.Contains(s, "error 1") || !strings.Contains(s, "error 2") {
+		t.Errorf("missing individual errors in message: %s", s)
+	}
+
+	aeSingle := &deep.ApplyError{Errors: []error{err1}}
+	if aeSingle.Error() != "error 1" {
+		t.Errorf("expected error 1, got %s", aeSingle.Error())
+	}
+}
+
+func TestNilMapDiff(t *testing.T) {
+	type S struct {
+		M map[string]int
+	}
+	// nil source map → all keys should produce OpAdd, not OpReplace
+	a := S{M: nil}
+	b := S{M: map[string]int{"x": 1, "y": 2}}
+	p, err := deep.Diff(a, b)
+	if err != nil {
+		t.Fatalf("Diff failed: %v", err)
+	}
+	for _, op := range p.Operations {
+		if op.Kind != deep.OpReplace && op.Kind != deep.OpAdd {
+			continue
+		}
+		if op.Kind == deep.OpReplace {
+			t.Errorf("Diff with nil source map should emit OpAdd, got OpReplace at %s", op.Path)
+		}
+	}
+}
+
+func TestReflectionEngineAdvanced(t *testing.T) {
+	type Data struct {
+		A int
+		B int
+	}
+	d := &Data{A: 1, B: 2}
+
+	p := deep.Patch[Data]{}
+	p.Operations = []deep.Operation{
+		{Kind: deep.OpMove, Path: "/B", Old: "/A"},
+		{Kind: deep.OpCopy, Path: "/A", Old: "/B"},
+		{Kind: deep.OpRemove, Path: "/A"},
+	}
+
+	if err := deep.Apply(d, p); err != nil {
+		t.Errorf("Apply failed: %v", err)
+	}
+}
+
+func TestEngineFailures(t *testing.T) {
+	u := &testmodels.User{}
+
+	// Move from non-existent
+	p1 := deep.Patch[testmodels.User]{}
+	p1.Operations = []deep.Operation{{Kind: deep.OpMove, Path: "/id", Old: "/nonexistent"}}
+	deep.Apply(u, p1)
+
+	// Copy from non-existent
+	p2 := deep.Patch[testmodels.User]{}
+	p2.Operations = []deep.Operation{{Kind: deep.OpCopy, Path: "/id", Old: "/nonexistent"}}
+	deep.Apply(u, p2)
+
+	// Apply to nil
+	if err := deep.Apply((*testmodels.User)(nil), p1); err == nil {
+		t.Error("Apply to nil should fail")
+	}
+}
+
+func TestFinalPush(t *testing.T) {
+	// 1. All deep.OpKinds
+	for i := 0; i < 10; i++ {
+		_ = deep.OpKind(i).String()
+	}
+
+	// 2. Nested delegation failure (nil field)
+	type NestedNil struct {
+		User *testmodels.User
+	}
+	nn := &NestedNil{}
+	deep.Apply(nn, deep.Patch[NestedNil]{Operations: []deep.Operation{{Kind: deep.OpReplace, Path: "/User/id", New: 1}}})
+}
+
+func TestReflectionEqualCopy(t *testing.T) {
+	type Simple struct {
+		A int
+	}
+	s1 := Simple{A: 1}
+	s2 := Simple{A: 2}
+
+	if deep.Equal(s1, s2) {
+		t.Error("deep.Equal failed for different simple structs")
+	}
+
+	s3 := deep.Clone(s1)
+	if s3.A != 1 {
+		t.Error("deep.Clone failed for simple struct")
+	}
+}
+
+func TestTextAdvanced(t *testing.T) {
+	clock := hlc.NewClock("node-a")
+	t1 := clock.Now()
+	t2 := clock.Now()
+
+	// Complex ordering
+	text := crdt.Text{
+		{ID: t2, Value: "world", Prev: t1},
+		{ID: t1, Value: "hello "},
+	}
+
+	s := text.String()
+	if s != "hello world" {
+		t.Errorf("expected hello world, got %q", s)
+	}
+
+	text2 := crdt.Text{{Value: "old"}}
+	p2 := deep.Patch[crdt.Text]{Operations: []deep.Operation{
+		{Kind: deep.OpReplace, Path: "/", New: crdt.Text{{Value: "new"}}},
+	}}
+	text2.Patch(p2, nil)
+}
+
+func BenchmarkDiffGenerated(b *testing.B) {
+	u1 := testmodels.User{ID: 1, Name: "Alice", Roles: []string{"admin", "user"}}
+	u2 := testmodels.User{ID: 1, Name: "Bob", Roles: []string{"admin"}}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		deep.Diff(u1, u2)
+	}
+}
+
+func BenchmarkDiffReflection(b *testing.B) {
+	type SimpleData struct {
+		A int
+		B string
+		C []string
+	}
+	a := SimpleData{A: 1, B: "Alice", C: []string{"admin", "user"}}
+	c := SimpleData{A: 1, B: "Bob", C: []string{"admin"}}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		deep.Diff(a, c)
+	}
+}
+
+func BenchmarkEqualGenerated(b *testing.B) {
+	u1 := testmodels.User{ID: 1, Name: "Alice", Roles: []string{"admin", "user"}}
+	u2 := testmodels.User{ID: 1, Name: "Alice", Roles: []string{"admin", "user"}}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		deep.Equal(u1, u2)
+	}
+}
+
+func BenchmarkEqualReflection(b *testing.B) {
+	type SimpleData struct {
+		A int
+		B string
+		C []string
+	}
+	a := SimpleData{A: 1, B: "Alice", C: []string{"admin", "user"}}
+	c := SimpleData{A: 1, B: "Alice", C: []string{"admin", "user"}}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		deep.Equal(a, c)
+	}
+}
+
+func BenchmarkCopyGenerated(b *testing.B) {
+	u := testmodels.User{
+		ID:    1,
+		Name:  "Alice",
+		Roles: []string{"admin", "user"},
+		Score: map[string]int{"chess": 1500, "go": 2000},
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		deep.Clone(u)
+	}
+}
+
+func BenchmarkCopyReflection(b *testing.B) {
+	type SimpleData struct {
+		A int
+		B string
+		C []string
+		D map[string]int
+	}
+	a := SimpleData{
+		A: 1,
+		B: "Alice",
+		C: []string{"admin", "user"},
+		D: map[string]int{"chess": 1500, "go": 2000},
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		deep.Clone(a)
+	}
+}
+
+func BenchmarkApplyGenerated(b *testing.B) {
+	u1 := testmodels.User{ID: 1, Name: "Alice"}
+	u2 := testmodels.User{ID: 1, Name: "Bob"}
+	p, err := deep.Diff(u1, u2)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		u3 := u1
+		deep.Apply(&u3, p)
+	}
+}
+
+func BenchmarkApplyReflection(b *testing.B) {
+	// SimpleData has no generated code, forcing the reflection engine path.
+	type SimpleData struct {
+		A int
+		B string
+	}
+	a := SimpleData{A: 1, B: "hello"}
+	c := SimpleData{A: 2, B: "world"}
+	p, err := deep.Diff(a, c)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		d := a
+		deep.Apply(&d, p)
+	}
+}

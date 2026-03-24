@@ -2,64 +2,59 @@ package main
 
 import (
 	"fmt"
+	"log"
 
-	"github.com/brunoga/deep/v4"
+	"github.com/brunoga/deep/v5"
 )
 
-// Document represents a document being edited.
-type Document struct {
-	Title    string
-	Content  string
-	Metadata map[string]string
+type DocState struct {
+	Title    string            `json:"title"`
+	Content  string            `json:"content"`
+	Metadata map[string]string `json:"metadata"`
 }
 
 func main() {
-	// 1. Initial Document.
-	doc := Document{
-		Title:   "Draft 1",
-		Content: "Hello World",
-		Metadata: map[string]string{
-			"author": "Alice",
-		},
+	current := DocState{
+		Title:    "Draft 1",
+		Content:  "Hello World",
+		Metadata: map[string]string{"author": "Alice"},
 	}
 
-	// 2. Keep a history of patches for "Undo" functionality.
-	var history []deep.Patch[Document]
+	// Each edit records a reverse patch for undo.
+	var undoStack []deep.Patch[DocState]
 
-	// 3. User makes an edit: Change title and content.
-	fmt.Println("Action 1: Edit title and content")
-	original := deep.MustCopy(doc) // Snapshot current state
-	doc.Title = "Final Version"
-	doc.Content = "Goodbye World"
+	edit := func(fn func(*DocState)) {
+		next := deep.Clone(current)
+		fn(&next)
+		patch, err := deep.Diff(current, next)
+		if err != nil {
+			log.Fatal(err)
+		}
+		undoStack = append(undoStack, patch.Reverse())
+		current = next
+	}
 
-	// Record the change in history
-	history = append(history, deep.MustDiff(original, doc))
+	edit(func(d *DocState) {
+		d.Title = "Final Version"
+		d.Content = "Goodbye World"
+	})
 
-	// 4. User makes another edit: Add metadata.
-	fmt.Println("Action 2: Add metadata")
-	original = deep.MustCopy(doc)
-	doc.Metadata["tags"] = "go,library"
+	edit(func(d *DocState) {
+		d.Metadata["tags"] = "go,library"
+	})
 
-	history = append(history, deep.MustDiff(original, doc))
+	fmt.Println("--- CURRENT STATE ---")
+	fmt.Printf("%+v\n", current)
 
-	fmt.Printf("\nCurrent State: %+v\n", doc)
+	// Undo edit 2.
+	deep.Apply(&current, undoStack[len(undoStack)-1])
+	undoStack = undoStack[:len(undoStack)-1]
+	fmt.Println("\n--- AFTER UNDO (edit 2) ---")
+	fmt.Printf("%+v\n", current)
 
-	// 5. UNDO!
-	// To undo, we take the last patch and REVERSE it.
-	fmt.Println("\n--- UNDO ACTION 2 ---")
-	lastPatch := history[len(history)-1]
-	undoPatch := lastPatch.Reverse()
-	undoPatch.Apply(&doc)
-
-	fmt.Printf("After Undo 2: %+v\n", doc)
-
-	// 6. UNDO again!
-	fmt.Println("\n--- UNDO ACTION 1 ---")
-	firstPatch := history[len(history)-2]
-	undoFirstPatch := firstPatch.Reverse()
-	undoFirstPatch.Apply(&doc)
-
-	fmt.Printf("After Undo 1: %+v\n", doc)
-
-	// Notice we are back to the initial state!
+	// Undo edit 1.
+	deep.Apply(&current, undoStack[len(undoStack)-1])
+	undoStack = undoStack[:len(undoStack)-1]
+	fmt.Println("\n--- AFTER UNDO (edit 1) ---")
+	fmt.Printf("%+v\n", current)
 }

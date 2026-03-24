@@ -1,16 +1,18 @@
+//go:generate go run github.com/brunoga/deep/v5/cmd/deep-gen -type=GameWorld,Player .
+
 package main
 
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 
-	"github.com/brunoga/deep/v4"
+	"github.com/brunoga/deep/v5"
 )
 
-// GameWorld represents a shared state (e.g., in a real-time game or collab tool).
 type GameWorld struct {
-	Players map[string]*Player `json:"players"`
-	Time    int                `json:"time"`
+	Players map[string]Player `json:"players"`
+	Time    int               `json:"time"`
 }
 
 type Player struct {
@@ -20,52 +22,47 @@ type Player struct {
 }
 
 func main() {
-	// 1. Initial server state.
 	serverState := GameWorld{
-		Players: map[string]*Player{
+		Players: map[string]Player{
 			"p1": {X: 0, Y: 0, Name: "Hero"},
 		},
 		Time: 0,
 	}
 
-	// 2. Simulation: A client has the same initial state.
-	clientState := deep.MustCopy(serverState)
+	clientState := deep.Clone(serverState)
 
-	fmt.Println("Initial Server State:", serverState.Players["p1"])
-	fmt.Println("Initial Client State:", clientState.Players["p1"])
+	fmt.Println("--- INITIAL STATE ---")
+	fmt.Printf("Server: %+v\n", serverState.Players["p1"])
+	fmt.Printf("Client: %+v\n", clientState.Players["p1"])
 
-	// 3. SERVER TICK: Something changes.
-	// Player moves and time advances.
-	previousState := deep.MustCopy(serverState) // Keep track of old state for diffing
-
-	serverState.Players["p1"].X += 5
-	serverState.Players["p1"].Y += 10
+	// Server tick: move player and advance time.
+	previousState := deep.Clone(serverState)
+	p := serverState.Players["p1"]
+	p.X += 5
+	p.Y += 10
+	serverState.Players["p1"] = p
 	serverState.Time++
 
-	// 4. BROADCAST: Instead of sending the WHOLE GameWorld (which could be large),
-	// we only send the Patch.
-	patch := deep.MustDiff(previousState, serverState)
-
-	// Network transport (simulated).
-	wireData, err := json.Marshal(patch)
+	// Compute and broadcast the patch (only the changed fields).
+	patch, err := deep.Diff(previousState, serverState)
 	if err != nil {
-		fmt.Printf("Broadcast failed: %v\n", err)
-		return
+		log.Fatal(err)
 	}
-	fmt.Printf("\n[Network] Broadcasting Patch (%d bytes): %s\n", len(wireData), string(wireData))
+	wireData, _ := json.Marshal(patch)
 
-	// 5. CLIENT RECEIVE: The client receives the wire data.
-	receivedPatch := deep.NewPatch[GameWorld]()
-	_ = json.Unmarshal(wireData, receivedPatch)
+	fmt.Println("\n--- SERVER BROADCAST ---")
+	fmt.Printf("Patch (%d bytes): %s\n", len(wireData), string(wireData))
 
-	// Client applies the patch to its local copy.
-	receivedPatch.Apply(&clientState)
+	// Client receives and applies.
+	var receivedPatch deep.Patch[GameWorld]
+	json.Unmarshal(wireData, &receivedPatch)
+	deep.Apply(&clientState, receivedPatch)
 
-	fmt.Printf("\nClient State after receiving patch: %v\n", clientState.Players["p1"])
-	fmt.Printf("Client Game Time: %d\n", clientState.Time)
+	fmt.Println("\n--- CLIENT STATE AFTER SYNC ---")
+	fmt.Printf("Player: %+v\n", clientState.Players["p1"])
+	fmt.Printf("Time:   %d\n", clientState.Time)
 
-	// 6. Verification: Both should be identical again.
 	if clientState.Players["p1"].X == serverState.Players["p1"].X {
-		fmt.Println("\nSynchronization Successful!")
+		fmt.Println("\nSUCCESS: Client synchronized!")
 	}
 }

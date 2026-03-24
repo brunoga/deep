@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/brunoga/deep/v4/internal/unsafe"
+	"github.com/brunoga/deep/v5/internal/unsafe"
 )
 
 // Copier is an interface that types can implement to provide their own
@@ -164,12 +164,12 @@ func copyInternal(v reflect.Value, config *copyConfig) (reflect.Value, error) {
 
 func recursiveCopy(v reflect.Value, pointers pointersMap,
 	config *copyConfig, path string, atomic bool) (reflect.Value, error) {
-	
+
 	checkPath := path
 	if checkPath == "" {
 		checkPath = "/"
 	}
-	
+
 	if config.ignoredPaths != nil && config.ignoredPaths[checkPath] {
 		return reflect.Zero(v.Type()), nil
 	}
@@ -330,7 +330,7 @@ func recursiveCopyMap(v reflect.Value, pointers pointersMap,
 			kStr := fmt.Sprintf("%v", key.Interface())
 			kStr = strings.ReplaceAll(kStr, "~", "~0")
 			kStr = strings.ReplaceAll(kStr, "/", "~1")
-			
+
 			if path == "" {
 				keyPath = "/" + kStr
 			} else {

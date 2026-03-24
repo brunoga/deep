@@ -4,7 +4,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/brunoga/deep/v4/crdt/hlc"
+	"github.com/brunoga/deep/v5/crdt/hlc"
 )
 
 func TestText_Insert(t *testing.T) {
@@ -26,7 +26,7 @@ func TestText_Insert(t *testing.T) {
 		t.Errorf("expected He!llo, got %s", text.String())
 	}
 	// Runs should be: "He", "!", "llo"
-	// After normalize: "He", "!", "llo" (they are not contiguous in ID sequence 
+	// After normalize: "He", "!", "llo" (they are not contiguous in ID sequence
 	// because "!" has a new WallTime)
 	if len(text) != 3 {
 		t.Errorf("expected 3 runs, got %d", len(text))
@@ -72,7 +72,7 @@ func TestText_Delete(t *testing.T) {
 	if text.String() != "Heo" {
 		t.Errorf("expected Heo, got %s", text.String())
 	}
-	
+
 	// "He" (active), "ll" (tombstone), "o" (active), " World" (tombstone)
 	// normalize() might merge adjacent tombstones.
 	if text[1].Value != "ll" || !text[1].Deleted {

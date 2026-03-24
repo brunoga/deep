@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/brunoga/deep/v4/internal/unsafe"
+	"github.com/brunoga/deep/v5/internal/unsafe"
 )
 
 // DeepPath represents a path to a field or element within a structure.
@@ -27,11 +27,11 @@ func (p DeepPath) ResolveParentPath() (DeepPath, PathPart, error) {
 		return "", PathPart{}, fmt.Errorf("path is empty")
 	}
 	last := parts[len(parts)-1]
-	
+
 	if len(parts) == 1 {
 		return "", last, nil
 	}
-	
+
 	parentParts := parts[:len(parts)-1]
 	var b strings.Builder
 	for _, part := range parentParts {
@@ -69,10 +69,24 @@ func (p DeepPath) Navigate(v reflect.Value, parts []PathPart) (reflect.Value, Pa
 		}
 
 		if part.IsIndex && (current.Kind() == reflect.Slice || current.Kind() == reflect.Array) {
-			if part.Index < 0 || part.Index >= current.Len() {
-				return reflect.Value{}, PathPart{}, fmt.Errorf("index out of bounds: %d", part.Index)
+			// Check whether the element type uses a keyed-collection tag.
+			// If so, treat the numeric segment as a key value, not an array index.
+			if keyIdx, found := sliceKeyField(current.Type()); found {
+				keyStr := part.Key
+				if keyStr == "" {
+					keyStr = strconv.Itoa(part.Index)
+				}
+				elem, ok := findSliceElemByKey(current, keyIdx, keyStr)
+				if !ok {
+					return reflect.Value{}, PathPart{}, fmt.Errorf("element with key %s not found", keyStr)
+				}
+				current = elem
+			} else {
+				if part.Index < 0 || part.Index >= current.Len() {
+					return reflect.Value{}, PathPart{}, fmt.Errorf("index out of bounds: %d", part.Index)
+				}
+				current = current.Index(part.Index)
 			}
-			current = current.Index(part.Index)
 		} else if current.Kind() == reflect.Map {
 			keyType := current.Type().Key()
 			var keyVal reflect.Value
@@ -107,10 +121,20 @@ func (p DeepPath) Navigate(v reflect.Value, parts []PathPart) (reflect.Value, Pa
 				key = strconv.Itoa(part.Index)
 			}
 
-			f := current.FieldByName(key)
-			if !f.IsValid() {
+			info := GetTypeInfo(current.Type())
+			var fieldIdx = -1
+			for _, fInfo := range info.Fields {
+				if fInfo.Name == key || (fInfo.JSONTag != "" && fInfo.JSONTag == key) {
+					fieldIdx = fInfo.Index
+					break
+				}
+			}
+
+			if fieldIdx == -1 {
 				return reflect.Value{}, PathPart{}, fmt.Errorf("field %s not found", key)
 			}
+			f := current.Field(fieldIdx)
+
 			if !f.CanInterface() {
 				unsafe.DisableRO(&f)
 			}
@@ -158,6 +182,24 @@ func (p DeepPath) Set(v reflect.Value, val reflect.Value) error {
 		parent.SetMapIndex(keyVal, ConvertValue(val, parent.Type().Elem()))
 		return nil
 	case reflect.Slice:
+		// For keyed slices, find by key and update or append; for plain slices, use positional index.
+		if keyIdx, found := sliceKeyField(parent.Type()); found {
+			key := lastPart.Key
+			if key == "" && lastPart.IsIndex {
+				key = strconv.Itoa(lastPart.Index)
+			}
+			converted := ConvertValue(val, parent.Type().Elem())
+			for i := 0; i < parent.Len(); i++ {
+				elem := parent.Index(i)
+				if keyFieldStr(elem, keyIdx) == key {
+					elem.Set(converted)
+					return nil
+				}
+			}
+			// Key not found: append the new element.
+			parent.Set(reflect.Append(parent, converted))
+			return nil
+		}
 		idx := lastPart.Index
 		if !lastPart.IsIndex {
 			var err error
@@ -180,10 +222,18 @@ func (p DeepPath) Set(v reflect.Value, val reflect.Value) error {
 		if key == "" && lastPart.IsIndex {
 			key = strconv.Itoa(lastPart.Index)
 		}
-		f := parent.FieldByName(key)
-		if !f.IsValid() {
+		info := GetTypeInfo(parent.Type())
+		var fieldIdx = -1
+		for _, fInfo := range info.Fields {
+			if fInfo.Name == key || (fInfo.JSONTag != "" && fInfo.JSONTag == key) {
+				fieldIdx = fInfo.Index
+				break
+			}
+		}
+		if fieldIdx == -1 {
 			return fmt.Errorf("field %s not found", key)
 		}
+		f := parent.Field(fieldIdx)
 		if !f.CanSet() {
 			unsafe.DisableRO(&f)
 		}
@@ -220,6 +270,21 @@ func (p DeepPath) Delete(v reflect.Value) error {
 		parent.SetMapIndex(keyVal, reflect.Value{})
 		return nil
 	case reflect.Slice:
+		// For keyed slices, find by key and remove; for plain slices, use positional index.
+		if keyIdx, found := sliceKeyField(parent.Type()); found {
+			key := lastPart.Key
+			if key == "" && lastPart.IsIndex {
+				key = strconv.Itoa(lastPart.Index)
+			}
+			for i := 0; i < parent.Len(); i++ {
+				if keyFieldStr(parent.Index(i), keyIdx) == key {
+					newSlice := reflect.AppendSlice(parent.Slice(0, i), parent.Slice(i+1, parent.Len()))
+					parent.Set(newSlice)
+					return nil
+				}
+			}
+			return fmt.Errorf("element with key %s not found", key)
+		}
 		idx := lastPart.Index
 		if !lastPart.IsIndex {
 			var err error
@@ -239,10 +304,18 @@ func (p DeepPath) Delete(v reflect.Value) error {
 		if key == "" && lastPart.IsIndex {
 			key = strconv.Itoa(lastPart.Index)
 		}
-		f := parent.FieldByName(key)
-		if !f.IsValid() {
+		info := GetTypeInfo(parent.Type())
+		var fieldIdx = -1
+		for _, fInfo := range info.Fields {
+			if fInfo.Name == key || (fInfo.JSONTag != "" && fInfo.JSONTag == key) {
+				fieldIdx = fInfo.Index
+				break
+			}
+		}
+		if fieldIdx == -1 {
 			return fmt.Errorf("field %s not found", key)
 		}
+		f := parent.Field(fieldIdx)
 		if !f.CanSet() {
 			unsafe.DisableRO(&f)
 		}
@@ -328,51 +401,8 @@ type PathPart struct {
 	IsIndex bool
 }
 
-func (p PathPart) Equals(other PathPart) bool {
-	if p.IsIndex != other.IsIndex {
-		return false
-	}
-	if p.IsIndex {
-		return p.Index == other.Index
-	}
-	return p.Key == other.Key
-}
-
-func (p DeepPath) StripParts(prefix []PathPart) DeepPath {
-	parts := ParsePath(string(p))
-	if len(parts) < len(prefix) {
-		return p
-	}
-	for i := range prefix {
-		if !parts[i].Equals(prefix[i]) {
-			return p
-		}
-	}
-	remaining := parts[len(prefix):]
-	if len(remaining) == 0 {
-		return ""
-	}
-	var res strings.Builder
-	for _, part := range remaining {
-		res.WriteByte('/')
-		if part.IsIndex {
-			res.WriteString(strconv.Itoa(part.Index))
-		} else {
-			res.WriteString(EscapeKey(part.Key))
-		}
-	}
-	return DeepPath(res.String())
-}
-
-// ParsePath parses a JSON Pointer path.
-// It assumes the path starts with "/" or is empty.
+// ParsePath parses a JSON Pointer path (RFC 6901).
 func ParsePath(path string) []PathPart {
-	if path == "" {
-		return nil
-	}
-	if !strings.HasPrefix(path, "/") {
-		return ParseJSONPointer(path)
-	}
 	return ParseJSONPointer(path)
 }
 
@@ -380,7 +410,7 @@ func ParseJSONPointer(path string) []PathPart {
 	if path == "" || path == "/" {
 		return nil
 	}
-	
+
 	// Handle paths not starting with / (treat as relative/simple key)
 	var tokens []string
 	if strings.HasPrefix(path, "/") {
@@ -452,13 +482,35 @@ func JoinPath(parent, child string) string {
 	return res
 }
 
-func ToReflectValue(v any) reflect.Value {
-	if rv, ok := v.(reflect.Value); ok {
-		return rv
+// sliceKeyField returns the index of the deep:"key" field on the element type of
+// a slice type, together with a found flag. Returns -1, false for non-keyed slices.
+func sliceKeyField(sliceType reflect.Type) (int, bool) {
+	elemType := sliceType.Elem()
+	for elemType.Kind() == reflect.Pointer {
+		elemType = elemType.Elem()
 	}
-	rv := reflect.ValueOf(v)
-	for rv.Kind() == reflect.Pointer {
-		rv = rv.Elem()
+	return GetKeyField(elemType)
+}
+
+// keyFieldStr returns the string representation of the key field at fieldIdx in elem.
+func keyFieldStr(elem reflect.Value, fieldIdx int) string {
+	for elem.Kind() == reflect.Pointer {
+		if elem.IsNil() {
+			return ""
+		}
+		elem = elem.Elem()
 	}
-	return rv
+	f := elem.Field(fieldIdx)
+	return fmt.Sprintf("%v", f.Interface())
+}
+
+// findSliceElemByKey searches s for the element whose key field equals keyStr,
+// returning the element value and true on success.
+func findSliceElemByKey(s reflect.Value, keyIdx int, keyStr string) (reflect.Value, bool) {
+	for i := 0; i < s.Len(); i++ {
+		if keyFieldStr(s.Index(i), keyIdx) == keyStr {
+			return s.Index(i), true
+		}
+	}
+	return reflect.Value{}, false
 }

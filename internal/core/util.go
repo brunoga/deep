@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"reflect"
 
-	"github.com/brunoga/deep/v4/internal/unsafe"
+	"github.com/brunoga/deep/v5/internal/unsafe"
 )
 
 func ConvertValue(v reflect.Value, targetType reflect.Type) reflect.Value {
@@ -90,13 +90,6 @@ func ValueToInterface(v reflect.Value) any {
 		unsafe.DisableRO(&v)
 	}
 	return v.Interface()
-}
-
-func InterfaceToValue(i any) reflect.Value {
-	if i == nil {
-		return reflect.Value{}
-	}
-	return reflect.ValueOf(i)
 }
 
 func ExtractKey(v reflect.Value, fieldIdx int) any {

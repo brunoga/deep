@@ -1,3 +1,16 @@
+// Package hlc implements a Hybrid Logical Clock (HLC) for distributed
+// causality tracking.
+//
+// An [HLC] timestamp combines a physical wall-clock component with a logical
+// counter and a node identifier, providing a total ordering of events across
+// nodes that is consistent with real time. When two events share the same wall
+// time, the logical counter breaks ties; when both are equal, the node ID
+// provides a deterministic tiebreaker.
+//
+// Use [NewClock] to create a per-node clock, [Clock.Now] to generate a new
+// timestamp, and [Clock.Update] to advance the clock when receiving a remote
+// timestamp (ensuring the local clock is always at least as recent as any
+// observed remote event).
 package hlc
 
 import (

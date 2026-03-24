@@ -1,409 +1,307 @@
-package deep
+package deep_test
 
 import (
+	"bytes"
+	"encoding/gob"
 	"encoding/json"
-	"fmt"
-	"reflect"
 	"strings"
 	"testing"
 
-	"github.com/brunoga/deep/v4/cond"
+	"github.com/brunoga/deep/v5"
+	"github.com/brunoga/deep/v5/condition"
+	"github.com/brunoga/deep/v5/crdt"
+	"github.com/brunoga/deep/v5/crdt/hlc"
+	"github.com/brunoga/deep/v5/internal/testmodels"
 )
 
-func TestPatch_String_Basic(t *testing.T) {
-	a, b := "foo", "bar"
-	patch := MustDiff(a, b)
-	if !strings.Contains(patch.String(), "foo -> bar") {
-		t.Errorf("String() missing transition: %s", patch.String())
-	}
-}
+func TestGobSerialization(t *testing.T) {
+	gob.Register(deep.Patch[testmodels.User]{})
+	gob.Register(deep.Operation{})
+	gob.Register(testmodels.User{})
+	gob.Register([]testmodels.User{})
+	gob.Register(map[string]testmodels.User{})
 
-func TestPatch_String_Complex(t *testing.T) {
-	type Child struct {
-		Name string
-	}
-	type Data struct {
-		Tags   []string
-		Meta   map[string]any
-		Kids   []Child
-		Status *string
-	}
-	active := "active"
-	inactive := "inactive"
-	a := Data{
-		Tags: []string{"tag1", "tag2"},
-		Meta: map[string]any{
-			"key1": "val1",
-			"key2": 123,
-		},
-		Kids: []Child{
-			{Name: "Kid1"},
-		},
-		Status: &active,
-	}
-	b := Data{
-		Tags: []string{"tag1", "tag2", "tag3"},
-		Meta: map[string]any{
-			"key1": "val1-mod",
-			"key3": true,
-		},
-		Kids: []Child{
-			{Name: "Kid1"},
-			{Name: "Kid2"},
-		},
-		Status: &inactive,
-	}
-	patch := MustDiff(a, b)
-	if patch == nil {
-		t.Fatal("Expected non-nil patch")
-	}
-
-	summary := patch.String()
-	if !strings.Contains(summary, "+ [1]: {Kid2}") {
-		t.Errorf("String() missing added kid: %s", summary)
-	}
-}
-
-func TestPatch_ApplyResolved(t *testing.T) {
-	type Config struct {
-		Value int
-	}
-	c1 := Config{Value: 10}
-	c2 := Config{Value: 20}
-
-	patch := MustDiff(c1, c2)
-
-	target := Config{Value: 10}
-
-	// Resolver that rejects everything
-	err := patch.ApplyResolved(&target, ConflictResolverFunc(func(path string, op OpKind, key, prevKey any, current, proposed reflect.Value) (reflect.Value, bool) {
-		return reflect.Value{}, false
-	}))
+	u1 := testmodels.User{ID: 1, Name: "Alice"}
+	u2 := testmodels.User{ID: 2, Name: "Bob"}
+	patch, err := deep.Diff(u1, u2)
 	if err != nil {
-		t.Fatalf("ApplyResolved failed: %v", err)
+		t.Fatalf("Diff failed: %v", err)
 	}
 
-	if target.Value != 10 {
-		t.Errorf("Value should not have changed, got %d", target.Value)
+	var buf bytes.Buffer
+	enc := gob.NewEncoder(&buf)
+	if err := enc.Encode(patch); err != nil {
+		t.Fatalf("Gob Encode failed: %v", err)
 	}
 
-	// Resolver that accepts everything
-	err = patch.ApplyResolved(&target, ConflictResolverFunc(func(path string, op OpKind, key, prevKey any, current, proposed reflect.Value) (reflect.Value, bool) {
-		return proposed, true
-	}))
+	var patch2 deep.Patch[testmodels.User]
+	dec := gob.NewDecoder(&buf)
+	if err := dec.Decode(&patch2); err != nil {
+		t.Fatalf("Gob Decode failed: %v", err)
+	}
+
+	u3 := u1
+	deep.Apply(&u3, patch2)
+	if !deep.Equal(u2, u3) {
+		t.Errorf("Gob roundtrip failed: got %+v, want %+v", u3, u2)
+	}
+}
+
+func TestReverse(t *testing.T) {
+	u1 := testmodels.User{ID: 1, Name: "Alice"}
+	u2 := testmodels.User{ID: 2, Name: "Bob"}
+
+	// 1. Create patch u1 -> u2
+	patch, err := deep.Diff(u1, u2)
 	if err != nil {
-		t.Fatalf("ApplyResolved failed: %v", err)
+		t.Fatalf("Diff failed: %v", err)
 	}
 
-	if target.Value != 20 {
-		t.Errorf("Value should have changed to 20, got %d", target.Value)
+	// 2. Reverse patch
+	reverse := patch.Reverse()
+
+	// 3. Apply reverse to u2
+	u3 := u2
+	if err := deep.Apply(&u3, reverse); err != nil {
+		t.Fatalf("Reverse apply failed: %v", err)
 	}
-}
 
-type ConflictResolverFunc func(path string, op OpKind, key, prevKey any, current, proposed reflect.Value) (reflect.Value, bool)
-
-func (f ConflictResolverFunc) Resolve(path string, op OpKind, key, prevKey any, current, proposed reflect.Value) (reflect.Value, bool) {
-	return f(path, op, key, prevKey, current, proposed)
-}
-
-func TestPatch_ConditionsExhaustive(t *testing.T) {
-	type InnerC struct{ V int }
-	type DataC struct {
-		A   int
-		P   *InnerC
-		I   any
-		M   map[string]InnerC
-		S   []InnerC
-		Arr [1]InnerC
-	}
-	builder := NewPatchBuilder[DataC]()
-
-	c := cond.Eq[DataC]("A", 1)
-
-	builder.If(c).Unless(c).Test(DataC{A: 1})
-
-	builder.Field("P").If(c).Unless(c)
-	builder.Field("I").If(c).Unless(c)
-	builder.Field("M").If(c).Unless(c)
-	builder.Field("S").If(c).Unless(c)
-	builder.Field("Arr").If(c).Unless(c)
-
-	patch, _ := builder.Build()
-	if patch == nil {
-		t.Fatal("Build failed")
+	// 4. Verify we are back to u1
+	if !deep.Equal(u1, u3) {
+		t.Errorf("Reverse failed: got %+v, want %+v", u3, u1)
 	}
 }
 
-func TestPatch_MoreApplyChecked(t *testing.T) {
-	// ptrPatch
-	t.Run("ptrPatch", func(t *testing.T) {
-		val1 := 1
-		p1 := &val1
-		val2 := 2
-		p2 := &val2
-		patch := MustDiff(p1, p2)
-		if err := patch.ApplyChecked(&p1); err != nil {
-			t.Errorf("ptrPatch ApplyChecked failed: %v", err)
+func TestPatchToJSONPatch(t *testing.T) {
+
+	p := deep.Patch[testmodels.User]{}
+	p.Operations = []deep.Operation{
+		{Kind: deep.OpReplace, Path: "/full_name", Old: "Alice", New: "Bob"},
+	}
+	p = p.WithGuard(deep.Eq(deep.Field(func(u *testmodels.User) *int { return &u.ID }), 1))
+
+	data, err := p.ToJSONPatch()
+	if err != nil {
+		t.Fatalf("ToJSONPatch failed: %v", err)
+	}
+
+	var raw []map[string]any
+	json.Unmarshal(data, &raw)
+
+	if len(raw) != 2 {
+		t.Fatalf("expected 2 ops (global condition + replace), got %d", len(raw))
+	}
+
+	if raw[0]["op"] != "test" {
+		t.Errorf("expected first op to be test (global condition), got %v", raw[0]["op"])
+	}
+}
+
+func TestPatchUtilities(t *testing.T) {
+	p := deep.Patch[testmodels.User]{}
+	p.Operations = []deep.Operation{
+		{Kind: deep.OpAdd, Path: "/a", New: 1},
+		{Kind: deep.OpRemove, Path: "/b", Old: 2},
+		{Kind: deep.OpReplace, Path: "/c", Old: 3, New: 4},
+		{Kind: deep.OpMove, Path: "/d", Old: "/e"},
+		{Kind: deep.OpCopy, Path: "/f", Old: "/g"},
+		{Kind: deep.OpLog, Path: "/h", New: "msg"},
+	}
+
+	// String()
+	s := p.String()
+	expected := []string{"Add /a", "Remove /b", "Replace /c", "Move /e to /d", "Copy /g to /f", "Log /h"}
+	for _, exp := range expected {
+		if !strings.Contains(s, exp) {
+			t.Errorf("String() missing %s: %s", exp, s)
 		}
-	})
-	// interfacePatch
-	t.Run("interfacePatch", func(t *testing.T) {
-		var i1 any = 1
-		var i2 any = 2
-		patch := MustDiff(i1, i2)
-		if err := patch.ApplyChecked(&i1); err != nil {
-			t.Errorf("interfacePatch ApplyChecked failed: %v", err)
+	}
+
+	// AsStrict
+	p2 := p.AsStrict()
+	if !p2.Strict {
+		t.Error("AsStrict failed to set global Strict")
+	}
+	// Operation.Strict is stamped from Patch.Strict at apply time, not at build time.
+	// Verify ops in the built patch do not carry the flag (it's runtime-only).
+	for _, op := range p2.Operations {
+		if op.Strict {
+			t.Error("AsStrict should not pre-stamp Strict onto operations before Apply")
 		}
-	})
-}
-
-func TestPatch_ToJSONPatch_Exhaustive(t *testing.T) {
-	type Inner struct{ V int }
-	type Data struct {
-		P *Inner
-		I any
-		A []Inner
-		M map[string]Inner
-	}
-
-	builder := NewPatchBuilder[Data]()
-
-	builder.Field("P").Elem().Field("V").Set(1, 2)
-	builder.Field("I").Elem().Set(1, 2)
-	builder.Field("A").Index(0).Field("V").Set(1, 2)
-	builder.Field("M").MapKey("k").Field("V").Set(1, 2)
-
-	patch, _ := builder.Build()
-	patch.ToJSONPatch()
-}
-
-func TestPatch_LogExhaustive(t *testing.T) {
-	lp := &logPatch{message: "test"}
-
-	lp.apply(reflect.Value{}, reflect.ValueOf(1), "/path")
-
-	if err := lp.applyChecked(reflect.ValueOf(1), reflect.ValueOf(1), false, "/path"); err != nil {
-		t.Errorf("logPatch applyChecked failed: %v", err)
-	}
-
-	if lp.reverse() != lp {
-		t.Error("logPatch reverse should return itself")
-	}
-
-	if lp.format(0) == "" {
-		t.Error("logPatch format returned empty string")
-	}
-
-	ops := lp.toJSONPatch("/path")
-	if len(ops) != 1 || ops[0]["op"] != "log" {
-		t.Errorf("Unexpected toJSONPatch output: %+v", ops)
 	}
 }
 
-func TestPatch_Walk_Basic(t *testing.T) {
-	a := 10
-	b := 20
-	patch := MustDiff(a, b)
+func TestConditionToPredicate(t *testing.T) {
+	tests := []struct {
+		c    *condition.Condition
+		want string
+	}{
+		{c: &condition.Condition{Op: "!=", Path: "/a", Value: 1}, want: `"op":"not"`},
+		{c: &condition.Condition{Op: ">", Path: "/a", Value: 1}, want: `"op":"more"`},
+		{c: &condition.Condition{Op: "<", Path: "/a", Value: 1}, want: `"op":"less"`},
+		{c: &condition.Condition{Op: "exists", Path: "/a"}, want: `"op":"defined"`},
+		{c: &condition.Condition{Op: "matches", Path: "/a", Value: ".*"}, want: `"op":"matches"`},
+		{c: &condition.Condition{Op: "type", Path: "/a", Value: "string"}, want: `"op":"type"`},
+		{c: deep.Or(deep.Eq(deep.Field(func(u *testmodels.User) *int { return &u.ID }), 1)), want: `"op":"or"`},
+	}
 
-	var ops []string
-	err := patch.Walk(func(path string, op OpKind, old, new any) error {
-		ops = append(ops, fmt.Sprintf("%s:%s:%v:%v", path, op, old, new))
-		return nil
-	})
+	for _, tt := range tests {
+		got, err := deep.Patch[testmodels.User]{}.WithGuard(tt.c).ToJSONPatch()
+		if err != nil {
+			t.Fatalf("ToJSONPatch failed: %v", err)
+		}
+		if !strings.Contains(string(got), tt.want) {
+			t.Errorf("toPredicate(%s) = %s, want %s", tt.c.Op, string(got), tt.want)
+		}
+	}
+}
 
+func TestPatchReverseExhaustive(t *testing.T) {
+	p := deep.Patch[testmodels.User]{}
+	p.Operations = []deep.Operation{
+		{Kind: deep.OpAdd, Path: "/a", New: 1},
+		{Kind: deep.OpRemove, Path: "/b", Old: 2},
+		{Kind: deep.OpReplace, Path: "/c", Old: 3, New: 4},
+		{Kind: deep.OpMove, Path: "/d", Old: "/e"},
+		{Kind: deep.OpCopy, Path: "/f", Old: "/g"},
+		{Kind: deep.OpLog, Path: "/h", New: "msg"},
+	}
+
+	rev := p.Reverse()
+	if len(rev.Operations) != 6 {
+		t.Errorf("expected 6 reversed ops, got %d", len(rev.Operations))
+	}
+}
+
+func TestPatchMergeCustom(t *testing.T) {
+	p1 := deep.Patch[testmodels.User]{}
+	p1.Operations = []deep.Operation{{Path: "/a", New: 1}}
+	p2 := deep.Patch[testmodels.User]{}
+	p2.Operations = []deep.Operation{{Path: "/a", New: 2}}
+
+	res := deep.Merge(p1, p2, &localResolver{})
+	if res.Operations[0].New != 2 {
+		t.Error("Merge custom resolution failed")
+	}
+}
+
+type localResolver struct{}
+
+func (r *localResolver) Resolve(path string, local, remote any) any { return remote }
+
+func TestPatchIsEmpty(t *testing.T) {
+	p := deep.Patch[testmodels.User]{}
+	if !p.IsEmpty() {
+		t.Error("new patch should be empty")
+	}
+	p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpAdd, Path: "/name", New: "x"})
+	if p.IsEmpty() {
+		t.Error("patch with operations should not be empty")
+	}
+}
+
+func TestParseJSONPatchRoundTrip(t *testing.T) {
+	type Doc struct {
+		Name  string `json:"name"`
+		Alias string `json:"alias"`
+		Age   int    `json:"age"`
+	}
+
+	// Build a patch with all supported op types and conditions.
+	namePath := deep.Field[Doc, string](func(d *Doc) *string { return &d.Name })
+	aliasPath := deep.Field[Doc, string](func(d *Doc) *string { return &d.Alias })
+	agePath := deep.Field[Doc, int](func(d *Doc) *int { return &d.Age })
+
+	original := deep.Edit(&Doc{}).
+		With(
+			deep.Set(namePath, "Alice"),
+			deep.Add(agePath, 30),
+			deep.Remove(namePath),
+			deep.Move(namePath, aliasPath),
+			deep.Copy(namePath, aliasPath).If(deep.Eq(namePath, "Alice")),
+		).
+		Log("done").
+		Guard(deep.Gt(agePath, 18)).
+		Build()
+
+	data, err := original.ToJSONPatch()
 	if err != nil {
-		t.Fatalf("Walk failed: %v", err)
+		t.Fatalf("ToJSONPatch: %v", err)
 	}
 
-	expected := []string{"/:replace:10:20"}
-	if fmt.Sprintf("%v", ops) != fmt.Sprintf("%v", expected) {
-		t.Errorf("Expected ops %v, got %v", expected, ops)
+	rt, err := deep.ParseJSONPatch[Doc](data)
+	if err != nil {
+		t.Fatalf("ParseJSONPatch: %v", err)
+	}
+
+	if len(rt.Operations) != len(original.Operations) {
+		t.Errorf("op count: got %d, want %d", len(rt.Operations), len(original.Operations))
+	}
+	if rt.Guard == nil {
+		t.Error("global condition not round-tripped")
+	}
+	if rt.Guard != nil && rt.Guard.Op != ">" {
+		t.Errorf("global condition op: got %q, want \">\"", rt.Guard.Op)
 	}
 }
 
-func TestPatch_Walk_Struct(t *testing.T) {
+func TestGeLeConditions(t *testing.T) {
+	type S struct{ X int }
+	xPath := deep.Field[S, int](func(s *S) *int { return &s.X })
+
+	s := S{X: 5}
+	if err := deep.Apply(&s, deep.Edit(&s).With(deep.Set(xPath, 10).Unless(deep.Ge(xPath, 5))).Build()); err != nil {
+		t.Fatal(err)
+	}
+	// Ge(X, 5) is true when X==5, so Unless fires and op is skipped → X stays 5.
+	if s.X != 5 {
+		t.Errorf("Ge condition: got %d, want 5", s.X)
+	}
+
+	if err := deep.Apply(&s, deep.Edit(&s).With(deep.Set(xPath, 10).Unless(deep.Le(xPath, 4))).Build()); err != nil {
+		t.Fatal(err)
+	}
+	// Le(X, 4) is false when X==5, so Unless does not fire → X becomes 10.
+	if s.X != 10 {
+		t.Errorf("Le condition: got %d, want 10", s.X)
+	}
+}
+
+func TestBuilderMoveCopy(t *testing.T) {
 	type S struct {
-		A int
-		B string
+		A string `json:"a"`
+		B string `json:"b"`
 	}
-	a := S{A: 1, B: "one"}
-	b := S{A: 2, B: "two"}
-	patch := MustDiff(a, b)
+	aPath := deep.Field[S, string](func(s *S) *string { return &s.A })
+	bPath := deep.Field[S, string](func(s *S) *string { return &s.B })
 
-	ops := make(map[string]string)
-	err := patch.Walk(func(path string, op OpKind, old, new any) error {
-		ops[path] = fmt.Sprintf("%s:%v:%v", op, old, new)
-		return nil
-	})
-
-	if err != nil {
-		t.Fatalf("Walk failed: %v", err)
+	p := deep.Edit(&S{}).With(deep.Move(aPath, bPath)).Build()
+	if len(p.Operations) != 1 || p.Operations[0].Kind != deep.OpMove {
+		t.Error("Move not added correctly")
+	}
+	if p.Operations[0].Old != aPath.String() || p.Operations[0].Path != bPath.String() {
+		t.Errorf("Move paths wrong: from=%v to=%v", p.Operations[0].Old, p.Operations[0].Path)
 	}
 
-	if len(ops) != 2 {
-		t.Errorf("Expected 2 ops, got %d", len(ops))
-	}
-
-	if ops["/A"] != "replace:1:2" {
-		t.Errorf("Unexpected op for A: %s", ops["/A"])
-	}
-	if ops["/B"] != "replace:one:two" {
-		t.Errorf("Unexpected op for B: %s", ops["/B"])
+	p2 := deep.Edit(&S{}).With(deep.Copy(aPath, bPath)).Build()
+	if len(p2.Operations) != 1 || p2.Operations[0].Kind != deep.OpCopy {
+		t.Error("Copy not added correctly")
 	}
 }
 
-func TestPatch_Walk_Slice(t *testing.T) {
-	a := []int{1, 2, 3}
-	b := []int{1, 4, 3, 5}
-	patch := MustDiff(a, b)
+func TestLWWSet(t *testing.T) {
+	clock := hlc.NewClock("test")
+	ts1 := clock.Now()
+	ts2 := clock.Now()
 
-	var ops []string
-	err := patch.Walk(func(path string, op OpKind, old, new any) error {
-		ops = append(ops, fmt.Sprintf("%s:%s:%v:%v", path, op, old, new))
-		return nil
-	})
-
-	if err != nil {
-		t.Fatalf("Walk failed: %v", err)
+	var reg crdt.LWW[string]
+	if reg.Set("first", ts1); reg.Value != "first" {
+		t.Error("LWW.Set should accept first value")
 	}
-
-	found4 := false
-	found5 := false
-	for _, op := range ops {
-		if strings.Contains(op, ":2:4") || (strings.Contains(op, ":remove:2:<nil>") || strings.Contains(op, ":add:<nil>:4")) {
-			if strings.Contains(op, "4") {
-				found4 = true
-			}
-		}
-		if strings.Contains(op, ":add:<nil>:5") {
-			found5 = true
-		}
+	if reg.Set("second", ts2); reg.Value != "second" {
+		t.Error("LWW.Set should accept newer timestamp")
 	}
-
-	if !found4 || !found5 {
-		t.Errorf("Missing expected ops in %v", ops)
-	}
-}
-
-func TestPatch_Walk_Map(t *testing.T) {
-	a := map[string]int{"one": 1, "two": 2}
-	b := map[string]int{"one": 1, "two": 20, "three": 3}
-	patch := MustDiff(a, b)
-
-	ops := make(map[string]string)
-	err := patch.Walk(func(path string, op OpKind, old, new any) error {
-		ops[path] = fmt.Sprintf("%s:%v:%v", op, old, new)
-		return nil
-	})
-
-	if err != nil {
-		t.Fatalf("Walk failed: %v", err)
-	}
-
-	if ops["/two"] != "replace:2:20" {
-		t.Errorf("Unexpected op for two: %s", ops["/two"])
-	}
-	if ops["/three"] != "add:<nil>:3" {
-		t.Errorf("Unexpected op for three: %s", ops["/three"])
-	}
-}
-
-func TestPatch_Walk_KeyedSlice(t *testing.T) {
-	type KeyedTask struct {
-		ID     string `deep:"key"`
-		Status string
-	}
-	a := []KeyedTask{
-		{ID: "t1", Status: "todo"},
-		{ID: "t2", Status: "todo"},
-	}
-	b := []KeyedTask{
-		{ID: "t2", Status: "done"},
-		{ID: "t1", Status: "todo"},
-	}
-
-	patch := MustDiff(a, b)
-
-	ops := make(map[string]string)
-	err := patch.Walk(func(path string, op OpKind, old, new any) error {
-		ops[path] = fmt.Sprintf("%s:%v:%v", op, old, new)
-		return nil
-	})
-
-	if err != nil {
-		t.Fatalf("Walk failed: %v", err)
-	}
-
-	if len(ops) == 0 {
-		t.Errorf("Expected some ops, got none")
-	}
-}
-
-func TestPatch_Walk_ErrorStop(t *testing.T) {
-	a := map[string]int{"one": 1, "two": 2}
-	b := map[string]int{"one": 10, "two": 20}
-	patch := MustDiff(a, b)
-
-	count := 0
-	err := patch.Walk(func(path string, op OpKind, old, new any) error {
-		count++
-		return fmt.Errorf("stop")
-	})
-
-	if err == nil || err.Error() != "stop" {
-		t.Errorf("Expected 'stop' error, got %v", err)
-	}
-	if count != 1 {
-		t.Errorf("Expected walk to stop after 1 call, got %d", count)
-	}
-}
-
-type customTestStruct struct {
-	V int
-}
-
-func TestCustomDiffPatch_ToJSONPatch(t *testing.T) {
-	builder := NewPatchBuilder[customTestStruct]()
-	builder.Field("V").Set(1, 2)
-	patch, _ := builder.Build()
-
-	// Manually wrap it in customDiffPatch
-	custom := &customDiffPatch{
-		patch: patch,
-	}
-
-	jsonBytes := custom.toJSONPatch("") // Use empty prefix for root
-
-	var ops []map[string]any
-	data, _ := json.Marshal(jsonBytes)
-	json.Unmarshal(data, &ops)
-
-	if len(ops) != 1 {
-		t.Fatalf("expected 1 op, got %d", len(ops))
-	}
-
-	if ops[0]["path"] != "/V" {
-		t.Errorf("expected path /V, got %s", ops[0]["path"])
-	}
-}
-
-func TestPatch_Summary(t *testing.T) {
-	type Config struct {
-		Name    string
-		Value   int
-		Options []string
-	}
-
-	c1 := Config{Name: "v1", Value: 10, Options: []string{"a", "b"}}
-	c2 := Config{Name: "v2", Value: 20, Options: []string{"a", "c"}}
-
-	patch := MustDiff(c1, c2)
-	if patch == nil {
-		t.Fatal("Expected patch")
-	}
-
-	summary := patch.Summary()
-	if summary == "" || summary == "No changes." {
-		t.Errorf("Unexpected summary: %q", summary)
+	if accepted := reg.Set("old", ts1); accepted || reg.Value != "second" {
+		t.Error("LWW.Set should reject older timestamp")
 	}
 }

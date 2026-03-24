@@ -3,93 +3,50 @@ package main
 import (
 	"fmt"
 
-	"github.com/brunoga/deep/v4/crdt"
+	"github.com/brunoga/deep/v5/crdt"
+	"github.com/brunoga/deep/v5/crdt/hlc"
 )
 
-// Document represents a text document using the specialized CRDT Text type.
-type Document struct {
-	Content crdt.Text
-}
-
 func main() {
-	// Initialize two documents.
-	docA := crdt.NewCRDT(Document{Content: crdt.Text{}}, "A")
-	docB := crdt.NewCRDT(Document{Content: crdt.Text{}}, "B")
+	clockA := hlc.NewClock("node-a")
+	clockB := hlc.NewClock("node-b")
 
-	fmt.Println("--- Initial State: Empty ---")
+	// Two nodes start with the same empty document.
+	docA := crdt.Text{}
+	docB := crdt.Text{}
 
-	// User A types "Hello"
-	fmt.Println("\n--- A types 'Hello' ---")
-	deltaA1 := docA.Edit(func(d *Document) {
-		// Insert "Hello" at position 0
-		d.Content = d.Content.Insert(0, "Hello", docA.Clock())
-	})
-	fmt.Printf("Doc A: %s\n", docA.View().Content)
+	// --- Step 1: Node A inserts "Hello" ---
+	docA = docA.Insert(0, "Hello", clockA)
 
-	// B receives "Hello"
-	docB.ApplyDelta(deltaA1)
-	fmt.Printf("Doc B: %s\n", docB.View().Content)
+	// Propagate A's full state to B via MergeTextRuns.
+	docB = crdt.MergeTextRuns(docB, docA)
 
-	// Concurrent Editing!
-	fmt.Println("\n--- Concurrent Edits ---")
-	fmt.Println("A appends ' World'")
-	fmt.Println("B inserts '!' at index 5")
+	fmt.Println("After A types 'Hello':")
+	fmt.Printf("  Doc A: %q\n", docA.String())
+	fmt.Printf("  Doc B: %q\n", docB.String())
 
-	// A appends " World" at index 5 (after "Hello")
-	deltaA2 := docA.Edit(func(d *Document) {
-		d.Content = d.Content.Insert(5, " World", docA.Clock())
-	})
+	// --- Step 2: Concurrent edits (network partition) ---
+	// A appends " World"
+	docA = docA.Insert(5, " World", clockA)
 
-	// B inserts "!" at index 5 (after "Hello")
-	deltaB1 := docB.Edit(func(d *Document) {
-		d.Content = d.Content.Insert(5, "!", docB.Clock())
-	})
+	// B inserts "!" at position 5 (after "Hello")
+	docB = docB.Insert(5, "!", clockB)
 
-	fmt.Printf("Doc A (local): %s\n", docA.View().Content)
-	fmt.Printf("Doc B (local): %s\n", docB.View().Content)
+	fmt.Println("\nAfter concurrent edits (partition):")
+	fmt.Printf("  Doc A: %q\n", docA.String())
+	fmt.Printf("  Doc B: %q\n", docB.String())
 
-	// Sync
-	fmt.Println("\n--- Syncing ---")
+	// --- Step 3: Merge (partition heals) ---
+	mergedA := crdt.MergeTextRuns(docA, docB)
+	mergedB := crdt.MergeTextRuns(docB, docA)
 
-	// A receives B's insertion
-	docA.ApplyDelta(deltaB1)
-	fmt.Printf("Doc A (after B): %s\n", docA.View().Content)
+	fmt.Println("\nAfter merge:")
+	fmt.Printf("  Doc A: %q\n", mergedA.String())
+	fmt.Printf("  Doc B: %q\n", mergedB.String())
 
-	// B receives A's appending
-	docB.ApplyDelta(deltaA2)
-	fmt.Printf("Doc B (after A): %s\n", docB.View().Content)
-
-	if docA.View().Content.String() == docB.View().Content.String() {
-		fmt.Println("SUCCESS: Documents converged!")
+	if mergedA.String() == mergedB.String() {
+		fmt.Println("\nSUCCESS: both nodes converged.")
 	} else {
-		fmt.Println("FAILURE: Divergence!")
-	}
-
-	// More complex: Interleaved insertion at the same position
-	fmt.Println("\n--- Concurrent Insertion at Same Position ---")
-
-	// Both insert at the end
-	pos := len(docA.View().Content.String())
-
-	// A inserts "X"
-	deltaA3 := docA.Edit(func(d *Document) {
-		d.Content = d.Content.Insert(pos, "X", docA.Clock())
-	})
-
-	// B inserts "Y"
-	deltaB2 := docB.Edit(func(d *Document) {
-		d.Content = d.Content.Insert(pos, "Y", docB.Clock())
-	})
-
-	docA.ApplyDelta(deltaB2)
-	docB.ApplyDelta(deltaA3)
-
-	fmt.Printf("Doc A: %s\n", docA.View().Content)
-	fmt.Printf("Doc B: %s\n", docB.View().Content)
-
-	if docA.View().Content.String() == docB.View().Content.String() {
-		fmt.Println("SUCCESS: Converged (deterministic order)! ")
-	} else {
-		fmt.Println("FAILURE: Divergence!")
+		fmt.Println("\nFAILURE: nodes diverged!")
 	}
 }

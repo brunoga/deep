@@ -3,55 +3,46 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 
-	"github.com/brunoga/deep/v4"
+	"github.com/brunoga/deep/v5"
 )
 
-// UIState represents something typically shared between a Go backend and a JS frontend.
 type UIState struct {
-	Theme       string `json:"theme"`
-	SidebarOpen bool   `json:"sidebarOpen"`
-	UserCount   int    `json:"userCount"`
+	Theme string `json:"theme"`
+	Open  bool   `json:"sidebar_open"`
 }
 
 func main() {
-	// 1. Backend has the current state.
-	stateA := UIState{
-		Theme:       "dark",
-		SidebarOpen: true,
-		UserCount:   10,
-	}
+	s1 := UIState{Theme: "dark", Open: false}
+	s2 := UIState{Theme: "light", Open: true}
 
-	// 2. State changes after some events.
-	stateB := UIState{
-		Theme:       "light", // Theme changed
-		SidebarOpen: true,
-		UserCount:   11, // One user joined
-	}
-
-	// 3. Backend calculates the diff.
-	patch := deep.MustDiff(stateA, stateB)
-
-	// 4. Backend wants to send this patch to a JavaScript frontend.
-	// We use ToJSONPatch() which generates an RFC 6902 compliant list of ops.
-	jsonPatchBytes, err := patch.ToJSONPatch()
+	patch, err := deep.Diff(s1, s2)
 	if err != nil {
-		fmt.Printf("Error: %v\n", err)
-		return
+		log.Fatal(err)
 	}
 
-	// Print the JSON that would be sent over the wire.
-	fmt.Println("RFC 6902 JSON PATCH (sent to frontend):")
-	fmt.Println(string(jsonPatchBytes))
+	// Native v5 JSON: compact wire format.
+	data, _ := json.MarshalIndent(patch, "", "  ")
+	fmt.Println("--- NATIVE V5 JSON ---")
+	fmt.Println(string(data))
 
-	// 5. Demonstrate normal JSON serialization of the Patch object itself.
-	// This is useful if you want to save the patch in a database (like MongoDB)
-	// and restore it later in another Go service.
-	serializedPatch, err := json.MarshalIndent(patch, "", "  ")
+	// RFC 6902 JSON Patch: human-readable, interoperable with other tools.
+	rfc, err := patch.ToJSONPatch()
 	if err != nil {
-		fmt.Printf("Marshal failed: %v\n", err)
-		return
+		log.Fatal(err)
 	}
-	fmt.Println("\nINTERNAL DEEP JSON REPRESENTATION (for persistence):")
-	fmt.Println(string(serializedPatch))
+	fmt.Println("--- RFC 6902 JSON PATCH ---")
+	fmt.Println(string(rfc))
+
+	// Round-trip: unmarshal the native format and reapply.
+	var p2 deep.Patch[UIState]
+	if err := json.Unmarshal(data, &p2); err != nil {
+		log.Fatal(err)
+	}
+	s3 := s1
+	deep.Apply(&s3, p2)
+
+	fmt.Println("--- ROUND-TRIP RESULT ---")
+	fmt.Printf("Theme: %s, Open: %v\n", s3.Theme, s3.Open)
 }

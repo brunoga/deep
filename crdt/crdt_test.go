@@ -4,8 +4,6 @@ import (
 	"reflect"
 	"testing"
 	"time"
-
-	"github.com/brunoga/deep/v4"
 )
 
 type TestUser struct {
@@ -37,29 +35,19 @@ func TestCRDT_EditDelta(t *testing.T) {
 	}
 }
 
-func TestCRDT_CreateDelta(t *testing.T) {
+func TestCRDT_EditApplied(t *testing.T) {
 	node := NewCRDT(TestUser{ID: 1, Name: "Old"}, "node1")
 
-	// Manually create a patch using deep.Diff
-	patch := deep.MustDiff(node.View(), TestUser{ID: 1, Name: "New"})
-
-	// Use the new helper to wrap it into a Delta and update local state
-	delta := node.CreateDelta(patch)
+	delta := node.Edit(func(u *TestUser) { u.Name = "New" })
 
 	if node.View().Name != "New" {
 		t.Errorf("expected New, got %s", node.View().Name)
 	}
 
-	if delta.Timestamp.Logical != 0 {
-		t.Errorf("expected logical clock 0, got %d", delta.Timestamp.Logical)
-	}
-
-	// We cannot access internal clocks/tombstones directly anymore.
-	// But we can check if the Delta has the correct metadata updates implicitly via ApplyDelta to another node.
 	node2 := NewCRDT(TestUser{ID: 1, Name: "Old"}, "node2")
 	node2.ApplyDelta(delta)
 	if node2.View().Name != "New" {
-		t.Error("CreateDelta produced invalid delta")
+		t.Error("delta from Edit did not propagate correctly")
 	}
 }
 
@@ -133,7 +121,7 @@ func TestCRDT_JSON(t *testing.T) {
 	if newNode.View().Name != "Modified" {
 		t.Errorf("expected Name Modified, got %s", newNode.View().Name)
 	}
-	
+
 	// Ensure clocks are restored by doing a merge
 	// If clocks are missing, merge might fail to converge correctly or assume old data
 	node2 := NewCRDT(TestUser{ID: 1, Name: "Initial"}, "node2")
