@@ -10,6 +10,7 @@ import (
 	"go/token"
 	"log"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"text/template"
@@ -800,7 +801,7 @@ func main() {
 	outFile := *outputFile
 	if outFile == "" {
 		firstName := strings.ToLower(strings.SplitN(*typeNames, ",", 2)[0])
-		outFile = dir + "/" + firstName + "_deep.go"
+		outFile = filepath.Join(dir, firstName+"_deep.go")
 	}
 	if err := os.WriteFile(outFile, src, 0644); err != nil {
 		log.Fatalf("writing output: %v", err)
