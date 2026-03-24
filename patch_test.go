@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/brunoga/deep/v5"
-	"github.com/brunoga/deep/v5/core"
+	"github.com/brunoga/deep/v5/condition"
 	"github.com/brunoga/deep/v5/crdt"
 	"github.com/brunoga/deep/v5/crdt/hlc"
 	"github.com/brunoga/deep/v5/internal/testmodels"
@@ -133,15 +133,15 @@ func TestPatchUtilities(t *testing.T) {
 
 func TestConditionToPredicate(t *testing.T) {
 	tests := []struct {
-		c    *core.Condition
+		c    *condition.Condition
 		want string
 	}{
-		{c: &core.Condition{Op: "!=", Path: "/a", Value: 1}, want: `"op":"not"`},
-		{c: &core.Condition{Op: ">", Path: "/a", Value: 1}, want: `"op":"more"`},
-		{c: &core.Condition{Op: "<", Path: "/a", Value: 1}, want: `"op":"less"`},
-		{c: &core.Condition{Op: "exists", Path: "/a"}, want: `"op":"defined"`},
-		{c: &core.Condition{Op: "matches", Path: "/a", Value: ".*"}, want: `"op":"matches"`},
-		{c: &core.Condition{Op: "type", Path: "/a", Value: "string"}, want: `"op":"type"`},
+		{c: &condition.Condition{Op: "!=", Path: "/a", Value: 1}, want: `"op":"not"`},
+		{c: &condition.Condition{Op: ">", Path: "/a", Value: 1}, want: `"op":"more"`},
+		{c: &condition.Condition{Op: "<", Path: "/a", Value: 1}, want: `"op":"less"`},
+		{c: &condition.Condition{Op: "exists", Path: "/a"}, want: `"op":"defined"`},
+		{c: &condition.Condition{Op: "matches", Path: "/a", Value: ".*"}, want: `"op":"matches"`},
+		{c: &condition.Condition{Op: "type", Path: "/a", Value: "string"}, want: `"op":"type"`},
 		{c: deep.Or(deep.Eq(deep.Field(func(u *testmodels.User) *int { return &u.ID }), 1)), want: `"op":"or"`},
 	}
 

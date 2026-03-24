@@ -4,7 +4,7 @@ package main
 import (
 	"fmt"
 	deep "github.com/brunoga/deep/v5"
-	core "github.com/brunoga/deep/v5/core"
+	"github.com/brunoga/deep/v5/condition"
 	_deepengine "github.com/brunoga/deep/v5/internal/engine"
 	"log/slog"
 	"regexp"
@@ -180,7 +180,7 @@ func (t *Employee) Diff(other *Employee) deep.Patch[Employee] {
 	return p
 }
 
-func (t *Employee) evaluateCondition(c core.Condition) (bool, error) {
+func (t *Employee) evaluateCondition(c condition.Condition) (bool, error) {
 	switch c.Op {
 	case "and":
 		for _, sub := range c.Sub {
@@ -215,7 +215,7 @@ func (t *Employee) evaluateCondition(c core.Condition) (bool, error) {
 			return true, nil
 		}
 		if c.Op == "type" {
-			return core.CheckType(t.ID, c.Value.(string)), nil
+			return condition.CheckType(t.ID, c.Value.(string)), nil
 		}
 		if c.Op == "matches" {
 			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.ID))
@@ -272,7 +272,7 @@ func (t *Employee) evaluateCondition(c core.Condition) (bool, error) {
 			return true, nil
 		}
 		if c.Op == "type" {
-			return core.CheckType(t.Name, c.Value.(string)), nil
+			return condition.CheckType(t.Name, c.Value.(string)), nil
 		}
 		if c.Op == "matches" {
 			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Name))
@@ -316,7 +316,7 @@ func (t *Employee) evaluateCondition(c core.Condition) (bool, error) {
 			return true, nil
 		}
 		if c.Op == "type" {
-			return core.CheckType(t.Role, c.Value.(string)), nil
+			return condition.CheckType(t.Role, c.Value.(string)), nil
 		}
 		if c.Op == "matches" {
 			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Role))
@@ -360,7 +360,7 @@ func (t *Employee) evaluateCondition(c core.Condition) (bool, error) {
 			return true, nil
 		}
 		if c.Op == "type" {
-			return core.CheckType(t.Rating, c.Value.(string)), nil
+			return condition.CheckType(t.Rating, c.Value.(string)), nil
 		}
 		if c.Op == "matches" {
 			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Rating))

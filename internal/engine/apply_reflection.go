@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"reflect"
 
-	"github.com/brunoga/deep/v5/core"
+	"github.com/brunoga/deep/v5/condition"
 	icore "github.com/brunoga/deep/v5/internal/core"
 )
 
@@ -33,13 +33,13 @@ func ApplyOpReflectionValue(v reflect.Value, op Operation, logger *slog.Logger) 
 
 	// Per-operation conditions.
 	if op.If != nil {
-		ok, err := core.EvaluateCondition(v, op.If)
+		ok, err := condition.EvaluateCondition(v, op.If)
 		if err != nil || !ok {
 			return nil
 		}
 	}
 	if op.Unless != nil {
-		ok, err := core.EvaluateCondition(v, op.Unless)
+		ok, err := condition.EvaluateCondition(v, op.Unless)
 		if err != nil || ok {
 			return nil
 		}

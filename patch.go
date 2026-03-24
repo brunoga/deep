@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/brunoga/deep/v5/core"
+	"github.com/brunoga/deep/v5/condition"
 	"github.com/brunoga/deep/v5/internal/engine"
 )
 
@@ -54,7 +54,7 @@ type Patch[T any] struct {
 
 	// Guard is a global Condition that must be satisfied before any operation
 	// in this patch is applied. Set via WithGuard or Builder.Guard.
-	Guard *core.Condition `json:"cond,omitempty"`
+	Guard *condition.Condition `json:"cond,omitempty"`
 
 	// Operations is a flat list of changes.
 	Operations []Operation `json:"ops"`
@@ -82,7 +82,7 @@ func (p Patch[T]) AsStrict() Patch[T] {
 }
 
 // WithGuard returns a new patch with the global guard condition set.
-func (p Patch[T]) WithGuard(c *core.Condition) Patch[T] {
+func (p Patch[T]) WithGuard(c *condition.Condition) Patch[T] {
 	p.Guard = c
 	return p
 }
@@ -210,7 +210,7 @@ func ParseJSONPatch[T any](data []byte) (Patch[T], error) {
 		// Global condition is encoded as a test op on "/" with an "if" predicate.
 		if opStr == "test" && path == "/" {
 			if ifPred, ok := m["if"].(map[string]any); ok {
-				res.Guard = core.FromPredicate(ifPred)
+				res.Guard = condition.FromPredicate(ifPred)
 			}
 			continue
 		}
@@ -219,10 +219,10 @@ func ParseJSONPatch[T any](data []byte) (Patch[T], error) {
 
 		// Per-op conditions
 		if ifPred, ok := m["if"].(map[string]any); ok {
-			op.If = core.FromPredicate(ifPred)
+			op.If = condition.FromPredicate(ifPred)
 		}
 		if unlessPred, ok := m["unless"].(map[string]any); ok {
-			op.Unless = core.FromPredicate(unlessPred)
+			op.Unless = condition.FromPredicate(unlessPred)
 		}
 
 		switch opStr {
@@ -267,13 +267,13 @@ type Op struct {
 }
 
 // If attaches a condition that must hold for this operation to be applied.
-func (o Op) If(c *core.Condition) Op {
+func (o Op) If(c *condition.Condition) Op {
 	o.op.If = c
 	return o
 }
 
 // Unless attaches a condition that must NOT hold for this operation to be applied.
-func (o Op) Unless(c *core.Condition) Op {
+func (o Op) Unless(c *condition.Condition) Op {
 	o.op.Unless = c
 	return o
 }
@@ -307,14 +307,14 @@ func Copy[T, V any](from, to Path[T, V]) Op {
 
 // Builder constructs a [Patch] via a fluent chain.
 type Builder[T any] struct {
-	global *core.Condition
+	global *condition.Condition
 	ops    []Operation
 }
 
 // Guard sets the global guard condition on the patch. If Guard has already been
 // called, the new condition is ANDed with the existing one rather than
 // replacing it — calling Guard twice is equivalent to Guard(And(c1, c2)).
-func (b *Builder[T]) Guard(c *core.Condition) *Builder[T] {
+func (b *Builder[T]) Guard(c *condition.Condition) *Builder[T] {
 	if b.global == nil {
 		b.global = c
 	} else {
@@ -353,66 +353,66 @@ func (b *Builder[T]) Build() Patch[T] {
 }
 
 // Eq creates an equality condition.
-func Eq[T, V any](p Path[T, V], val V) *core.Condition {
-	return &core.Condition{Path: p.String(), Op: core.CondEq, Value: val}
+func Eq[T, V any](p Path[T, V], val V) *condition.Condition {
+	return &condition.Condition{Path: p.String(), Op: condition.CondEq, Value: val}
 }
 
 // Ne creates a non-equality condition.
-func Ne[T, V any](p Path[T, V], val V) *core.Condition {
-	return &core.Condition{Path: p.String(), Op: core.CondNe, Value: val}
+func Ne[T, V any](p Path[T, V], val V) *condition.Condition {
+	return &condition.Condition{Path: p.String(), Op: condition.CondNe, Value: val}
 }
 
 // Gt creates a greater-than condition.
-func Gt[T, V any](p Path[T, V], val V) *core.Condition {
-	return &core.Condition{Path: p.String(), Op: core.CondGt, Value: val}
+func Gt[T, V any](p Path[T, V], val V) *condition.Condition {
+	return &condition.Condition{Path: p.String(), Op: condition.CondGt, Value: val}
 }
 
 // Ge creates a greater-than-or-equal condition.
-func Ge[T, V any](p Path[T, V], val V) *core.Condition {
-	return &core.Condition{Path: p.String(), Op: core.CondGe, Value: val}
+func Ge[T, V any](p Path[T, V], val V) *condition.Condition {
+	return &condition.Condition{Path: p.String(), Op: condition.CondGe, Value: val}
 }
 
 // Lt creates a less-than condition.
-func Lt[T, V any](p Path[T, V], val V) *core.Condition {
-	return &core.Condition{Path: p.String(), Op: core.CondLt, Value: val}
+func Lt[T, V any](p Path[T, V], val V) *condition.Condition {
+	return &condition.Condition{Path: p.String(), Op: condition.CondLt, Value: val}
 }
 
 // Le creates a less-than-or-equal condition.
-func Le[T, V any](p Path[T, V], val V) *core.Condition {
-	return &core.Condition{Path: p.String(), Op: core.CondLe, Value: val}
+func Le[T, V any](p Path[T, V], val V) *condition.Condition {
+	return &condition.Condition{Path: p.String(), Op: condition.CondLe, Value: val}
 }
 
 // Exists creates a condition that checks if a path exists.
-func Exists[T, V any](p Path[T, V]) *core.Condition {
-	return &core.Condition{Path: p.String(), Op: core.CondExists}
+func Exists[T, V any](p Path[T, V]) *condition.Condition {
+	return &condition.Condition{Path: p.String(), Op: condition.CondExists}
 }
 
 // In creates a condition that checks if a value is in a list.
-func In[T, V any](p Path[T, V], vals []V) *core.Condition {
-	return &core.Condition{Path: p.String(), Op: core.CondIn, Value: vals}
+func In[T, V any](p Path[T, V], vals []V) *condition.Condition {
+	return &condition.Condition{Path: p.String(), Op: condition.CondIn, Value: vals}
 }
 
 // Matches creates a regex condition.
-func Matches[T, V any](p Path[T, V], regex string) *core.Condition {
-	return &core.Condition{Path: p.String(), Op: core.CondMatches, Value: regex}
+func Matches[T, V any](p Path[T, V], regex string) *condition.Condition {
+	return &condition.Condition{Path: p.String(), Op: condition.CondMatches, Value: regex}
 }
 
 // Type creates a type-check condition.
-func Type[T, V any](p Path[T, V], typeName string) *core.Condition {
-	return &core.Condition{Path: p.String(), Op: core.CondType, Value: typeName}
+func Type[T, V any](p Path[T, V], typeName string) *condition.Condition {
+	return &condition.Condition{Path: p.String(), Op: condition.CondType, Value: typeName}
 }
 
 // And combines multiple conditions with logical AND.
-func And(conds ...*core.Condition) *core.Condition {
-	return &core.Condition{Op: core.CondAnd, Sub: conds}
+func And(conds ...*condition.Condition) *condition.Condition {
+	return &condition.Condition{Op: condition.CondAnd, Sub: conds}
 }
 
 // Or combines multiple conditions with logical OR.
-func Or(conds ...*core.Condition) *core.Condition {
-	return &core.Condition{Op: core.CondOr, Sub: conds}
+func Or(conds ...*condition.Condition) *condition.Condition {
+	return &condition.Condition{Op: condition.CondOr, Sub: conds}
 }
 
 // Not inverts a condition.
-func Not(c *core.Condition) *core.Condition {
-	return &core.Condition{Op: core.CondNot, Sub: []*core.Condition{c}}
+func Not(c *condition.Condition) *condition.Condition {
+	return &condition.Condition{Op: condition.CondNot, Sub: []*condition.Condition{c}}
 }

@@ -4,7 +4,7 @@ package main
 import (
 	"fmt"
 	deep "github.com/brunoga/deep/v5"
-	core "github.com/brunoga/deep/v5/core"
+	"github.com/brunoga/deep/v5/condition"
 	_deepengine "github.com/brunoga/deep/v5/internal/engine"
 	"log/slog"
 	"regexp"
@@ -150,7 +150,7 @@ func (t *Resource) Diff(other *Resource) deep.Patch[Resource] {
 	return p
 }
 
-func (t *Resource) evaluateCondition(c core.Condition) (bool, error) {
+func (t *Resource) evaluateCondition(c condition.Condition) (bool, error) {
 	switch c.Op {
 	case "and":
 		for _, sub := range c.Sub {
@@ -185,7 +185,7 @@ func (t *Resource) evaluateCondition(c core.Condition) (bool, error) {
 			return true, nil
 		}
 		if c.Op == "type" {
-			return core.CheckType(t.ID, c.Value.(string)), nil
+			return condition.CheckType(t.ID, c.Value.(string)), nil
 		}
 		if c.Op == "matches" {
 			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.ID))
@@ -229,7 +229,7 @@ func (t *Resource) evaluateCondition(c core.Condition) (bool, error) {
 			return true, nil
 		}
 		if c.Op == "type" {
-			return core.CheckType(t.Data, c.Value.(string)), nil
+			return condition.CheckType(t.Data, c.Value.(string)), nil
 		}
 		if c.Op == "matches" {
 			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Data))
@@ -273,7 +273,7 @@ func (t *Resource) evaluateCondition(c core.Condition) (bool, error) {
 			return true, nil
 		}
 		if c.Op == "type" {
-			return core.CheckType(t.Value, c.Value.(string)), nil
+			return condition.CheckType(t.Value, c.Value.(string)), nil
 		}
 		if c.Op == "matches" {
 			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Value))

@@ -4,7 +4,7 @@ package main
 import (
 	"fmt"
 	deep "github.com/brunoga/deep/v5"
-	core "github.com/brunoga/deep/v5/core"
+	"github.com/brunoga/deep/v5/condition"
 	_deepengine "github.com/brunoga/deep/v5/internal/engine"
 	"log/slog"
 )
@@ -121,7 +121,7 @@ func (t *Fleet) Diff(other *Fleet) deep.Patch[Fleet] {
 	return p
 }
 
-func (t *Fleet) evaluateCondition(c core.Condition) (bool, error) {
+func (t *Fleet) evaluateCondition(c condition.Condition) (bool, error) {
 	switch c.Op {
 	case "and":
 		for _, sub := range c.Sub {

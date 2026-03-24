@@ -47,7 +47,7 @@ type headerData struct {
 	PkgName      string
 	NeedsRegexp  bool
 	NeedsStrings bool
-	NeedsCore    bool
+	NeedsCondition bool
 	NeedsDeep    bool
 	NeedsCrdt    bool
 }
@@ -270,7 +270,7 @@ func evalCondCase(f FieldInfo, pkgPrefix string) string {
 	n, typ := f.Name, f.Type
 
 	b.WriteString("\t\tif c.Op == \"exists\" { return true, nil }\n")
-	fmt.Fprintf(&b, "\t\tif c.Op == \"type\" { return core.CheckType(t.%s, c.Value.(string)), nil }\n", n)
+	fmt.Fprintf(&b, "\t\tif c.Op == \"type\" { return condition.CheckType(t.%s, c.Value.(string)), nil }\n", n)
 	fmt.Fprintf(&b, "\t\tif c.Op == \"matches\" { return regexp.MatchString(c.Value.(string), fmt.Sprintf(\"%%v\", t.%s)) }\n", n)
 
 	switch {
@@ -481,8 +481,8 @@ import (
 {{- if .NeedsStrings}}
 	"strings"
 {{- end}}
-{{- if .NeedsCore}}
-	core "github.com/brunoga/deep/v5/core"
+{{- if .NeedsCondition}}
+	"github.com/brunoga/deep/v5/condition"
 {{- end}}
 {{- if .NeedsDeep}}
 	deep "github.com/brunoga/deep/v5"
@@ -576,7 +576,7 @@ func (t *{{.TypeName}}) Diff(other *{{.TypeName}}) {{.P}}Patch[{{.TypeName}}] {
 `))
 
 var evalCondTmpl = template.Must(template.New("evalCond").Funcs(tmplFuncs).Parse(
-	`func (t *{{.TypeName}}) evaluateCondition(c core.Condition) (bool, error) {
+	`func (t *{{.TypeName}}) evaluateCondition(c condition.Condition) (bool, error) {
 	switch c.Op {
 	case "and":
 		for _, sub := range c.Sub {
@@ -659,7 +659,7 @@ func (g *Generator) writeHeader(allFields []FieldInfo) {
 		PkgName:      g.pkgName,
 		NeedsRegexp:  needsRegexp,
 		NeedsStrings: needsStrings,
-		NeedsCore:    true,
+		NeedsCondition: true,
 		NeedsDeep:    g.pkgName != "deep",
 		NeedsCrdt:    needsCrdt && g.pkgName != "deep",
 	}))

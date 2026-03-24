@@ -4,7 +4,7 @@ package testmodels
 import (
 	"fmt"
 	deep "github.com/brunoga/deep/v5"
-	core "github.com/brunoga/deep/v5/core"
+	"github.com/brunoga/deep/v5/condition"
 	crdt "github.com/brunoga/deep/v5/crdt"
 	_deepengine "github.com/brunoga/deep/v5/internal/engine"
 	"log/slog"
@@ -287,7 +287,7 @@ func (t *User) Diff(other *User) deep.Patch[User] {
 	return p
 }
 
-func (t *User) evaluateCondition(c core.Condition) (bool, error) {
+func (t *User) evaluateCondition(c condition.Condition) (bool, error) {
 	switch c.Op {
 	case "and":
 		for _, sub := range c.Sub {
@@ -322,7 +322,7 @@ func (t *User) evaluateCondition(c core.Condition) (bool, error) {
 			return true, nil
 		}
 		if c.Op == "type" {
-			return core.CheckType(t.ID, c.Value.(string)), nil
+			return condition.CheckType(t.ID, c.Value.(string)), nil
 		}
 		if c.Op == "matches" {
 			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.ID))
@@ -379,7 +379,7 @@ func (t *User) evaluateCondition(c core.Condition) (bool, error) {
 			return true, nil
 		}
 		if c.Op == "type" {
-			return core.CheckType(t.Name, c.Value.(string)), nil
+			return condition.CheckType(t.Name, c.Value.(string)), nil
 		}
 		if c.Op == "matches" {
 			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Name))
@@ -423,7 +423,7 @@ func (t *User) evaluateCondition(c core.Condition) (bool, error) {
 			return true, nil
 		}
 		if c.Op == "type" {
-			return core.CheckType(t.age, c.Value.(string)), nil
+			return condition.CheckType(t.age, c.Value.(string)), nil
 		}
 		if c.Op == "matches" {
 			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.age))
@@ -666,7 +666,7 @@ func (t *Detail) Diff(other *Detail) deep.Patch[Detail] {
 	return p
 }
 
-func (t *Detail) evaluateCondition(c core.Condition) (bool, error) {
+func (t *Detail) evaluateCondition(c condition.Condition) (bool, error) {
 	switch c.Op {
 	case "and":
 		for _, sub := range c.Sub {
@@ -701,7 +701,7 @@ func (t *Detail) evaluateCondition(c core.Condition) (bool, error) {
 			return true, nil
 		}
 		if c.Op == "type" {
-			return core.CheckType(t.Age, c.Value.(string)), nil
+			return condition.CheckType(t.Age, c.Value.(string)), nil
 		}
 		if c.Op == "matches" {
 			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Age))
@@ -758,7 +758,7 @@ func (t *Detail) evaluateCondition(c core.Condition) (bool, error) {
 			return true, nil
 		}
 		if c.Op == "type" {
-			return core.CheckType(t.Address, c.Value.(string)), nil
+			return condition.CheckType(t.Address, c.Value.(string)), nil
 		}
 		if c.Op == "matches" {
 			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Address))

@@ -4,7 +4,7 @@ package main
 import (
 	"fmt"
 	deep "github.com/brunoga/deep/v5"
-	core "github.com/brunoga/deep/v5/core"
+	"github.com/brunoga/deep/v5/condition"
 	_deepengine "github.com/brunoga/deep/v5/internal/engine"
 	"log/slog"
 	"regexp"
@@ -120,7 +120,7 @@ func (t *UIState) Diff(other *UIState) deep.Patch[UIState] {
 	return p
 }
 
-func (t *UIState) evaluateCondition(c core.Condition) (bool, error) {
+func (t *UIState) evaluateCondition(c condition.Condition) (bool, error) {
 	switch c.Op {
 	case "and":
 		for _, sub := range c.Sub {
@@ -155,7 +155,7 @@ func (t *UIState) evaluateCondition(c core.Condition) (bool, error) {
 			return true, nil
 		}
 		if c.Op == "type" {
-			return core.CheckType(t.Theme, c.Value.(string)), nil
+			return condition.CheckType(t.Theme, c.Value.(string)), nil
 		}
 		if c.Op == "matches" {
 			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Theme))
@@ -199,7 +199,7 @@ func (t *UIState) evaluateCondition(c core.Condition) (bool, error) {
 			return true, nil
 		}
 		if c.Op == "type" {
-			return core.CheckType(t.Open, c.Value.(string)), nil
+			return condition.CheckType(t.Open, c.Value.(string)), nil
 		}
 		if c.Op == "matches" {
 			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Open))

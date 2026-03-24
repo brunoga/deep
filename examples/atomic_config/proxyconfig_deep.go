@@ -4,7 +4,7 @@ package main
 import (
 	"fmt"
 	deep "github.com/brunoga/deep/v5"
-	core "github.com/brunoga/deep/v5/core"
+	"github.com/brunoga/deep/v5/condition"
 	_deepengine "github.com/brunoga/deep/v5/internal/engine"
 	"log/slog"
 	"regexp"
@@ -133,7 +133,7 @@ func (t *ProxyConfig) Diff(other *ProxyConfig) deep.Patch[ProxyConfig] {
 	return p
 }
 
-func (t *ProxyConfig) evaluateCondition(c core.Condition) (bool, error) {
+func (t *ProxyConfig) evaluateCondition(c condition.Condition) (bool, error) {
 	switch c.Op {
 	case "and":
 		for _, sub := range c.Sub {
@@ -168,7 +168,7 @@ func (t *ProxyConfig) evaluateCondition(c core.Condition) (bool, error) {
 			return true, nil
 		}
 		if c.Op == "type" {
-			return core.CheckType(t.Host, c.Value.(string)), nil
+			return condition.CheckType(t.Host, c.Value.(string)), nil
 		}
 		if c.Op == "matches" {
 			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Host))
@@ -212,7 +212,7 @@ func (t *ProxyConfig) evaluateCondition(c core.Condition) (bool, error) {
 			return true, nil
 		}
 		if c.Op == "type" {
-			return core.CheckType(t.Port, c.Value.(string)), nil
+			return condition.CheckType(t.Port, c.Value.(string)), nil
 		}
 		if c.Op == "matches" {
 			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Port))
@@ -386,7 +386,7 @@ func (t *SystemMeta) Diff(other *SystemMeta) deep.Patch[SystemMeta] {
 	return p
 }
 
-func (t *SystemMeta) evaluateCondition(c core.Condition) (bool, error) {
+func (t *SystemMeta) evaluateCondition(c condition.Condition) (bool, error) {
 	switch c.Op {
 	case "and":
 		for _, sub := range c.Sub {
@@ -421,7 +421,7 @@ func (t *SystemMeta) evaluateCondition(c core.Condition) (bool, error) {
 			return true, nil
 		}
 		if c.Op == "type" {
-			return core.CheckType(t.ClusterID, c.Value.(string)), nil
+			return condition.CheckType(t.ClusterID, c.Value.(string)), nil
 		}
 		if c.Op == "matches" {
 			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.ClusterID))

@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"sort"
 
-	"github.com/brunoga/deep/v5/core"
+	"github.com/brunoga/deep/v5/condition"
 	"github.com/brunoga/deep/v5/internal/engine"
 )
 
@@ -55,7 +55,7 @@ func Apply[T any](target *T, p Patch[T], opts ...ApplyOption) error {
 	// Reflection fallback.
 
 	if p.Guard != nil {
-		ok, err := core.EvaluateCondition(v.Elem(), p.Guard)
+		ok, err := condition.EvaluateCondition(v.Elem(), p.Guard)
 		if err != nil {
 			return fmt.Errorf("global condition evaluation failed: %w", err)
 		}

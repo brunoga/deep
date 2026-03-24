@@ -4,7 +4,7 @@ package main
 import (
 	"fmt"
 	deep "github.com/brunoga/deep/v5"
-	core "github.com/brunoga/deep/v5/core"
+	"github.com/brunoga/deep/v5/condition"
 	_deepengine "github.com/brunoga/deep/v5/internal/engine"
 	"log/slog"
 	"regexp"
@@ -185,7 +185,7 @@ func (t *SystemConfig) Diff(other *SystemConfig) deep.Patch[SystemConfig] {
 	return p
 }
 
-func (t *SystemConfig) evaluateCondition(c core.Condition) (bool, error) {
+func (t *SystemConfig) evaluateCondition(c condition.Condition) (bool, error) {
 	switch c.Op {
 	case "and":
 		for _, sub := range c.Sub {
@@ -220,7 +220,7 @@ func (t *SystemConfig) evaluateCondition(c core.Condition) (bool, error) {
 			return true, nil
 		}
 		if c.Op == "type" {
-			return core.CheckType(t.AppName, c.Value.(string)), nil
+			return condition.CheckType(t.AppName, c.Value.(string)), nil
 		}
 		if c.Op == "matches" {
 			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.AppName))
@@ -264,7 +264,7 @@ func (t *SystemConfig) evaluateCondition(c core.Condition) (bool, error) {
 			return true, nil
 		}
 		if c.Op == "type" {
-			return core.CheckType(t.MaxThreads, c.Value.(string)), nil
+			return condition.CheckType(t.MaxThreads, c.Value.(string)), nil
 		}
 		if c.Op == "matches" {
 			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.MaxThreads))

@@ -43,7 +43,7 @@ Major rewrite. Breaking changes from v4.
 | `Patch.ToJSONPatch() ([]byte, error)` | Serialize to RFC 6902 JSON Patch with deep extensions |
 | `Patch.String() string` | Human-readable summary of operations |
 
-### `core` package (`github.com/brunoga/deep/v5/core`)
+### `condition` package (`github.com/brunoga/deep/v5/condition`)
 
 Public package used directly by generated `*_deep.go` files. Most callers will not need to import it directly.
 
@@ -80,7 +80,7 @@ Public package used directly by generated `*_deep.go` files. Most callers will n
 - `Patch` is now generic (`Patch[T]`); patches are not cross-type compatible.
 - `Patch.Condition` renamed to `Patch.Guard`; `WithCondition` → `WithGuard`.
 - Global `Logger`/`SetLogger` removed; pass `WithLogger(l)` as an `Apply` option for per-call logging.
-- `cond/` package removed; conditions live in `github.com/brunoga/deep/v5/core`.
+- `cond/` package removed; conditions live in `github.com/brunoga/deep/v5/condition`.
 - `deep-gen` now writes output to `{type}_deep.go` by default instead of stdout.
 - `OpAdd` on slices sets by index rather than inserting; true insertion is not supported for unkeyed slices.
 - `Copy[T](v T) T` renamed to `Clone[T](v T) T`; `Copy` is now the patch-op constructor `Copy[T,V](from, to Path[T,V]) Op`.

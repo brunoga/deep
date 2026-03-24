@@ -4,7 +4,7 @@ package main
 import (
 	"fmt"
 	deep "github.com/brunoga/deep/v5"
-	core "github.com/brunoga/deep/v5/core"
+	"github.com/brunoga/deep/v5/condition"
 	_deepengine "github.com/brunoga/deep/v5/internal/engine"
 	"log/slog"
 	"regexp"
@@ -133,7 +133,7 @@ func (t *Item) Diff(other *Item) deep.Patch[Item] {
 	return p
 }
 
-func (t *Item) evaluateCondition(c core.Condition) (bool, error) {
+func (t *Item) evaluateCondition(c condition.Condition) (bool, error) {
 	switch c.Op {
 	case "and":
 		for _, sub := range c.Sub {
@@ -168,7 +168,7 @@ func (t *Item) evaluateCondition(c core.Condition) (bool, error) {
 			return true, nil
 		}
 		if c.Op == "type" {
-			return core.CheckType(t.SKU, c.Value.(string)), nil
+			return condition.CheckType(t.SKU, c.Value.(string)), nil
 		}
 		if c.Op == "matches" {
 			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.SKU))
@@ -212,7 +212,7 @@ func (t *Item) evaluateCondition(c core.Condition) (bool, error) {
 			return true, nil
 		}
 		if c.Op == "type" {
-			return core.CheckType(t.Quantity, c.Value.(string)), nil
+			return condition.CheckType(t.Quantity, c.Value.(string)), nil
 		}
 		if c.Op == "matches" {
 			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Quantity))
@@ -396,7 +396,7 @@ func (t *Inventory) Diff(other *Inventory) deep.Patch[Inventory] {
 	return p
 }
 
-func (t *Inventory) evaluateCondition(c core.Condition) (bool, error) {
+func (t *Inventory) evaluateCondition(c condition.Condition) (bool, error) {
 	switch c.Op {
 	case "and":
 		for _, sub := range c.Sub {

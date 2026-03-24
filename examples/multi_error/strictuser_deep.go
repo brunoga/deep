@@ -4,7 +4,7 @@ package main
 import (
 	"fmt"
 	deep "github.com/brunoga/deep/v5"
-	core "github.com/brunoga/deep/v5/core"
+	"github.com/brunoga/deep/v5/condition"
 	_deepengine "github.com/brunoga/deep/v5/internal/engine"
 	"log/slog"
 	"regexp"
@@ -133,7 +133,7 @@ func (t *StrictUser) Diff(other *StrictUser) deep.Patch[StrictUser] {
 	return p
 }
 
-func (t *StrictUser) evaluateCondition(c core.Condition) (bool, error) {
+func (t *StrictUser) evaluateCondition(c condition.Condition) (bool, error) {
 	switch c.Op {
 	case "and":
 		for _, sub := range c.Sub {
@@ -168,7 +168,7 @@ func (t *StrictUser) evaluateCondition(c core.Condition) (bool, error) {
 			return true, nil
 		}
 		if c.Op == "type" {
-			return core.CheckType(t.Name, c.Value.(string)), nil
+			return condition.CheckType(t.Name, c.Value.(string)), nil
 		}
 		if c.Op == "matches" {
 			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Name))
@@ -212,7 +212,7 @@ func (t *StrictUser) evaluateCondition(c core.Condition) (bool, error) {
 			return true, nil
 		}
 		if c.Op == "type" {
-			return core.CheckType(t.Age, c.Value.(string)), nil
+			return condition.CheckType(t.Age, c.Value.(string)), nil
 		}
 		if c.Op == "matches" {
 			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Age))
