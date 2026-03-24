@@ -115,8 +115,9 @@ func EvaluateCondition(root reflect.Value, c *Condition) (bool, error) {
 	return icore.CompareValues(val, reflect.ValueOf(c.Value), c.Op, false)
 }
 
-// ToPredicateInternal returns a JSON-serializable map for the condition.
-func (c *Condition) ToPredicateInternal() map[string]any {
+// ToPredicate returns a JSON-serializable map representing the condition in
+// the JSON Patch predicate wire format. This is the inverse of [FromPredicate].
+func (c *Condition) ToPredicate() map[string]any {
 	if c == nil {
 		return nil
 	}
@@ -157,7 +158,7 @@ func (c *Condition) ToPredicateInternal() map[string]any {
 		}
 		var apply []map[string]any
 		for _, sub := range c.Sub {
-			apply = append(apply, sub.ToPredicateInternal())
+			apply = append(apply, sub.ToPredicate())
 		}
 		res["apply"] = apply
 		return res
@@ -170,8 +171,9 @@ func (c *Condition) ToPredicateInternal() map[string]any {
 	}
 }
 
-// FromPredicateInternal is the inverse of ToPredicateInternal.
-func FromPredicateInternal(m map[string]any) *Condition {
+// FromPredicate parses a JSON Patch predicate wire-format map into a
+// [Condition]. This is the inverse of [Condition.ToPredicate].
+func FromPredicate(m map[string]any) *Condition {
 	if m == nil {
 		return nil
 	}
@@ -222,7 +224,7 @@ func parseApply(raw any) []*Condition {
 	out := make([]*Condition, 0, len(items))
 	for _, item := range items {
 		if m, ok := item.(map[string]any); ok {
-			if c := FromPredicateInternal(m); c != nil {
+			if c := FromPredicate(m); c != nil {
 				out = append(out, c)
 			}
 		}

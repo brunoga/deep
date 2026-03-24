@@ -163,7 +163,7 @@ func (p Patch[T]) ToJSONPatch() ([]byte, error) {
 		res = append(res, map[string]any{
 			"op":   "test",
 			"path": "/",
-			"if":   p.Guard.ToPredicateInternal(),
+			"if":   p.Guard.ToPredicate(),
 		})
 	}
 
@@ -183,10 +183,10 @@ func (p Patch[T]) ToJSONPatch() ([]byte, error) {
 		}
 
 		if op.If != nil {
-			m["if"] = op.If.ToPredicateInternal()
+			m["if"] = op.If.ToPredicate()
 		}
 		if op.Unless != nil {
-			m["unless"] = op.Unless.ToPredicateInternal()
+			m["unless"] = op.Unless.ToPredicate()
 		}
 
 		res = append(res, m)
@@ -210,7 +210,7 @@ func ParseJSONPatch[T any](data []byte) (Patch[T], error) {
 		// Global condition is encoded as a test op on "/" with an "if" predicate.
 		if opStr == "test" && path == "/" {
 			if ifPred, ok := m["if"].(map[string]any); ok {
-				res.Guard = core.FromPredicateInternal(ifPred)
+				res.Guard = core.FromPredicate(ifPred)
 			}
 			continue
 		}
@@ -219,10 +219,10 @@ func ParseJSONPatch[T any](data []byte) (Patch[T], error) {
 
 		// Per-op conditions
 		if ifPred, ok := m["if"].(map[string]any); ok {
-			op.If = core.FromPredicateInternal(ifPred)
+			op.If = core.FromPredicate(ifPred)
 		}
 		if unlessPred, ok := m["unless"].(map[string]any); ok {
-			op.Unless = core.FromPredicateInternal(unlessPred)
+			op.Unless = core.FromPredicate(unlessPred)
 		}
 
 		switch opStr {

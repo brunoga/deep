@@ -30,6 +30,7 @@ Major rewrite. Breaking changes from v4.
 | `MapKey[T,M,K,V](Path[T,M], K) Path[T,V]` | Extend a map-field path to a value by key |
 | `WithLogger(*slog.Logger) ApplyOption` | Pass a logger to a single Apply call |
 | `ParseJSONPatch[T]([]byte) (Patch[T], error)` | Parse RFC 6902 + deep extensions back into a Patch |
+| `ConflictResolver` (interface) | Implement `Resolve(path string, local, remote any) any` to customize `Merge` |
 
 **`Patch[T]` methods:**
 
@@ -42,6 +43,16 @@ Major rewrite. Breaking changes from v4.
 | `Patch.ToJSONPatch() ([]byte, error)` | Serialize to RFC 6902 JSON Patch with deep extensions |
 | `Patch.String() string` | Human-readable summary of operations |
 
+### `core` package (`github.com/brunoga/deep/v5/core`)
+
+Public package used directly by generated `*_deep.go` files. Most callers will not need to import it directly.
+
+- `Condition` — Serializable predicate struct (`Op`, `Path`, `Value`, `Sub`).
+- `EvaluateCondition(root reflect.Value, c *Condition) (bool, error)` — Evaluate a condition against a value.
+- `CheckType(v any, typeName string) bool` — Runtime type name check (used in generated code).
+- `ToPredicate() / FromPredicate()` — Convert `Condition` to/from the JSON Patch wire-format map.
+- `CondEq`, `CondNe`, `CondGt`, `CondGe`, `CondLt`, `CondLe`, `CondExists`, `CondIn`, `CondMatches`, `CondType`, `CondAnd`, `CondOr`, `CondNot` — Condition operator constants.
+
 ### Condition / Guard system
 
 - `Condition` struct with `Op`, `Path`, `Value`, `Sub` fields (serializable predicates).
@@ -50,11 +61,17 @@ Major rewrite. Breaking changes from v4.
 - Builder helpers: `Eq`, `Ne`, `Gt`, `Ge`, `Lt`, `Le`, `Exists`, `In`, `Matches`, `Type`, `And`, `Or`, `Not`.
 - Per-op conditions attached to `Op` values via `Op.If` / `Op.Unless`; passed to the builder via `Builder.With`.
 
-### CRDTs
+### CRDTs (`github.com/brunoga/deep/v5/crdt`)
 
-- `LWW[T]` — Last-Write-Wins register with HLC timestamp.
-- `crdt.Text` — Collaborative text CRDT (`[]TextRun`).
-- `crdt/hlc.HLC` — Hybrid Logical Clock for causality ordering.
+- `CRDT[T]` — Concurrency-safe CRDT wrapper. Create with `NewCRDT(initial, nodeID)`. Key methods: `Edit(fn)`, `ApplyDelta(delta)`, `Merge(other)`, `View()`. JSON-serializable.
+- `Delta[T]` — A timestamped set of changes produced by `CRDT.Edit`; send to peers and apply with `CRDT.ApplyDelta`.
+- `LWW[T]` — Embeddable Last-Write-Wins register. Update with `Set(v, ts)`; accepts write only if `ts` is strictly newer.
+- `Text` (`[]TextRun`) — Convergent collaborative text. Merge concurrent edits with `MergeTextRuns(a, b)`.
+
+**`github.com/brunoga/deep/v5/crdt/hlc`**
+
+- `Clock` — Per-node HLC state. Create with `NewClock(nodeID)`. Methods: `Now()`, `Update(remote)`, `Reserve(n)`.
+- `HLC` — Timestamp struct (wall time + logical counter + node ID). Total ordering via `Compare` / `After`.
 
 ### Breaking changes from v4
 
