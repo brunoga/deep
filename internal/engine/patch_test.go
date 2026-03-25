@@ -322,6 +322,26 @@ func TestCustomDiffPatch_ToJSONPatch(t *testing.T) {
 	}
 }
 
+func TestCustomDiffPatch_Summary(t *testing.T) {
+	t.Run("delegates to inner Summary", func(t *testing.T) {
+		custom := &customDiffPatch{patch: summarizerFunc("Text update")}
+		if got := custom.summary(""); got != "Text update" {
+			t.Errorf("expected %q, got %q", "Text update", got)
+		}
+	})
+
+	t.Run("falls back to CustomPatch when no Summary method", func(t *testing.T) {
+		custom := &customDiffPatch{patch: struct{}{}}
+		if got := custom.summary(""); got != "CustomPatch" {
+			t.Errorf("expected %q, got %q", "CustomPatch", got)
+		}
+	})
+}
+
+type summarizerFunc string
+
+func (s summarizerFunc) Summary() string { return string(s) }
+
 func TestPatch_Summary(t *testing.T) {
 	type Config struct {
 		Name    string
