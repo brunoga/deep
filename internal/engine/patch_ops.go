@@ -1630,5 +1630,11 @@ func (p *customDiffPatch) toJSONPatch(path string) []map[string]any {
 }
 
 func (p *customDiffPatch) summary(path string) string {
+	type summarizer interface {
+		Summary() string
+	}
+	if s, ok := p.patch.(summarizer); ok {
+		return s.Summary()
+	}
 	return "CustomPatch"
 }
