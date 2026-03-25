@@ -2,6 +2,7 @@ package crdt
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -95,6 +96,189 @@ func TestCRDT_Conflict(t *testing.T) {
 	nodeA.Merge(nodeB)
 	if nodeA.View().Name != "Bob" {
 		t.Errorf("LWW failed: expected 'Bob', got '%s'", nodeA.View().Name)
+	}
+}
+
+// --- Fix: Text fields in structs are merged convergently, not via LWW ---
+
+type docWithText struct {
+	Title string
+	Body  Text
+}
+
+// Both nodes concurrently insert into the same Text field. After a bidirectional
+// Merge both must hold the same text containing both insertions.
+func TestMerge_TextFieldConvergent(t *testing.T) {
+	nodeA := NewCRDT(docWithText{Title: "doc"}, "node-a")
+	nodeB := NewCRDT(docWithText{Title: "doc"}, "node-b")
+
+	nodeA.Edit(func(d *docWithText) {
+		d.Body = d.Body.Insert(0, "hello", nodeA.Clock())
+	})
+	nodeB.Edit(func(d *docWithText) {
+		d.Body = d.Body.Insert(0, "world", nodeB.Clock())
+	})
+
+	nodeA.Merge(nodeB)
+	nodeB.Merge(nodeA)
+
+	viewA := nodeA.View()
+	viewB := nodeB.View()
+
+	if viewA.Body.String() != viewB.Body.String() {
+		t.Errorf("Text diverged after merge: A=%q B=%q", viewA.Body.String(), viewB.Body.String())
+	}
+	combined := viewA.Body.String()
+	if !strings.Contains(combined, "hello") || !strings.Contains(combined, "world") {
+		t.Errorf("Text merge dropped content: got %q", combined)
+	}
+}
+
+// Even when nodeA's edit has an older HLC timestamp, its text must still
+// appear in the merged result — Text bypasses LWW entirely.
+func TestMerge_TextNotLWWFiltered(t *testing.T) {
+	nodeA := NewCRDT(docWithText{}, "node-a")
+	nodeB := NewCRDT(docWithText{}, "node-b")
+
+	// nodeA edits first (older wall-clock time)
+	nodeA.Edit(func(d *docWithText) {
+		d.Body = d.Body.Insert(0, "older", nodeA.Clock())
+	})
+	time.Sleep(2 * time.Millisecond)
+	// nodeB edits later (newer wall-clock time)
+	nodeB.Edit(func(d *docWithText) {
+		d.Body = d.Body.Insert(0, "newer", nodeB.Clock())
+	})
+
+	nodeA.Merge(nodeB)
+
+	combined := nodeA.View().Body.String()
+	if !strings.Contains(combined, "older") || !strings.Contains(combined, "newer") {
+		t.Errorf("LWW incorrectly filtered Text: got %q, want both 'older' and 'newer'", combined)
+	}
+}
+
+// Fix: TextRun sub-field ops (e.g. /Body/<id>/Deleted) must still be
+// detected as Text-field ops and handled via MergeTextRuns, not LWW.
+func TestMerge_TextSubFieldOp(t *testing.T) {
+	nodeA := NewCRDT(docWithText{}, "node-a")
+	nodeB := NewCRDT(docWithText{}, "node-b")
+
+	// nodeA inserts a run; nodeB gets the same initial state then deletes it.
+	nodeA.Edit(func(d *docWithText) {
+		d.Body = d.Body.Insert(0, "shared", nodeA.Clock())
+	})
+	// Sync nodeB to the same starting state.
+	nodeB.Merge(nodeA)
+
+	// nodeB soft-deletes the run (produces a /Body/<id>/Deleted sub-field op on next diff).
+	nodeB.Edit(func(d *docWithText) {
+		d.Body = d.Body.Delete(0, len("shared"))
+	})
+	// nodeA inserts more text concurrently.
+	nodeA.Edit(func(d *docWithText) {
+		d.Body = d.Body.Insert(len("shared"), " appended", nodeA.Clock())
+	})
+
+	nodeA.Merge(nodeB)
+	nodeB.Merge(nodeA)
+
+	viewA := nodeA.View()
+	viewB := nodeB.View()
+
+	if viewA.Body.String() != viewB.Body.String() {
+		t.Errorf("Sub-field op: Text diverged: A=%q B=%q", viewA.Body.String(), viewB.Body.String())
+	}
+}
+
+// Fix: Text field nested inside a nested struct must be detected and merged.
+func TestMerge_TextInNestedStruct(t *testing.T) {
+	type inner struct{ Notes Text }
+	type outer struct{ Meta inner }
+
+	nodeA := NewCRDT(outer{}, "node-a")
+	nodeB := NewCRDT(outer{}, "node-b")
+
+	nodeA.Edit(func(o *outer) {
+		o.Meta.Notes = o.Meta.Notes.Insert(0, "note-a", nodeA.Clock())
+	})
+	nodeB.Edit(func(o *outer) {
+		o.Meta.Notes = o.Meta.Notes.Insert(0, "note-b", nodeB.Clock())
+	})
+
+	nodeA.Merge(nodeB)
+	nodeB.Merge(nodeA)
+
+	viewA := nodeA.View()
+	viewB := nodeB.View()
+
+	if viewA.Meta.Notes.String() != viewB.Meta.Notes.String() {
+		t.Errorf("Nested Text diverged: A=%q B=%q",
+			viewA.Meta.Notes.String(), viewB.Meta.Notes.String())
+	}
+	combined := viewA.Meta.Notes.String()
+	if !strings.Contains(combined, "note-a") || !strings.Contains(combined, "note-b") {
+		t.Errorf("Nested Text merge dropped content: got %q", combined)
+	}
+}
+
+// Fix: Text field inside a keyed-slice element must be detected by key, not
+// by positional index. The old tree-walk would misalign elements if the two
+// nodes had different slice orderings.
+func TestMerge_TextInKeyedSliceElement(t *testing.T) {
+	type section struct {
+		ID      int `deep:"key"`
+		Content Text
+	}
+	type article struct{ Sections []section }
+
+	initial := article{Sections: []section{
+		{ID: 1},
+		{ID: 2},
+	}}
+
+	nodeA := NewCRDT(initial, "node-a")
+	nodeB := NewCRDT(initial, "node-b")
+
+	// Both nodes write to section 2's Content concurrently.
+	nodeA.Edit(func(a *article) {
+		a.Sections[1].Content = a.Sections[1].Content.Insert(0, "from-a", nodeA.Clock())
+	})
+	nodeB.Edit(func(a *article) {
+		a.Sections[1].Content = a.Sections[1].Content.Insert(0, "from-b", nodeB.Clock())
+	})
+	// NodeA also prepends a new section, shifting positional indices.
+	nodeA.Edit(func(a *article) {
+		a.Sections = append([]section{{ID: 0}}, a.Sections...)
+	})
+
+	nodeA.Merge(nodeB)
+	nodeB.Merge(nodeA)
+
+	findSection := func(secs []section, id int) *section {
+		for i := range secs {
+			if secs[i].ID == id {
+				return &secs[i]
+			}
+		}
+		return nil
+	}
+
+	viewA := nodeA.View()
+	viewB := nodeB.View()
+
+	s2A := findSection(viewA.Sections, 2)
+	s2B := findSection(viewB.Sections, 2)
+	if s2A == nil || s2B == nil {
+		t.Fatal("section 2 missing after merge")
+	}
+	if s2A.Content.String() != s2B.Content.String() {
+		t.Errorf("Section 2 Text diverged: A=%q B=%q",
+			s2A.Content.String(), s2B.Content.String())
+	}
+	combined := s2A.Content.String()
+	if !strings.Contains(combined, "from-a") || !strings.Contains(combined, "from-b") {
+		t.Errorf("Section 2 Text missing content: got %q", combined)
 	}
 }
 
