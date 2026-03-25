@@ -24,10 +24,13 @@ package crdt
 import (
 	"encoding/json"
 	"log/slog"
+	"reflect"
+	"strings"
 	"sync"
 
 	deep "github.com/brunoga/deep/v5"
 	"github.com/brunoga/deep/v5/crdt/hlc"
+	icore "github.com/brunoga/deep/v5/internal/core"
 )
 
 // LWW represents a Last-Write-Wins register for type T.
@@ -192,9 +195,42 @@ func (c *CRDT[T]) ApplyDelta(delta Delta[T]) bool {
 	return deep.Apply(&c.value, deep.Patch[T]{Operations: filtered}) == nil
 }
 
+// textType is the reflect.Type of crdt.Text, used to identify Text fields
+// during merge without a full value-tree walk.
+var textType = reflect.TypeOf(Text{})
+
+// textAncestorPath walks up from opPath toward the root, resolving each prefix
+// against root, and returns the path of the nearest ancestor whose value is of
+// type Text together with true. It returns ("", false) if the op does not
+// belong to a Text field. Walking stops as soon as a valid non-Text ancestor is
+// found, keeping traversal to O(depth) Resolve calls per op.
+func textAncestorPath(root reflect.Value, opPath string) (string, bool) {
+	path := opPath
+	for {
+		idx := strings.LastIndexByte(path, '/')
+		if idx <= 0 {
+			break
+		}
+		path = path[:idx]
+		val, err := icore.DeepPath(path).Resolve(root)
+		if err != nil || !val.IsValid() {
+			// Unresolvable prefix (e.g. map key not present locally) — keep walking up.
+			continue
+		}
+		if val.Type() == textType {
+			return path, true
+		}
+		// A valid non-Text ancestor was found at this level, but it might itself
+		// be nested inside a Text (e.g. a TextRun struct whose parent is Text).
+		// Keep walking up rather than breaking.
+	}
+	return "", false
+}
+
 // Merge performs a full state-based merge with another CRDT node.
 // For each changed field the node with the strictly newer effective timestamp
-// (max of write clock and tombstone) wins.
+// (max of write clock and tombstone) wins. Text fields are always merged
+// convergently via MergeTextRuns, bypassing LWW.
 func (c *CRDT[T]) Merge(other *CRDT[T]) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -206,7 +242,7 @@ func (c *CRDT[T]) Merge(other *CRDT[T]) bool {
 		c.clock.Update(h)
 	}
 
-	// Text has its own convergent merge that doesn't rely on per-field clocks.
+	// Fast path: T itself is a Text.
 	if v, ok := any(c.value).(Text); ok {
 		otherV := any(other.value).(Text)
 		c.value = any(MergeTextRuns(v, otherV)).(T)
@@ -220,10 +256,22 @@ func (c *CRDT[T]) Merge(other *CRDT[T]) bool {
 		return false
 	}
 
-	// State-based LWW: apply each op only if the remote effective time is
-	// strictly newer than the local effective time for that path.
+	localRoot := reflect.ValueOf(&c.value).Elem()
+	otherRoot := reflect.ValueOf(&other.value).Elem()
+
+	// Separate Text-field ops from LWW-eligible ops. Text is convergent, so
+	// we collect affected Text paths and apply MergeTextRuns after the LWW
+	// apply — no full tree walk required.
+	textPaths := make(map[string]struct{})
 	var filtered []deep.Operation
 	for _, op := range patch.Operations {
+		if textPath, ok := textAncestorPath(localRoot, op.Path); ok {
+			textPaths[textPath] = struct{}{}
+			continue
+		}
+
+		// State-based LWW: apply each op only if the remote effective time is
+		// strictly newer than the local effective time for that path.
 		rClock, hasRC := other.clocks[op.Path]
 		rTomb, hasRT := other.tombstones[op.Path]
 
@@ -260,11 +308,33 @@ func (c *CRDT[T]) Merge(other *CRDT[T]) bool {
 
 	c.mergeMeta(other)
 
-	if len(filtered) == 0 {
-		return false
+	changed := len(filtered) > 0
+	if changed {
+		_ = deep.Apply(&c.value, deep.Patch[T]{Operations: filtered})
+		// Refresh localRoot: Apply may have updated c.value in place.
+		localRoot = reflect.ValueOf(&c.value).Elem()
 	}
-	_ = deep.Apply(&c.value, deep.Patch[T]{Operations: filtered})
-	return true
+
+	// Convergently merge each Text field by path. Both values are resolved
+	// fresh from the (already-updated) local root and the remote root.
+	for textPath := range textPaths {
+		localVal, err := icore.DeepPath(textPath).Resolve(localRoot)
+		if err != nil || !localVal.IsValid() {
+			continue
+		}
+		remoteVal, err := icore.DeepPath(textPath).Resolve(otherRoot)
+		if err != nil || !remoteVal.IsValid() {
+			continue
+		}
+		merged := MergeTextRuns(localVal.Interface().(Text), remoteVal.Interface().(Text))
+		if err := icore.DeepPath(textPath).Set(localRoot, reflect.ValueOf(merged)); err != nil {
+			slog.Default().Error("crdt: Merge text set failed", "path", textPath, "err", err)
+			continue
+		}
+		changed = true
+	}
+
+	return changed
 }
 
 func (c *CRDT[T]) mergeMeta(other *CRDT[T]) {

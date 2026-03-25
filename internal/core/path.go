@@ -68,20 +68,34 @@ func (p DeepPath) Navigate(v reflect.Value, parts []PathPart) (reflect.Value, Pa
 			return reflect.Value{}, PathPart{}, fmt.Errorf("path traversal failed: nil value at intermediate step")
 		}
 
-		if part.IsIndex && (current.Kind() == reflect.Slice || current.Kind() == reflect.Array) {
-			// Check whether the element type uses a keyed-collection tag.
-			// If so, treat the numeric segment as a key value, not an array index.
-			if keyIdx, found := sliceKeyField(current.Type()); found {
-				keyStr := part.Key
-				if keyStr == "" {
-					keyStr = strconv.Itoa(part.Index)
+		if current.Kind() == reflect.Slice || current.Kind() == reflect.Array {
+			if current.Kind() == reflect.Slice {
+				// Check for keyed-collection tag first, regardless of whether the
+				// path segment is numeric. Keys like "todo" or "in-progress" are
+				// non-numeric but still valid keyed-slice selectors.
+				if keyIdx, found := sliceKeyField(current.Type()); found {
+					keyStr := part.Key
+					if keyStr == "" && part.IsIndex {
+						keyStr = strconv.Itoa(part.Index)
+					}
+					elem, ok := findSliceElemByKey(current, keyIdx, keyStr)
+					if !ok {
+						return reflect.Value{}, PathPart{}, fmt.Errorf("element with key %s not found", keyStr)
+					}
+					current = elem
+				} else if part.IsIndex {
+					if part.Index < 0 || part.Index >= current.Len() {
+						return reflect.Value{}, PathPart{}, fmt.Errorf("index out of bounds: %d", part.Index)
+					}
+					current = current.Index(part.Index)
+				} else {
+					return reflect.Value{}, PathPart{}, fmt.Errorf("non-numeric index %q for non-keyed slice", part.Key)
 				}
-				elem, ok := findSliceElemByKey(current, keyIdx, keyStr)
-				if !ok {
-					return reflect.Value{}, PathPart{}, fmt.Errorf("element with key %s not found", keyStr)
-				}
-				current = elem
 			} else {
+				// Array: always numeric.
+				if !part.IsIndex {
+					return reflect.Value{}, PathPart{}, fmt.Errorf("non-numeric index %q for array", part.Key)
+				}
 				if part.Index < 0 || part.Index >= current.Len() {
 					return reflect.Value{}, PathPart{}, fmt.Errorf("index out of bounds: %d", part.Index)
 				}
@@ -150,179 +164,289 @@ func (p DeepPath) Navigate(v reflect.Value, parts []PathPart) (reflect.Value, Pa
 }
 
 func (p DeepPath) Set(v reflect.Value, val reflect.Value) error {
-	parent, lastPart, err := p.ResolveParent(v)
-	if err != nil {
-		if string(p) == "" || string(p) == "/" {
-			if !v.CanSet() {
-				return fmt.Errorf("cannot set root value")
-			}
-			v.Set(val)
-			return nil
+	if string(p) == "" || string(p) == "/" {
+		if !v.CanSet() {
+			return fmt.Errorf("cannot set root value")
 		}
+		SetValue(v, val)
+		return nil
+	}
+	return setAtPath(v, ParsePath(string(p)), val)
+}
+
+// setAtPath recursively walks parts and sets val at the target location.
+// It handles map boundaries with copy-modify-put-back so that values nested
+// inside maps remain correct even though map elements are not addressable.
+func setAtPath(v reflect.Value, parts []PathPart, val reflect.Value) error {
+	v, err := Dereference(v)
+	if err != nil {
 		return err
 	}
 
-	switch parent.Kind() {
-	case reflect.Map:
-		keyType := parent.Type().Key()
-		var keyVal reflect.Value
-		key := lastPart.Key
-		if key == "" && lastPart.IsIndex {
-			key = strconv.Itoa(lastPart.Index)
+	if len(parts) == 0 {
+		if !v.CanSet() {
+			unsafe.DisableRO(&v)
 		}
-		if keyType.Kind() == reflect.String {
-			keyVal = reflect.ValueOf(key)
-		} else if keyType.Kind() == reflect.Int {
-			i, err := strconv.Atoi(key)
-			if err != nil {
-				return fmt.Errorf("invalid int key: %s", key)
-			}
-			keyVal = reflect.ValueOf(i)
-		}
-		parent.SetMapIndex(keyVal, ConvertValue(val, parent.Type().Elem()))
+		SetValue(v, val)
 		return nil
-	case reflect.Slice:
-		// For keyed slices, find by key and update or append; for plain slices, use positional index.
-		if keyIdx, found := sliceKeyField(parent.Type()); found {
-			key := lastPart.Key
-			if key == "" && lastPart.IsIndex {
-				key = strconv.Itoa(lastPart.Index)
-			}
-			converted := ConvertValue(val, parent.Type().Elem())
-			for i := 0; i < parent.Len(); i++ {
-				elem := parent.Index(i)
-				if keyFieldStr(elem, keyIdx) == key {
-					elem.Set(converted)
-					return nil
-				}
-			}
-			// Key not found: append the new element.
-			parent.Set(reflect.Append(parent, converted))
+	}
+
+	part := parts[0]
+	rest := parts[1:]
+
+	switch v.Kind() {
+	case reflect.Map:
+		keyVal, err := makeMapKey(v.Type().Key(), part)
+		if err != nil {
+			return err
+		}
+		if len(rest) == 0 {
+			v.SetMapIndex(keyVal, ConvertValue(val, v.Type().Elem()))
 			return nil
 		}
-		idx := lastPart.Index
-		if !lastPart.IsIndex {
-			var err error
-			idx, err = strconv.Atoi(lastPart.Key)
+		// Deeper path: copy the map element, recurse, put it back.
+		elem := v.MapIndex(keyVal)
+		if !elem.IsValid() {
+			return fmt.Errorf("map key %v not found", part.Key)
+		}
+		newElem := reflect.New(elem.Type()).Elem()
+		newElem.Set(elem)
+		if err := setAtPath(newElem, rest, val); err != nil {
+			return err
+		}
+		v.SetMapIndex(keyVal, newElem)
+		return nil
+
+	case reflect.Slice:
+		if keyIdx, found := sliceKeyField(v.Type()); found {
+			// Keyed slice: key lookup works for both numeric and non-numeric keys.
+			keyStr := part.Key
+			if keyStr == "" && part.IsIndex {
+				keyStr = strconv.Itoa(part.Index)
+			}
+			converted := ConvertValue(val, v.Type().Elem())
+			if len(rest) == 0 {
+				for i := 0; i < v.Len(); i++ {
+					if keyFieldStr(v.Index(i), keyIdx) == keyStr {
+						v.Index(i).Set(converted)
+						return nil
+					}
+				}
+				// Key not found: append.
+				if !v.CanSet() {
+					return fmt.Errorf("cannot append to non-settable keyed slice at key %s", keyStr)
+				}
+				v.Set(reflect.Append(v, converted))
+				return nil
+			}
+			// Deeper: recurse into the keyed element (slice elements are addressable).
+			for i := 0; i < v.Len(); i++ {
+				if keyFieldStr(v.Index(i), keyIdx) == keyStr {
+					return setAtPath(v.Index(i), rest, val)
+				}
+			}
+			return fmt.Errorf("element with key %s not found", keyStr)
+		}
+		// Plain slice: positional index.
+		idx := part.Index
+		if !part.IsIndex {
+			idx, err = strconv.Atoi(part.Key)
 			if err != nil {
-				return fmt.Errorf("invalid slice index: %s", lastPart.Key)
+				return fmt.Errorf("invalid slice index: %s", part.Key)
 			}
 		}
-		if idx < 0 || idx > parent.Len() {
+		if idx < 0 || idx > v.Len() {
 			return fmt.Errorf("index out of bounds: %d", idx)
 		}
-		if idx == parent.Len() {
-			parent.Set(reflect.Append(parent, ConvertValue(val, parent.Type().Elem())))
-		} else {
-			parent.Index(idx).Set(ConvertValue(val, parent.Type().Elem()))
+		if len(rest) == 0 {
+			if idx == v.Len() {
+				if !v.CanSet() {
+					return fmt.Errorf("cannot append to non-settable slice at index %d", idx)
+				}
+				v.Set(reflect.Append(v, ConvertValue(val, v.Type().Elem())))
+			} else {
+				v.Index(idx).Set(ConvertValue(val, v.Type().Elem()))
+			}
+			return nil
 		}
-		return nil
+		if idx >= v.Len() {
+			return fmt.Errorf("index out of bounds: %d", idx)
+		}
+		return setAtPath(v.Index(idx), rest, val)
+
 	case reflect.Struct:
-		key := lastPart.Key
-		if key == "" && lastPart.IsIndex {
-			key = strconv.Itoa(lastPart.Index)
+		key := part.Key
+		if key == "" && part.IsIndex {
+			key = strconv.Itoa(part.Index)
 		}
-		info := GetTypeInfo(parent.Type())
-		var fieldIdx = -1
+		info := GetTypeInfo(v.Type())
 		for _, fInfo := range info.Fields {
 			if fInfo.Name == key || (fInfo.JSONTag != "" && fInfo.JSONTag == key) {
-				fieldIdx = fInfo.Index
-				break
+				f := v.Field(fInfo.Index)
+				if !f.CanInterface() {
+					unsafe.DisableRO(&f)
+				}
+				if len(rest) == 0 {
+					if !f.CanSet() {
+						unsafe.DisableRO(&f)
+					}
+					f.Set(ConvertValue(val, f.Type()))
+					return nil
+				}
+				return setAtPath(f, rest, val)
 			}
 		}
-		if fieldIdx == -1 {
-			return fmt.Errorf("field %s not found", key)
-		}
-		f := parent.Field(fieldIdx)
-		if !f.CanSet() {
-			unsafe.DisableRO(&f)
-		}
-		f.Set(ConvertValue(val, f.Type()))
-		return nil
+		return fmt.Errorf("field %s not found", key)
+
 	default:
-		return fmt.Errorf("cannot set value in %v", parent.Kind())
+		return fmt.Errorf("cannot navigate into %v", v.Kind())
+	}
+}
+
+// makeMapKey converts a PathPart into a reflect.Value suitable as a map key.
+func makeMapKey(keyType reflect.Type, part PathPart) (reflect.Value, error) {
+	key := part.Key
+	if key == "" && part.IsIndex {
+		key = strconv.Itoa(part.Index)
+	}
+	switch keyType.Kind() {
+	case reflect.String:
+		return reflect.ValueOf(key).Convert(keyType), nil
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		i, err := strconv.ParseInt(key, 10, 64)
+		if err != nil {
+			return reflect.Value{}, fmt.Errorf("invalid int key: %s", key)
+		}
+		return reflect.ValueOf(i).Convert(keyType), nil
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		u, err := strconv.ParseUint(key, 10, 64)
+		if err != nil {
+			return reflect.Value{}, fmt.Errorf("invalid uint key: %s", key)
+		}
+		return reflect.ValueOf(u).Convert(keyType), nil
+	default:
+		return reflect.Value{}, fmt.Errorf("unsupported map key type for path: %v", keyType)
 	}
 }
 
 func (p DeepPath) Delete(v reflect.Value) error {
-	parent, lastPart, err := p.ResolveParent(v)
+	return deleteAtPath(v, ParsePath(string(p)))
+}
+
+// deleteAtPath recursively walks parts and removes the value at the target location.
+// Like setAtPath it uses copy-modify-put-back at map boundaries so that values
+// nested inside maps can be deleted without hitting addressability panics.
+func deleteAtPath(v reflect.Value, parts []PathPart) error {
+	v, err := Dereference(v)
 	if err != nil {
 		return err
 	}
 
-	switch parent.Kind() {
+	if len(parts) == 0 {
+		return fmt.Errorf("cannot delete: empty path")
+	}
+
+	part := parts[0]
+	rest := parts[1:]
+
+	switch v.Kind() {
 	case reflect.Map:
-		keyType := parent.Type().Key()
-		var keyVal reflect.Value
-		key := lastPart.Key
-		if key == "" && lastPart.IsIndex {
-			key = strconv.Itoa(lastPart.Index)
+		keyVal, err := makeMapKey(v.Type().Key(), part)
+		if err != nil {
+			return err
 		}
-		if keyType.Kind() == reflect.String {
-			keyVal = reflect.ValueOf(key)
-		} else if keyType.Kind() == reflect.Int {
-			i, err := strconv.Atoi(key)
-			if err != nil {
-				return fmt.Errorf("invalid int key: %s", key)
-			}
-			keyVal = reflect.ValueOf(i)
+		if len(rest) == 0 {
+			v.SetMapIndex(keyVal, reflect.Value{})
+			return nil
 		}
-		parent.SetMapIndex(keyVal, reflect.Value{})
+		// Deeper: copy-modify-put-back.
+		elem := v.MapIndex(keyVal)
+		if !elem.IsValid() {
+			return fmt.Errorf("map key %v not found", part.Key)
+		}
+		newElem := reflect.New(elem.Type()).Elem()
+		newElem.Set(elem)
+		if err := deleteAtPath(newElem, rest); err != nil {
+			return err
+		}
+		v.SetMapIndex(keyVal, newElem)
 		return nil
+
 	case reflect.Slice:
-		// For keyed slices, find by key and remove; for plain slices, use positional index.
-		if keyIdx, found := sliceKeyField(parent.Type()); found {
-			key := lastPart.Key
-			if key == "" && lastPart.IsIndex {
-				key = strconv.Itoa(lastPart.Index)
+		if keyIdx, found := sliceKeyField(v.Type()); found {
+			// Keyed slice.
+			keyStr := part.Key
+			if keyStr == "" && part.IsIndex {
+				keyStr = strconv.Itoa(part.Index)
 			}
-			for i := 0; i < parent.Len(); i++ {
-				if keyFieldStr(parent.Index(i), keyIdx) == key {
-					newSlice := reflect.AppendSlice(parent.Slice(0, i), parent.Slice(i+1, parent.Len()))
-					parent.Set(newSlice)
-					return nil
+			if len(rest) == 0 {
+				for i := 0; i < v.Len(); i++ {
+					if keyFieldStr(v.Index(i), keyIdx) == keyStr {
+						newSlice := reflect.AppendSlice(v.Slice(0, i), v.Slice(i+1, v.Len()))
+						if !v.CanSet() {
+							return fmt.Errorf("cannot delete from non-settable keyed slice at key %s", keyStr)
+						}
+						v.Set(newSlice)
+						return nil
+					}
+				}
+				return fmt.Errorf("element with key %s not found", keyStr)
+			}
+			// Deeper: recurse into element (slice elements are addressable).
+			for i := 0; i < v.Len(); i++ {
+				if keyFieldStr(v.Index(i), keyIdx) == keyStr {
+					return deleteAtPath(v.Index(i), rest)
 				}
 			}
-			return fmt.Errorf("element with key %s not found", key)
+			return fmt.Errorf("element with key %s not found", keyStr)
 		}
-		idx := lastPart.Index
-		if !lastPart.IsIndex {
-			var err error
-			idx, err = strconv.Atoi(lastPart.Key)
+		// Plain slice: positional index.
+		idx := part.Index
+		if !part.IsIndex {
+			idx, err = strconv.Atoi(part.Key)
 			if err != nil {
-				return fmt.Errorf("invalid slice index: %s", lastPart.Key)
+				return fmt.Errorf("invalid slice index: %s", part.Key)
 			}
 		}
-		if idx < 0 || idx >= parent.Len() {
+		if idx < 0 || idx >= v.Len() {
 			return fmt.Errorf("index out of bounds: %d", idx)
 		}
-		newSlice := reflect.AppendSlice(parent.Slice(0, idx), parent.Slice(idx+1, parent.Len()))
-		parent.Set(newSlice)
-		return nil
-	case reflect.Struct:
-		key := lastPart.Key
-		if key == "" && lastPart.IsIndex {
-			key = strconv.Itoa(lastPart.Index)
+		if len(rest) == 0 {
+			newSlice := reflect.AppendSlice(v.Slice(0, idx), v.Slice(idx+1, v.Len()))
+			if !v.CanSet() {
+				return fmt.Errorf("cannot delete from non-settable slice at index %d", idx)
+			}
+			v.Set(newSlice)
+			return nil
 		}
-		info := GetTypeInfo(parent.Type())
-		var fieldIdx = -1
+		return deleteAtPath(v.Index(idx), rest)
+
+	case reflect.Struct:
+		key := part.Key
+		if key == "" && part.IsIndex {
+			key = strconv.Itoa(part.Index)
+		}
+		info := GetTypeInfo(v.Type())
 		for _, fInfo := range info.Fields {
 			if fInfo.Name == key || (fInfo.JSONTag != "" && fInfo.JSONTag == key) {
-				fieldIdx = fInfo.Index
-				break
+				f := v.Field(fInfo.Index)
+				if !f.CanInterface() {
+					unsafe.DisableRO(&f)
+				}
+				if len(rest) == 0 {
+					if !f.CanSet() {
+						unsafe.DisableRO(&f)
+					}
+					f.Set(reflect.Zero(f.Type()))
+					return nil
+				}
+				return deleteAtPath(f, rest)
 			}
 		}
-		if fieldIdx == -1 {
-			return fmt.Errorf("field %s not found", key)
-		}
-		f := parent.Field(fieldIdx)
-		if !f.CanSet() {
-			unsafe.DisableRO(&f)
-		}
-		f.Set(reflect.Zero(f.Type()))
-		return nil
+		return fmt.Errorf("field %s not found", key)
+
 	default:
-		return fmt.Errorf("cannot delete from %v", parent.Kind())
+		return fmt.Errorf("cannot delete from %v", v.Kind())
 	}
 }
 
