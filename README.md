@@ -152,6 +152,21 @@ undo := patch.Reverse()
 strictPatch := patch.AsStrict()
 ```
 
+### Undo/Redo with CRDTs
+
+`CRDT[T].Reverse` applies the inverse of a delta to the local node and returns a
+new `Delta[T]` with a fresh HLC timestamp, making it causally after the original
+edit and safe to propagate to peers:
+
+```go
+// Apply an edit, then undo it.
+delta, _ := node.Edit(func(v *MyDoc) { v.Title = "Draft" })
+undo := node.Reverse(delta)   // applies inverse locally, returns undo delta
+
+// Redo: reverse the undo.
+redo := node.Reverse(undo)
+```
+
 ### Standard Interop
 
 Export your Deep patches to standard RFC 6902 JSON Patch format, and parse them back:

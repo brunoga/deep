@@ -227,6 +227,20 @@ func textAncestorPath(root reflect.Value, opPath string) (string, bool) {
 	return "", false
 }
 
+// Reverse applies the inverse of delta to this node and returns a new Delta
+// representing the undo operation. The returned Delta carries a fresh HLC
+// timestamp so it is causally after the original edit and will be accepted by
+// ApplyDelta on any peer that has already seen the original.
+//
+// Calling Reverse on the returned Delta produces a redo Delta.
+func (c *CRDT[T]) Reverse(delta Delta[T]) Delta[T] {
+	reversed := delta.patch.Reverse()
+	now := c.clock.Now()
+	undoDelta := Delta[T]{patch: reversed, Timestamp: now}
+	c.ApplyDelta(undoDelta)
+	return undoDelta
+}
+
 // Merge performs a full state-based merge with another CRDT node.
 // For each changed field the node with the strictly newer effective timestamp
 // (max of write clock and tombstone) wins. Text fields are always merged
