@@ -101,21 +101,37 @@ type Document struct {
 
 ### Conditional Patching
 
-Apply changes only if specific business rules are met:
+Conditions travel with the patch and are enforced wherever it is applied —
+including on remote peers via JSON Patch interop.
+
+**Global guard** — the entire patch is a no-op if the condition fails. Use this
+for state-machine transitions where partial application would leave things in a
+bad state:
 
 ```go
-namePath := deep.Field(func(u *User) *string { return &u.Name })
-idPath   := deep.Field(func(u *User) *int    { return &u.ID   })
+statusPath := deep.Field(func(o *Order) *string { return &o.Status })
 
-patch := deep.Edit(&u).
-    With(deep.Set(namePath, "New Name").If(deep.Eq(idPath, 1))).
+// Atomically transition to "shipped" only if the order is currently "paid".
+patch := deep.Edit(&order).
+    With(deep.Set(statusPath, "shipped")).
+    Guard(deep.Eq(statusPath, "paid")).
     Build()
 ```
 
-Apply a patch only if a global guard condition holds:
+**Per-operation conditions** (`Op.If` / `Op.Unless`) — individual operations are
+skipped independently within a single patch. Use this when some fields are
+conditional but others should always be updated:
 
 ```go
-patch = patch.WithGuard(deep.Gt(deep.Field(func(u *User) *int { return &u.ID }), 0))
+paidAtPath  := deep.Field(func(i *Invoice) *time.Time { return &i.PaidAt  })
+feePath     := deep.Field(func(i *Invoice) *float64   { return &i.LateFee })
+balancePath := deep.Field(func(i *Invoice) *float64   { return &i.Balance })
+
+// Always record the payment time; only add a late fee if a balance is overdue.
+patch := deep.Edit(&invoice).
+    With(deep.Set(paidAtPath, time.Now())).
+    With(deep.Set(feePath, 25.0).If(deep.Gt(balancePath, 0.0))).
+    Build()
 ```
 
 ### Observability
