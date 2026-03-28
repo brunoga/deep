@@ -63,7 +63,7 @@ Public package used directly by generated `*_deep.go` files. Most callers will n
 
 ### CRDTs (`github.com/brunoga/deep/v5/crdt`)
 
-- `CRDT[T]` — Concurrency-safe CRDT wrapper. Create with `NewCRDT(initial, nodeID)`. Key methods: `Edit(fn)`, `ApplyDelta(delta)`, `Merge(other)`, `View()`. JSON-serializable.
+- `CRDT[T]` — Concurrency-safe CRDT wrapper. Create with `NewCRDT(initial, nodeID)`. Key methods: `Edit(fn)`, `ApplyDelta(delta)`, `Merge(other)`, `Reverse(delta)`, `View()`. JSON-serializable. `Reverse` applies the inverse of a delta and returns a new undo delta with a fresh HLC timestamp; calling `Reverse` on that delta produces a redo.
 - `Delta[T]` — A timestamped set of changes produced by `CRDT.Edit`; send to peers and apply with `CRDT.ApplyDelta`.
 - `LWW[T]` — Embeddable Last-Write-Wins register. Update with `Set(v, ts)`; accepts write only if `ts` is strictly newer.
 - `Text` (`[]TextRun`) — Convergent collaborative text. Merge concurrent edits with `MergeTextRuns(a, b)`.

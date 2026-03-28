@@ -282,6 +282,32 @@ func TestMerge_TextInKeyedSliceElement(t *testing.T) {
 	}
 }
 
+func TestCRDT_Reverse(t *testing.T) {
+	nodeA := NewCRDT(TestUser{ID: 1, Name: "Alice"}, "node-a")
+	nodeB := NewCRDT(TestUser{ID: 1, Name: "Alice"}, "node-b")
+
+	delta := nodeA.Edit(func(u *TestUser) { u.Name = "Bob" })
+
+	// Undo on nodeA
+	undoDelta := nodeA.Reverse(delta)
+	if nodeA.View().Name != "Alice" {
+		t.Errorf("Reverse did not undo: expected Alice, got %s", nodeA.View().Name)
+	}
+
+	// Undo delta propagates to peers
+	nodeB.ApplyDelta(delta)
+	nodeB.ApplyDelta(undoDelta)
+	if nodeB.View().Name != "Alice" {
+		t.Errorf("Reverse delta did not propagate: expected Alice, got %s", nodeB.View().Name)
+	}
+
+	// Redo: reverse the undo
+	nodeA.Reverse(undoDelta)
+	if nodeA.View().Name != "Bob" {
+		t.Errorf("Redo failed: expected Bob, got %s", nodeA.View().Name)
+	}
+}
+
 func TestCRDT_JSON(t *testing.T) {
 	node := NewCRDT(TestUser{ID: 1, Name: "Initial"}, "node1")
 	node.Edit(func(u *TestUser) {
