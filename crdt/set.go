@@ -37,6 +37,12 @@ func (s *Set[T]) NodeID() string { return s.inner.NodeID() }
 
 // Add appends a new uniquely-tagged entry for elem.
 // The tag is the current HLC timestamp serialised as a string map key.
+//
+// Two clock ticks occur per Add: one to mint the entry's tag and a second
+// inside the underlying Edit for the resulting Delta's Timestamp. Both
+// values are monotonic per the HLC mutex, so the extra tick is harmless;
+// keeping the tag-mint outside Edit means the tag is fixed before the
+// inner closure runs, which keeps the data-flow easy to follow.
 func (s *Set[T]) Add(elem T) {
 	id := s.inner.Clock().Now()
 	s.inner.Edit(func(si *setInner[T]) {
