@@ -155,6 +155,27 @@ func TestReflectionEngineAdvanced(t *testing.T) {
 	}
 }
 
+// TestStrictRootMismatchedOldType asserts that a strict OpReplace at root
+// whose Old value carries the wrong concrete type returns an error rather
+// than panicking on the type assertion.
+func TestStrictRootMismatchedOldType(t *testing.T) {
+	u := &testmodels.User{Name: "alice"}
+	p := deep.Patch[testmodels.User]{
+		Strict: true,
+		Operations: []deep.Operation{
+			{Kind: deep.OpReplace, Path: "/", Old: "not-a-User", New: testmodels.User{Name: "bob"}},
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("Apply panicked on mismatched Old type: %v", r)
+		}
+	}()
+	if err := deep.Apply(u, p); err == nil {
+		t.Error("expected strict check error on mismatched Old type, got nil")
+	}
+}
+
 func TestEngineFailures(t *testing.T) {
 	u := &testmodels.User{}
 

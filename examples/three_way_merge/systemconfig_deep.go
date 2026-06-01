@@ -63,7 +63,8 @@ func (t *SystemConfig) applyOperation(op deep.Operation, logger *slog.Logger) (b
 	switch op.Path {
 	case "/":
 		if op.Strict && (op.Kind == deep.OpReplace || op.Kind == deep.OpRemove) {
-			if !deep.Equal(*t, op.Old.(SystemConfig)) {
+			old, ok := op.Old.(SystemConfig)
+			if !ok || !deep.Equal(*t, old) {
 				return true, fmt.Errorf("strict check failed at root: expected %v, got %v", op.Old, *t)
 			}
 		}

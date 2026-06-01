@@ -545,7 +545,8 @@ var applyOpTmpl = template.Must(template.New("applyOp").Funcs(tmplFuncs).Parse(
 	switch op.Path {
 	case "/":
 		if op.Strict && (op.Kind == {{.P}}OpReplace || op.Kind == {{.P}}OpRemove) {
-			if !{{.P}}Equal(*t, op.Old.({{.TypeName}})) {
+			old, ok := op.Old.({{.TypeName}})
+			if !ok || !{{.P}}Equal(*t, old) {
 				return true, fmt.Errorf("strict check failed at root: expected %v, got %v", op.Old, *t)
 			}
 		}

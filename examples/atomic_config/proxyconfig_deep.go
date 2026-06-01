@@ -62,7 +62,8 @@ func (t *ProxyConfig) applyOperation(op deep.Operation, logger *slog.Logger) (bo
 	switch op.Path {
 	case "/":
 		if op.Strict && (op.Kind == deep.OpReplace || op.Kind == deep.OpRemove) {
-			if !deep.Equal(*t, op.Old.(ProxyConfig)) {
+			old, ok := op.Old.(ProxyConfig)
+			if !ok || !deep.Equal(*t, old) {
 				return true, fmt.Errorf("strict check failed at root: expected %v, got %v", op.Old, *t)
 			}
 		}
@@ -340,7 +341,8 @@ func (t *SystemMeta) applyOperation(op deep.Operation, logger *slog.Logger) (boo
 	switch op.Path {
 	case "/":
 		if op.Strict && (op.Kind == deep.OpReplace || op.Kind == deep.OpRemove) {
-			if !deep.Equal(*t, op.Old.(SystemMeta)) {
+			old, ok := op.Old.(SystemMeta)
+			if !ok || !deep.Equal(*t, old) {
 				return true, fmt.Errorf("strict check failed at root: expected %v, got %v", op.Old, *t)
 			}
 		}

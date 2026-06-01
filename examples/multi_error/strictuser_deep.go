@@ -62,7 +62,8 @@ func (t *StrictUser) applyOperation(op deep.Operation, logger *slog.Logger) (boo
 	switch op.Path {
 	case "/":
 		if op.Strict && (op.Kind == deep.OpReplace || op.Kind == deep.OpRemove) {
-			if !deep.Equal(*t, op.Old.(StrictUser)) {
+			old, ok := op.Old.(StrictUser)
+			if !ok || !deep.Equal(*t, old) {
 				return true, fmt.Errorf("strict check failed at root: expected %v, got %v", op.Old, *t)
 			}
 		}
