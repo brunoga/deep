@@ -168,8 +168,34 @@ func TestPatchReverseExhaustive(t *testing.T) {
 	}
 
 	rev := p.Reverse()
-	if len(rev.Operations) != 6 {
-		t.Errorf("expected 6 reversed ops, got %d", len(rev.Operations))
+	// OpLog has no state effect; Reverse skips it instead of emitting a
+	// malformed op whose Kind defaults to OpAdd.
+	if len(rev.Operations) != 5 {
+		t.Errorf("expected 5 reversed ops (OpLog skipped), got %d", len(rev.Operations))
+	}
+	for _, op := range rev.Operations {
+		if op.Kind == deep.OpLog {
+			t.Errorf("Reverse should drop OpLog, got %+v", op)
+		}
+		// Reversing OpLog used to emit {Kind:OpAdd, Path:"/h", New:nil}; guard
+		// against that exact regression.
+		if op.Path == "/h" {
+			t.Errorf("Reverse leaked OpLog at /h as an OpAdd: %+v", op)
+		}
+	}
+}
+
+// TestPatchReverseOpLogOnly asserts that a patch containing only OpLog ops
+// reverses to an empty patch rather than a sequence of malformed OpAdds.
+func TestPatchReverseOpLogOnly(t *testing.T) {
+	p := deep.Patch[testmodels.User]{}
+	p.Operations = []deep.Operation{
+		{Kind: deep.OpLog, Path: "/", New: "first"},
+		{Kind: deep.OpLog, Path: "/", New: "second"},
+	}
+	rev := p.Reverse()
+	if len(rev.Operations) != 0 {
+		t.Errorf("expected empty reverse of OpLog-only patch, got %+v", rev.Operations)
 	}
 }
 

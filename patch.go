@@ -122,6 +122,11 @@ func (p Patch[T]) Reverse() Patch[T] {
 	}
 	for i := len(p.Operations) - 1; i >= 0; i-- {
 		op := p.Operations[i]
+		// OpLog has no state effect; its inverse is itself a no-op. Skip rather
+		// than emit a zero-valued Operation (which would default to OpAdd).
+		if op.Kind == OpLog {
+			continue
+		}
 		rev := Operation{
 			Path: op.Path,
 		}
