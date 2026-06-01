@@ -6,7 +6,6 @@ import (
 	deep "github.com/brunoga/deep/v5"
 	"github.com/brunoga/deep/v5/condition"
 	crdt "github.com/brunoga/deep/v5/crdt"
-	_deepengine "github.com/brunoga/deep/v5/internal/engine"
 	"log/slog"
 	"regexp"
 	"strings"
@@ -33,7 +32,7 @@ func (t *User) Patch(p deep.Patch[User], logger *slog.Logger) error {
 		if err != nil {
 			errs = append(errs, err)
 		} else if !handled {
-			if err := _deepengine.ApplyOpReflection(t, op, logger); err != nil {
+			if err := deep.ApplyOpReflection(t, op, logger); err != nil {
 				errs = append(errs, err)
 			}
 		}
@@ -564,7 +563,7 @@ func (t *Detail) Patch(p deep.Patch[Detail], logger *slog.Logger) error {
 		if err != nil {
 			errs = append(errs, err)
 		} else if !handled {
-			if err := _deepengine.ApplyOpReflection(t, op, logger); err != nil {
+			if err := deep.ApplyOpReflection(t, op, logger); err != nil {
 				errs = append(errs, err)
 			}
 		}

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	deep "github.com/brunoga/deep/v5"
 	"github.com/brunoga/deep/v5/condition"
-	_deepengine "github.com/brunoga/deep/v5/internal/engine"
 	"log/slog"
 	"regexp"
 )
@@ -31,7 +30,7 @@ func (t *Item) Patch(p deep.Patch[Item], logger *slog.Logger) error {
 		if err != nil {
 			errs = append(errs, err)
 		} else if !handled {
-			if err := _deepengine.ApplyOpReflection(t, op, logger); err != nil {
+			if err := deep.ApplyOpReflection(t, op, logger); err != nil {
 				errs = append(errs, err)
 			}
 		}
@@ -309,7 +308,7 @@ func (t *Inventory) Patch(p deep.Patch[Inventory], logger *slog.Logger) error {
 		if err != nil {
 			errs = append(errs, err)
 		} else if !handled {
-			if err := _deepengine.ApplyOpReflection(t, op, logger); err != nil {
+			if err := deep.ApplyOpReflection(t, op, logger); err != nil {
 				errs = append(errs, err)
 			}
 		}
