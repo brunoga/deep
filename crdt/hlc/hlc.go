@@ -59,6 +59,11 @@ func (h HLC) String() string {
 }
 
 // Clock manages the local HLC state.
+//
+// Latest is exposed for serialisation but must not be mutated by callers
+// after the clock is in use — direct writes bypass the internal mutex and
+// race with concurrent Now/Update. Use [Clock.SetLatest] for explicit
+// rehydration (e.g. from snapshots).
 type Clock struct {
 	mu     sync.Mutex
 	Latest HLC
@@ -75,6 +80,15 @@ func NewClock(nodeID string) *Clock {
 			NodeID:   nodeID,
 		},
 	}
+}
+
+// SetLatest rehydrates the clock from a previously observed timestamp under
+// the clock's mutex, so it is safe to call alongside concurrent Now/Update.
+// Subsequent Now/Update calls advance from at least h.
+func (c *Clock) SetLatest(h HLC) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.Latest = h
 }
 
 // Now returns the current HLC timestamp.

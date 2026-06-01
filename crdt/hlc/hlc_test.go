@@ -97,3 +97,22 @@ func TestClock_UpdateMore(t *testing.T) {
 		t.Errorf("expected logical %d, got %d", remote2.Logical+1, c.Latest.Logical)
 	}
 }
+
+// TestSetLatestSafeConcurrentWithNow stresses SetLatest against concurrent
+// Now calls and checks that the race detector reports no data race on
+// Clock.Latest. Direct field assignment would race here; SetLatest must
+// take the clock mutex to be safe.
+func TestSetLatestSafeConcurrentWithNow(t *testing.T) {
+	c := NewClock("n1")
+	done := make(chan struct{})
+	go func() {
+		for i := 0; i < 1000; i++ {
+			_ = c.Now()
+		}
+		close(done)
+	}()
+	for i := 0; i < 1000; i++ {
+		c.SetLatest(HLC{WallTime: int64(i), Logical: 0, NodeID: "n1"})
+	}
+	<-done
+}

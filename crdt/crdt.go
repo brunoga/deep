@@ -392,6 +392,6 @@ func (c *CRDT[T]) UnmarshalJSON(data []byte) error {
 	c.tombstones = m.Tombstones
 	c.nodeID = m.NodeID
 	c.clock = hlc.NewClock(m.NodeID)
-	c.clock.Latest = m.Latest
+	c.clock.SetLatest(m.Latest)
 	return nil
 }
