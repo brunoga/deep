@@ -21,6 +21,9 @@ func ApplyOpReflection[T any](target *T, op Operation, logger *slog.Logger) erro
 
 // ApplyOpReflectionValue applies op to the already-reflected value v.
 func ApplyOpReflectionValue(v reflect.Value, op Operation, logger *slog.Logger) error {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	// Strict check.
 	if op.Strict && (op.Kind == OpReplace || op.Kind == OpRemove) {
 		current, err := icore.DeepPath(op.Path).Resolve(v)
