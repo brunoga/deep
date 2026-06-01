@@ -105,9 +105,9 @@ func (p Patch[T]) String() string {
 		case OpReplace:
 			b.WriteString(fmt.Sprintf("Replace %s: %v -> %v", op.Path, op.Old, op.New))
 		case OpMove:
-			b.WriteString(fmt.Sprintf("Move %v to %s", op.Old, op.Path))
+			b.WriteString(fmt.Sprintf("Move %s to %s", op.From, op.Path))
 		case OpCopy:
-			b.WriteString(fmt.Sprintf("Copy %v to %s", op.Old, op.Path))
+			b.WriteString(fmt.Sprintf("Copy %s to %s", op.From, op.Path))
 		case OpLog:
 			b.WriteString(fmt.Sprintf("Log %s: %v", op.Path, op.New))
 		}
@@ -143,14 +143,24 @@ func (p Patch[T]) Reverse() Patch[T] {
 			rev.New = op.Old
 		case OpMove:
 			rev.Kind = OpMove
-			// op.Old for Move was the fromPath string.
-			// To reverse, we move back from current Path to op.Old Path.
-			rev.Path = fmt.Sprintf("%v", op.Old)
-			rev.Old = op.Path
+			rev.Path = op.From
+			rev.From = op.Path
+			// If the destination had a displaced value at apply-time, restore
+			// it via Old; reversing the move strands that value otherwise.
+			if op.Old != nil {
+				rev.New = op.Old
+			}
 		case OpCopy:
-			// Undoing a copy means removing the copied value at the target path
-			rev.Kind = OpRemove
-			rev.Old = op.New
+			// If we know the prior destination value, restore it with Replace;
+			// otherwise the destination was empty pre-copy so Remove suffices.
+			if op.Old != nil {
+				rev.Kind = OpReplace
+				rev.Old = op.New
+				rev.New = op.Old
+			} else {
+				rev.Kind = OpRemove
+				rev.Old = op.New
+			}
 		}
 		res.Operations = append(res.Operations, rev)
 	}
@@ -182,7 +192,7 @@ func (p Patch[T]) ToJSONPatch() ([]byte, error) {
 		case OpAdd, OpReplace:
 			m["value"] = op.New
 		case OpMove, OpCopy:
-			m["from"] = op.Old
+			m["from"] = op.From
 		case OpLog:
 			m["value"] = op.New // log message
 		}
@@ -241,10 +251,14 @@ func ParseJSONPatch[T any](data []byte) (Patch[T], error) {
 			op.New = m["value"]
 		case "move":
 			op.Kind = OpMove
-			op.Old = m["from"]
+			if s, ok := m["from"].(string); ok {
+				op.From = s
+			}
 		case "copy":
 			op.Kind = OpCopy
-			op.Old = m["from"]
+			if s, ok := m["from"].(string); ok {
+				op.From = s
+			}
 		case "log":
 			op.Kind = OpLog
 			op.New = m["value"]
@@ -301,13 +315,13 @@ func Remove[T, V any](p Path[T, V]) Op {
 // Move returns a type-safe move operation that relocates the value at from to to.
 // Both paths must share the same value type V.
 func Move[T, V any](from, to Path[T, V]) Op {
-	return Op{op: Operation{Kind: OpMove, Path: to.String(), Old: from.String()}}
+	return Op{op: Operation{Kind: OpMove, Path: to.String(), From: from.String()}}
 }
 
 // Copy returns a type-safe copy operation that duplicates the value at from to to.
 // Both paths must share the same value type V.
 func Copy[T, V any](from, to Path[T, V]) Op {
-	return Op{op: Operation{Kind: OpCopy, Path: to.String(), Old: from.String()}}
+	return Op{op: Operation{Kind: OpCopy, Path: to.String(), From: from.String()}}
 }
 
 // Builder constructs a [Patch] via a fluent chain.

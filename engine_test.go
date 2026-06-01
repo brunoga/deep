@@ -120,8 +120,8 @@ func TestOpCopyDeepCopies(t *testing.T) {
 	}
 	s := &S{A: []int{1, 2, 3}, M: map[string]int{"k": 1}}
 	p := deep.Patch[S]{Operations: []deep.Operation{
-		{Kind: deep.OpCopy, Path: "/B", Old: "/A"},
-		{Kind: deep.OpCopy, Path: "/N", Old: "/M"},
+		{Kind: deep.OpCopy, Path: "/B", From: "/A"},
+		{Kind: deep.OpCopy, Path: "/N", From: "/M"},
 	}}
 	if err := deep.Apply(s, p); err != nil {
 		t.Fatalf("Apply: %v", err)
@@ -145,8 +145,8 @@ func TestReflectionEngineAdvanced(t *testing.T) {
 
 	p := deep.Patch[Data]{}
 	p.Operations = []deep.Operation{
-		{Kind: deep.OpMove, Path: "/B", Old: "/A"},
-		{Kind: deep.OpCopy, Path: "/A", Old: "/B"},
+		{Kind: deep.OpMove, Path: "/B", From: "/A"},
+		{Kind: deep.OpCopy, Path: "/A", From: "/B"},
 		{Kind: deep.OpRemove, Path: "/A"},
 	}
 
@@ -160,12 +160,12 @@ func TestEngineFailures(t *testing.T) {
 
 	// Move from non-existent
 	p1 := deep.Patch[testmodels.User]{}
-	p1.Operations = []deep.Operation{{Kind: deep.OpMove, Path: "/id", Old: "/nonexistent"}}
+	p1.Operations = []deep.Operation{{Kind: deep.OpMove, Path: "/id", From: "/nonexistent"}}
 	deep.Apply(u, p1)
 
 	// Copy from non-existent
 	p2 := deep.Patch[testmodels.User]{}
-	p2.Operations = []deep.Operation{{Kind: deep.OpCopy, Path: "/id", Old: "/nonexistent"}}
+	p2.Operations = []deep.Operation{{Kind: deep.OpCopy, Path: "/id", From: "/nonexistent"}}
 	deep.Apply(u, p2)
 
 	// Apply to nil
