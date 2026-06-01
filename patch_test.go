@@ -268,6 +268,35 @@ func TestPatchIsEmpty(t *testing.T) {
 	}
 }
 
+// TestParseJSONPatchGuardOnlyLeading asserts the Guard-extraction heuristic
+// only fires on the leading entry. A later {"op":"test","path":"/","if":...}
+// must not overwrite Guard or be re-interpreted as a second guard; deep does
+// not model standalone test ops, so trailing tests are dropped as unknown.
+func TestParseJSONPatchGuardOnlyLeading(t *testing.T) {
+	raw := []byte(`[
+		{"op":"test","path":"/","if":{"op":"more","path":"/age","value":18}},
+		{"op":"replace","path":"/name","value":"Alice"},
+		{"op":"test","path":"/","if":{"op":"more","path":"/age","value":99}}
+	]`)
+	type Doc struct {
+		Name string `json:"name"`
+		Age  int    `json:"age"`
+	}
+	p, err := deep.ParseJSONPatch[Doc](raw)
+	if err != nil {
+		t.Fatalf("ParseJSONPatch: %v", err)
+	}
+	if p.Guard == nil {
+		t.Fatal("expected leading test op to be lifted into Guard")
+	}
+	// The leading test specified Gt(/age, 18); the trailing one carries
+	// Gt(/age, 99). If the trailing entry were also lifted into Guard, the
+	// 99 value would clobber the 18.
+	if gv, ok := p.Guard.Value.(float64); !ok || gv != 18 {
+		t.Errorf("Guard value should remain 18 from leading test, got %v", p.Guard.Value)
+	}
+}
+
 func TestParseJSONPatchRoundTrip(t *testing.T) {
 	type Doc struct {
 		Name  string `json:"name"`

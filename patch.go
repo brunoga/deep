@@ -212,22 +212,34 @@ func (p Patch[T]) ToJSONPatch() ([]byte, error) {
 
 // ParseJSONPatch parses a JSON Patch document (RFC 6902 plus deep extensions)
 // back into a Patch[T]. This is the inverse of Patch.ToJSONPatch().
+//
+// Wire convention: a leading {"op":"test","path":"/","if":<predicate>} entry
+// is interpreted as the global Patch.Guard rather than a regular test op.
+// This mirrors what ToJSONPatch emits; user-authored documents that happen
+// to start with that exact triple will have it lifted into Guard. A test op
+// on "/" without an "if" key is preserved as a regular operation (it has no
+// special meaning in this format), and any subsequent test op is treated
+// normally. To round-trip a regular test op at "/", attach it via Builder
+// rather than serialising it as the document's first entry.
 func ParseJSONPatch[T any](data []byte) (Patch[T], error) {
 	var ops []map[string]any
 	if err := json.Unmarshal(data, &ops); err != nil {
 		return Patch[T]{}, fmt.Errorf("ParseJSONPatch: %w", err)
 	}
 	res := Patch[T]{}
-	for _, m := range ops {
+	for i, m := range ops {
 		opStr, _ := m["op"].(string)
 		path, _ := m["path"].(string)
 
-		// Global condition is encoded as a test op on "/" with an "if" predicate.
-		if opStr == "test" && path == "/" {
+		// Global condition encoding: ONLY the leading entry (matched as
+		// op==test, path=="/", "if" present) is lifted into Guard. A later
+		// test op with the same shape is kept as a regular operation so a
+		// document with multiple "/" tests round-trips faithfully.
+		if i == 0 && opStr == "test" && path == "/" {
 			if ifPred, ok := m["if"].(map[string]any); ok {
 				res.Guard = condition.FromPredicate(ifPred)
+				continue
 			}
-			continue
 		}
 
 		op := Operation{Path: path}
