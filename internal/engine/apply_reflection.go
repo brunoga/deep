@@ -86,7 +86,7 @@ func ApplyOpReflectionValue(v reflect.Value, op Operation, logger *slog.Logger) 
 		var val reflect.Value
 		val, err = icore.DeepPath(fromPath).Resolve(v)
 		if err == nil {
-			err = icore.DeepPath(op.Path).Set(v, val)
+			err = icore.DeepPath(op.Path).Set(v, icore.DeepCopyValue(val))
 		}
 	case OpLog:
 		logger.Info("deep log", "message", op.New, "path", op.Path)

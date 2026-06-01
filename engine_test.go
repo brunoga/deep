@@ -108,6 +108,34 @@ func TestNilMapDiff(t *testing.T) {
 	}
 }
 
+// TestOpCopyDeepCopies asserts OpCopy on a reference-typed field gives the
+// destination its own backing storage, so mutations to the source no longer
+// leak into the destination.
+func TestOpCopyDeepCopies(t *testing.T) {
+	type S struct {
+		A []int
+		B []int
+		M map[string]int
+		N map[string]int
+	}
+	s := &S{A: []int{1, 2, 3}, M: map[string]int{"k": 1}}
+	p := deep.Patch[S]{Operations: []deep.Operation{
+		{Kind: deep.OpCopy, Path: "/B", Old: "/A"},
+		{Kind: deep.OpCopy, Path: "/N", Old: "/M"},
+	}}
+	if err := deep.Apply(s, p); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	s.A[0] = 99
+	s.M["k"] = 99
+	if s.B[0] == 99 {
+		t.Errorf("OpCopy on []int aliases source: B=%v", s.B)
+	}
+	if s.N["k"] == 99 {
+		t.Errorf("OpCopy on map aliases source: N=%v", s.N)
+	}
+}
+
 func TestReflectionEngineAdvanced(t *testing.T) {
 	type Data struct {
 		A int
