@@ -1,6 +1,7 @@
 package hlc
 
 import (
+	"math"
 	"testing"
 	"time"
 )
@@ -96,4 +97,49 @@ func TestClock_UpdateMore(t *testing.T) {
 	if c.Latest.Logical != remote2.Logical+1 {
 		t.Errorf("expected logical %d, got %d", remote2.Logical+1, c.Latest.Logical)
 	}
+}
+
+// TestSetLatestSafeConcurrentWithNow stresses SetLatest against concurrent
+// Now calls and checks that the race detector reports no data race on
+// Clock.Latest. Direct field assignment would race here; SetLatest must
+// take the clock mutex to be safe.
+func TestSetLatestSafeConcurrentWithNow(t *testing.T) {
+	c := NewClock("n1")
+	done := make(chan struct{})
+	go func() {
+		for i := 0; i < 1000; i++ {
+			_ = c.Now()
+		}
+		close(done)
+	}()
+	for i := 0; i < 1000; i++ {
+		c.SetLatest(HLC{WallTime: int64(i), Logical: 0, NodeID: "n1"})
+	}
+	<-done
+}
+
+// TestReserveOverflowPanics ensures Reserve panics rather than silently
+// wrapping when the requested reservation would overflow Logical (int32).
+func TestReserveOverflowPanics(t *testing.T) {
+	c := NewClock("n1")
+	// Use a far-future wall time so Reserve doesn't reset Logical to 0 before
+	// the overflow check fires.
+	c.SetLatest(HLC{WallTime: math.MaxInt64, Logical: math.MaxInt32 - 10, NodeID: "n1"})
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("expected panic on int32 overflow, got nil")
+		}
+	}()
+	c.Reserve(100)
+}
+
+// TestReserveNegativePanics rejects nonsensical reservations.
+func TestReserveNegativePanics(t *testing.T) {
+	c := NewClock("n1")
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("expected panic on negative n")
+		}
+	}()
+	c.Reserve(-1)
 }

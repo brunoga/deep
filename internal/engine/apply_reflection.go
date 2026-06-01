@@ -21,6 +21,9 @@ func ApplyOpReflection[T any](target *T, op Operation, logger *slog.Logger) erro
 
 // ApplyOpReflectionValue applies op to the already-reflected value v.
 func ApplyOpReflectionValue(v reflect.Value, op Operation, logger *slog.Logger) error {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	// Strict check.
 	if op.Strict && (op.Kind == OpReplace || op.Kind == OpRemove) {
 		current, err := icore.DeepPath(op.Path).Resolve(v)
@@ -71,22 +74,26 @@ func ApplyOpReflectionValue(v reflect.Value, op Operation, logger *slog.Logger) 
 	case OpRemove:
 		err = icore.DeepPath(op.Path).Delete(v)
 	case OpMove:
-		fromPath := op.Old.(string)
+		if op.From == "" {
+			return fmt.Errorf("move at %s: missing From source path", op.Path)
+		}
 		var val reflect.Value
-		val, err = icore.DeepPath(fromPath).Resolve(v)
+		val, err = icore.DeepPath(op.From).Resolve(v)
 		if err == nil {
 			copied := reflect.New(val.Type()).Elem()
 			copied.Set(val)
-			if err = icore.DeepPath(fromPath).Delete(v); err == nil {
+			if err = icore.DeepPath(op.From).Delete(v); err == nil {
 				err = icore.DeepPath(op.Path).Set(v, copied)
 			}
 		}
 	case OpCopy:
-		fromPath := op.Old.(string)
+		if op.From == "" {
+			return fmt.Errorf("copy at %s: missing From source path", op.Path)
+		}
 		var val reflect.Value
-		val, err = icore.DeepPath(fromPath).Resolve(v)
+		val, err = icore.DeepPath(op.From).Resolve(v)
 		if err == nil {
-			err = icore.DeepPath(op.Path).Set(v, val)
+			err = icore.DeepPath(op.Path).Set(v, icore.DeepCopyValue(val))
 		}
 	case OpLog:
 		logger.Info("deep log", "message", op.New, "path", op.Path)

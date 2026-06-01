@@ -37,6 +37,12 @@ func (s *Set[T]) NodeID() string { return s.inner.NodeID() }
 
 // Add appends a new uniquely-tagged entry for elem.
 // The tag is the current HLC timestamp serialised as a string map key.
+//
+// Two clock ticks occur per Add: one to mint the entry's tag and a second
+// inside the underlying Edit for the resulting Delta's Timestamp. Both
+// values are monotonic per the HLC mutex, so the extra tick is harmless;
+// keeping the tag-mint outside Edit means the tag is fixed before the
+// inner closure runs, which keeps the data-flow easy to follow.
 func (s *Set[T]) Add(elem T) {
 	id := s.inner.Clock().Now()
 	s.inner.Edit(func(si *setInner[T]) {
@@ -86,8 +92,19 @@ func (s *Set[T]) Items() []T {
 }
 
 // Len returns the number of distinct live elements.
+//
+// Cost is O(n) in the number of entries (live + tombstoned) because OR-Set
+// duplicates require dedup; the prior implementation built a full slice via
+// Items just to take its length, which this avoids.
 func (s *Set[T]) Len() int {
-	return len(s.Items())
+	state := s.inner.View()
+	seen := make(map[T]struct{}, len(state.Entries))
+	for _, e := range state.Entries {
+		if !e.Deleted {
+			seen[e.Elem] = struct{}{}
+		}
+	}
+	return len(seen)
 }
 
 // Merge performs a full state-based OR-Set merge with another Set node.

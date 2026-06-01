@@ -58,13 +58,14 @@ func Evaluate(root reflect.Value, c *Condition) (bool, error) {
 		return false, nil
 	}
 	if c.Op == Not {
-		if len(c.Sub) > 0 {
-			ok, err := Evaluate(root, c.Sub[0])
-			if err != nil {
-				return false, err
-			}
-			return !ok, nil
+		if len(c.Sub) == 0 {
+			return false, fmt.Errorf("malformed Not condition: missing sub-condition")
 		}
+		ok, err := Evaluate(root, c.Sub[0])
+		if err != nil {
+			return false, err
+		}
+		return !ok, nil
 	}
 
 	val, err := icore.DeepPath(c.Path).Resolve(root)

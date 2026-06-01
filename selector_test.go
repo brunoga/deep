@@ -64,6 +64,46 @@ func TestSelectorNestedPointer(t *testing.T) {
 	}
 }
 
+// TestMapKeyEscapesJSONPointerSpecials verifies that map keys containing the
+// JSON Pointer reserved characters '/' and '~' are RFC 6901-escaped so the
+// resulting path navigates to the correct key.
+func TestMapKeyEscapesJSONPointerSpecials(t *testing.T) {
+	type S struct {
+		M map[string]int `json:"m"`
+	}
+
+	mPath := deep.Field(func(s *S) *map[string]int { return &s.M })
+
+	cases := []struct {
+		key      string
+		wantPath string
+	}{
+		{"a/b", "/m/a~1b"},
+		{"c~d", "/m/c~0d"},
+		{"~/", "/m/~0~1"},
+		{"plain", "/m/plain"},
+	}
+	for _, c := range cases {
+		got := deep.MapKey[S, map[string]int, string, int](mPath, c.key).String()
+		if got != c.wantPath {
+			t.Errorf("MapKey(%q) path = %q, want %q", c.key, got, c.wantPath)
+		}
+	}
+
+	// End-to-end: a Set through MapKey on a slash-bearing key must hit the
+	// right entry.
+	s := &S{M: map[string]int{"a/b": 0, "other": 0}}
+	p := deep.Edit(s).With(
+		deep.Set(deep.MapKey[S, map[string]int, string, int](mPath, "a/b"), 42),
+	).Build()
+	if err := deep.Apply(s, p); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if s.M["a/b"] != 42 {
+		t.Errorf("expected M[\"a/b\"] == 42 after Apply, got %v", s.M)
+	}
+}
+
 // TestSelectorCircularType verifies that self-referential struct types do not
 // cause infinite recursion during path resolution.
 func TestSelectorCircularType(t *testing.T) {

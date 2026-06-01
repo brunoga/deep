@@ -103,8 +103,8 @@ func TestPatchUtilities(t *testing.T) {
 		{Kind: deep.OpAdd, Path: "/a", New: 1},
 		{Kind: deep.OpRemove, Path: "/b", Old: 2},
 		{Kind: deep.OpReplace, Path: "/c", Old: 3, New: 4},
-		{Kind: deep.OpMove, Path: "/d", Old: "/e"},
-		{Kind: deep.OpCopy, Path: "/f", Old: "/g"},
+		{Kind: deep.OpMove, Path: "/d", From: "/e"},
+		{Kind: deep.OpCopy, Path: "/f", From: "/g"},
 		{Kind: deep.OpLog, Path: "/h", New: "msg"},
 	}
 
@@ -162,14 +162,82 @@ func TestPatchReverseExhaustive(t *testing.T) {
 		{Kind: deep.OpAdd, Path: "/a", New: 1},
 		{Kind: deep.OpRemove, Path: "/b", Old: 2},
 		{Kind: deep.OpReplace, Path: "/c", Old: 3, New: 4},
-		{Kind: deep.OpMove, Path: "/d", Old: "/e"},
-		{Kind: deep.OpCopy, Path: "/f", Old: "/g"},
+		{Kind: deep.OpMove, Path: "/d", From: "/e"},
+		{Kind: deep.OpCopy, Path: "/f", From: "/g"},
 		{Kind: deep.OpLog, Path: "/h", New: "msg"},
 	}
 
 	rev := p.Reverse()
-	if len(rev.Operations) != 6 {
-		t.Errorf("expected 6 reversed ops, got %d", len(rev.Operations))
+	// OpLog has no state effect; Reverse skips it instead of emitting a
+	// malformed op whose Kind defaults to OpAdd.
+	if len(rev.Operations) != 5 {
+		t.Errorf("expected 5 reversed ops (OpLog skipped), got %d", len(rev.Operations))
+	}
+	for _, op := range rev.Operations {
+		if op.Kind == deep.OpLog {
+			t.Errorf("Reverse should drop OpLog, got %+v", op)
+		}
+		// Reversing OpLog used to emit {Kind:OpAdd, Path:"/h", New:nil}; guard
+		// against that exact regression.
+		if op.Path == "/h" {
+			t.Errorf("Reverse leaked OpLog at /h as an OpAdd: %+v", op)
+		}
+	}
+}
+
+// TestPatchReverseOpCopyWithPriorValue asserts that when an OpCopy carries the
+// displaced destination value in Old, Reverse emits an OpReplace that restores
+// that value rather than an OpRemove that strands it.
+func TestPatchReverseOpCopyWithPriorValue(t *testing.T) {
+	p := deep.Patch[testmodels.User]{}
+	p.Operations = []deep.Operation{
+		// Pre-copy /dst held "before"; copy overwrote it with "after".
+		{Kind: deep.OpCopy, Path: "/dst", From: "/src", Old: "before", New: "after"},
+	}
+	rev := p.Reverse()
+	if len(rev.Operations) != 1 {
+		t.Fatalf("expected 1 reversed op, got %d", len(rev.Operations))
+	}
+	got := rev.Operations[0]
+	if got.Kind != deep.OpReplace {
+		t.Errorf("reverse of OpCopy with prior value should be OpReplace, got %v", got.Kind)
+	}
+	if got.Path != "/dst" {
+		t.Errorf("reverse target path = %q, want /dst", got.Path)
+	}
+	if got.Old != "after" || got.New != "before" {
+		t.Errorf("reverse should restore prior value: got Old=%v New=%v, want Old=after New=before", got.Old, got.New)
+	}
+}
+
+// TestPatchReverseOpMoveSymmetric asserts OpMove reverses by swapping From and
+// Path, restoring the original location.
+func TestPatchReverseOpMoveSymmetric(t *testing.T) {
+	p := deep.Patch[testmodels.User]{}
+	p.Operations = []deep.Operation{
+		{Kind: deep.OpMove, Path: "/dst", From: "/src"},
+	}
+	rev := p.Reverse()
+	if len(rev.Operations) != 1 {
+		t.Fatalf("expected 1 reversed op, got %d", len(rev.Operations))
+	}
+	got := rev.Operations[0]
+	if got.Kind != deep.OpMove || got.Path != "/src" || got.From != "/dst" {
+		t.Errorf("reverse OpMove: got Path=%s From=%s, want Path=/src From=/dst", got.Path, got.From)
+	}
+}
+
+// TestPatchReverseOpLogOnly asserts that a patch containing only OpLog ops
+// reverses to an empty patch rather than a sequence of malformed OpAdds.
+func TestPatchReverseOpLogOnly(t *testing.T) {
+	p := deep.Patch[testmodels.User]{}
+	p.Operations = []deep.Operation{
+		{Kind: deep.OpLog, Path: "/", New: "first"},
+		{Kind: deep.OpLog, Path: "/", New: "second"},
+	}
+	rev := p.Reverse()
+	if len(rev.Operations) != 0 {
+		t.Errorf("expected empty reverse of OpLog-only patch, got %+v", rev.Operations)
 	}
 }
 
@@ -197,6 +265,35 @@ func TestPatchIsEmpty(t *testing.T) {
 	p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpAdd, Path: "/name", New: "x"})
 	if p.IsEmpty() {
 		t.Error("patch with operations should not be empty")
+	}
+}
+
+// TestParseJSONPatchGuardOnlyLeading asserts the Guard-extraction heuristic
+// only fires on the leading entry. A later {"op":"test","path":"/","if":...}
+// must not overwrite Guard or be re-interpreted as a second guard; deep does
+// not model standalone test ops, so trailing tests are dropped as unknown.
+func TestParseJSONPatchGuardOnlyLeading(t *testing.T) {
+	raw := []byte(`[
+		{"op":"test","path":"/","if":{"op":"more","path":"/age","value":18}},
+		{"op":"replace","path":"/name","value":"Alice"},
+		{"op":"test","path":"/","if":{"op":"more","path":"/age","value":99}}
+	]`)
+	type Doc struct {
+		Name string `json:"name"`
+		Age  int    `json:"age"`
+	}
+	p, err := deep.ParseJSONPatch[Doc](raw)
+	if err != nil {
+		t.Fatalf("ParseJSONPatch: %v", err)
+	}
+	if p.Guard == nil {
+		t.Fatal("expected leading test op to be lifted into Guard")
+	}
+	// The leading test specified Gt(/age, 18); the trailing one carries
+	// Gt(/age, 99). If the trailing entry were also lifted into Guard, the
+	// 99 value would clobber the 18.
+	if gv, ok := p.Guard.Value.(float64); !ok || gv != 18 {
+		t.Errorf("Guard value should remain 18 from leading test, got %v", p.Guard.Value)
 	}
 }
 
@@ -279,8 +376,8 @@ func TestBuilderMoveCopy(t *testing.T) {
 	if len(p.Operations) != 1 || p.Operations[0].Kind != deep.OpMove {
 		t.Error("Move not added correctly")
 	}
-	if p.Operations[0].Old != aPath.String() || p.Operations[0].Path != bPath.String() {
-		t.Errorf("Move paths wrong: from=%v to=%v", p.Operations[0].Old, p.Operations[0].Path)
+	if p.Operations[0].From != aPath.String() || p.Operations[0].Path != bPath.String() {
+		t.Errorf("Move paths wrong: from=%v to=%v", p.Operations[0].From, p.Operations[0].Path)
 	}
 
 	p2 := deep.Edit(&S{}).With(deep.Copy(aPath, bPath)).Build()

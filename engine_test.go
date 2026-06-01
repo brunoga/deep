@@ -108,6 +108,34 @@ func TestNilMapDiff(t *testing.T) {
 	}
 }
 
+// TestOpCopyDeepCopies asserts OpCopy on a reference-typed field gives the
+// destination its own backing storage, so mutations to the source no longer
+// leak into the destination.
+func TestOpCopyDeepCopies(t *testing.T) {
+	type S struct {
+		A []int
+		B []int
+		M map[string]int
+		N map[string]int
+	}
+	s := &S{A: []int{1, 2, 3}, M: map[string]int{"k": 1}}
+	p := deep.Patch[S]{Operations: []deep.Operation{
+		{Kind: deep.OpCopy, Path: "/B", From: "/A"},
+		{Kind: deep.OpCopy, Path: "/N", From: "/M"},
+	}}
+	if err := deep.Apply(s, p); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	s.A[0] = 99
+	s.M["k"] = 99
+	if s.B[0] == 99 {
+		t.Errorf("OpCopy on []int aliases source: B=%v", s.B)
+	}
+	if s.N["k"] == 99 {
+		t.Errorf("OpCopy on map aliases source: N=%v", s.N)
+	}
+}
+
 func TestReflectionEngineAdvanced(t *testing.T) {
 	type Data struct {
 		A int
@@ -117,8 +145,8 @@ func TestReflectionEngineAdvanced(t *testing.T) {
 
 	p := deep.Patch[Data]{}
 	p.Operations = []deep.Operation{
-		{Kind: deep.OpMove, Path: "/B", Old: "/A"},
-		{Kind: deep.OpCopy, Path: "/A", Old: "/B"},
+		{Kind: deep.OpMove, Path: "/B", From: "/A"},
+		{Kind: deep.OpCopy, Path: "/A", From: "/B"},
 		{Kind: deep.OpRemove, Path: "/A"},
 	}
 
@@ -127,18 +155,56 @@ func TestReflectionEngineAdvanced(t *testing.T) {
 	}
 }
 
+// TestStrictRootMismatchedOldType asserts that a strict OpReplace at root
+// whose Old value carries the wrong concrete type returns an error rather
+// than panicking on the type assertion.
+func TestStrictRootMismatchedOldType(t *testing.T) {
+	u := &testmodels.User{Name: "alice"}
+	p := deep.Patch[testmodels.User]{
+		Strict: true,
+		Operations: []deep.Operation{
+			{Kind: deep.OpReplace, Path: "/", Old: "not-a-User", New: testmodels.User{Name: "bob"}},
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("Apply panicked on mismatched Old type: %v", r)
+		}
+	}()
+	if err := deep.Apply(u, p); err == nil {
+		t.Error("expected strict check error on mismatched Old type, got nil")
+	}
+}
+
 func TestEngineFailures(t *testing.T) {
 	u := &testmodels.User{}
 
-	// Move from non-existent
+	// Move from non-existent path must surface an error rather than silently
+	// no-op (previously this test ignored the return value).
 	p1 := deep.Patch[testmodels.User]{}
-	p1.Operations = []deep.Operation{{Kind: deep.OpMove, Path: "/id", Old: "/nonexistent"}}
-	deep.Apply(u, p1)
+	p1.Operations = []deep.Operation{{Kind: deep.OpMove, Path: "/id", From: "/nonexistent"}}
+	if err := deep.Apply(u, p1); err == nil {
+		t.Error("OpMove from non-existent source should return an error")
+	}
 
-	// Copy from non-existent
+	// Copy from non-existent path must also surface an error.
 	p2 := deep.Patch[testmodels.User]{}
-	p2.Operations = []deep.Operation{{Kind: deep.OpCopy, Path: "/id", Old: "/nonexistent"}}
-	deep.Apply(u, p2)
+	p2.Operations = []deep.Operation{{Kind: deep.OpCopy, Path: "/id", From: "/nonexistent"}}
+	if err := deep.Apply(u, p2); err == nil {
+		t.Error("OpCopy from non-existent source should return an error")
+	}
+
+	// Move/Copy with empty From must reject early with a clear error.
+	p3 := deep.Patch[testmodels.User]{}
+	p3.Operations = []deep.Operation{{Kind: deep.OpMove, Path: "/id"}}
+	if err := deep.Apply(u, p3); err == nil {
+		t.Error("OpMove with empty From should return an error")
+	}
+	p4 := deep.Patch[testmodels.User]{}
+	p4.Operations = []deep.Operation{{Kind: deep.OpCopy, Path: "/id"}}
+	if err := deep.Apply(u, p4); err == nil {
+		t.Error("OpCopy with empty From should return an error")
+	}
 
 	// Apply to nil
 	if err := deep.Apply((*testmodels.User)(nil), p1); err == nil {

@@ -35,12 +35,21 @@ func Diff[T any](a, b T) (Patch[T], error) {
 
 	res := Patch[T]{}
 	p.Walk(func(path string, op engine.OpKind, old, new any) error {
-		res.Operations = append(res.Operations, Operation{
+		o := Operation{
 			Kind: op,
 			Path: path,
-			Old:  old,
 			New:  new,
-		})
+		}
+		// Internal walk emits the source path in `old` for Move/Copy; lift it
+		// into the typed From field so Old stays free for prior values.
+		if op == engine.OpMove || op == engine.OpCopy {
+			if s, ok := old.(string); ok {
+				o.From = s
+			}
+		} else {
+			o.Old = old
+		}
+		res.Operations = append(res.Operations, o)
 		return nil
 	})
 

@@ -15,6 +15,7 @@ package hlc
 
 import (
 	"fmt"
+	"math"
 	"sync"
 	"time"
 )
@@ -59,6 +60,11 @@ func (h HLC) String() string {
 }
 
 // Clock manages the local HLC state.
+//
+// Latest is exposed for serialisation but must not be mutated by callers
+// after the clock is in use — direct writes bypass the internal mutex and
+// race with concurrent Now/Update. Use [Clock.SetLatest] for explicit
+// rehydration (e.g. from snapshots).
 type Clock struct {
 	mu     sync.Mutex
 	Latest HLC
@@ -77,13 +83,31 @@ func NewClock(nodeID string) *Clock {
 	}
 }
 
+// SetLatest rehydrates the clock from a previously observed timestamp under
+// the clock's mutex, so it is safe to call alongside concurrent Now/Update.
+// Subsequent Now/Update calls advance from at least h.
+func (c *Clock) SetLatest(h HLC) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.Latest = h
+}
+
 // Now returns the current HLC timestamp.
 func (c *Clock) Now() HLC {
 	return c.Reserve(1)
 }
 
 // Reserve returns the current HLC timestamp and reserves n logical ticks.
+//
+// n must be non-negative and small enough that c.Latest.Logical + n fits in
+// int32; otherwise Reserve panics. Practical text inserts and similar uses
+// fall well under that bound; overflow would silently break causal ordering,
+// so an explicit panic is preferred to a wraparound bug.
 func (c *Clock) Reserve(n int) HLC {
+	if n < 0 {
+		panic("hlc: Reserve called with negative n")
+	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -92,6 +116,10 @@ func (c *Clock) Reserve(n int) HLC {
 	if physNow > c.Latest.WallTime {
 		c.Latest.WallTime = physNow
 		c.Latest.Logical = 0
+	}
+
+	if int64(c.Latest.Logical)+int64(n) > int64(math.MaxInt32) {
+		panic("hlc: Reserve would overflow Logical (int32)")
 	}
 
 	start := c.Latest

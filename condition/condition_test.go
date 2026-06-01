@@ -76,3 +76,17 @@ func TestEvaluate(t *testing.T) {
 		}
 	}
 }
+
+// TestNotEmptySubReturnsError asserts that a malformed Not condition
+// (no Sub-condition) yields an explicit error rather than silently
+// falling through to the path-based comparison that would compare a
+// nil-path value against c.Value.
+func TestNotEmptySubReturnsError(t *testing.T) {
+	type S struct{ N int }
+	root := reflect.ValueOf(&S{N: 1}).Elem()
+	c := &Condition{Op: Not}
+	got, err := Evaluate(root, c)
+	if err == nil {
+		t.Errorf("Evaluate(Not{empty Sub}) = %v, nil; want error", got)
+	}
+}

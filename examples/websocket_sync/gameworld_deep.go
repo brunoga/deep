@@ -63,7 +63,8 @@ func (t *GameWorld) applyOperation(op deep.Operation, logger *slog.Logger) (bool
 	switch op.Path {
 	case "/":
 		if op.Strict && (op.Kind == deep.OpReplace || op.Kind == deep.OpRemove) {
-			if !deep.Equal(*t, op.Old.(GameWorld)) {
+			old, ok := op.Old.(GameWorld)
+			if !ok || !deep.Equal(*t, old) {
 				return true, fmt.Errorf("strict check failed at root: expected %v, got %v", op.Old, *t)
 			}
 		}
@@ -345,7 +346,8 @@ func (t *Player) applyOperation(op deep.Operation, logger *slog.Logger) (bool, e
 	switch op.Path {
 	case "/":
 		if op.Strict && (op.Kind == deep.OpReplace || op.Kind == deep.OpRemove) {
-			if !deep.Equal(*t, op.Old.(Player)) {
+			old, ok := op.Old.(Player)
+			if !ok || !deep.Equal(*t, old) {
 				return true, fmt.Errorf("strict check failed at root: expected %v, got %v", op.Old, *t)
 			}
 		}
