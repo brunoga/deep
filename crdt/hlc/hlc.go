@@ -15,6 +15,7 @@ package hlc
 
 import (
 	"fmt"
+	"math"
 	"sync"
 	"time"
 )
@@ -97,7 +98,16 @@ func (c *Clock) Now() HLC {
 }
 
 // Reserve returns the current HLC timestamp and reserves n logical ticks.
+//
+// n must be non-negative and small enough that c.Latest.Logical + n fits in
+// int32; otherwise Reserve panics. Practical text inserts and similar uses
+// fall well under that bound; overflow would silently break causal ordering,
+// so an explicit panic is preferred to a wraparound bug.
 func (c *Clock) Reserve(n int) HLC {
+	if n < 0 {
+		panic("hlc: Reserve called with negative n")
+	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -106,6 +116,10 @@ func (c *Clock) Reserve(n int) HLC {
 	if physNow > c.Latest.WallTime {
 		c.Latest.WallTime = physNow
 		c.Latest.Logical = 0
+	}
+
+	if int64(c.Latest.Logical)+int64(n) > int64(math.MaxInt32) {
+		panic("hlc: Reserve would overflow Logical (int32)")
 	}
 
 	start := c.Latest
