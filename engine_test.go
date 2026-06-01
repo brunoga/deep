@@ -158,15 +158,32 @@ func TestReflectionEngineAdvanced(t *testing.T) {
 func TestEngineFailures(t *testing.T) {
 	u := &testmodels.User{}
 
-	// Move from non-existent
+	// Move from non-existent path must surface an error rather than silently
+	// no-op (previously this test ignored the return value).
 	p1 := deep.Patch[testmodels.User]{}
 	p1.Operations = []deep.Operation{{Kind: deep.OpMove, Path: "/id", From: "/nonexistent"}}
-	deep.Apply(u, p1)
+	if err := deep.Apply(u, p1); err == nil {
+		t.Error("OpMove from non-existent source should return an error")
+	}
 
-	// Copy from non-existent
+	// Copy from non-existent path must also surface an error.
 	p2 := deep.Patch[testmodels.User]{}
 	p2.Operations = []deep.Operation{{Kind: deep.OpCopy, Path: "/id", From: "/nonexistent"}}
-	deep.Apply(u, p2)
+	if err := deep.Apply(u, p2); err == nil {
+		t.Error("OpCopy from non-existent source should return an error")
+	}
+
+	// Move/Copy with empty From must reject early with a clear error.
+	p3 := deep.Patch[testmodels.User]{}
+	p3.Operations = []deep.Operation{{Kind: deep.OpMove, Path: "/id"}}
+	if err := deep.Apply(u, p3); err == nil {
+		t.Error("OpMove with empty From should return an error")
+	}
+	p4 := deep.Patch[testmodels.User]{}
+	p4.Operations = []deep.Operation{{Kind: deep.OpCopy, Path: "/id"}}
+	if err := deep.Apply(u, p4); err == nil {
+		t.Error("OpCopy with empty From should return an error")
+	}
 
 	// Apply to nil
 	if err := deep.Apply((*testmodels.User)(nil), p1); err == nil {
