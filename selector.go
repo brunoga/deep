@@ -5,6 +5,8 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+
+	icore "github.com/brunoga/deep/v5/internal/core"
 )
 
 // selector is a function that retrieves a field from a struct of type T.
@@ -40,8 +42,9 @@ func At[T any, S ~[]E, E any](p Path[T, S], i int) Path[T, E] {
 }
 
 // MapKey returns a type-safe path to the value at key k within a map field.
+// Keys are RFC 6901-escaped so values containing '/' or '~' navigate correctly.
 func MapKey[T any, M ~map[K]V, K comparable, V any](p Path[T, M], k K) Path[T, V] {
-	return Path[T, V]{path: fmt.Sprintf("%s/%v", p.String(), k)}
+	return Path[T, V]{path: fmt.Sprintf("%s/%s", p.String(), icore.EscapeKey(fmt.Sprintf("%v", k)))}
 }
 
 // pathCache stores resolved paths keyed by selector function pointer.
