@@ -50,6 +50,27 @@ func TestSet_Items(t *testing.T) {
 	}
 }
 
+// TestSet_LenMatchesItemsAfterChurn asserts Len agrees with len(Items) after a
+// mix of adds, duplicates, and removes. The previous Len implementation called
+// Items() and took its length; the new direct dedup must produce the same
+// distinct-live count without going through the allocation.
+func TestSet_LenMatchesItemsAfterChurn(t *testing.T) {
+	s := NewSet[string]("node-a")
+	s.Add("a")
+	s.Add("b")
+	s.Add("a") // duplicate live add
+	s.Add("c")
+	s.Remove("b") // tombstone
+
+	want := len(s.Items())
+	if got := s.Len(); got != want {
+		t.Errorf("Len()=%d, len(Items())=%d", got, want)
+	}
+	if want != 2 {
+		t.Errorf("expected 2 distinct live items, got %d", want)
+	}
+}
+
 func TestSet_DuplicateAdd(t *testing.T) {
 	s := NewSet[string]("node-a")
 	s.Add("dup")
