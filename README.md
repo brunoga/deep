@@ -346,11 +346,13 @@ doc.MergeFrom(peer.Text()) // converges with a peer, Text or Document
 
 | 50 edits to a document of | `Text` | `Document` |
 | :--- | ---: | ---: |
-| 500 runs | 1.2 ms | 8.7 µs |
-| 2,000 runs | 4.8 ms | 5.9 µs |
-| 8,000 runs | 22.3 ms | 7.4 µs |
+| 500 runs | 1.2 ms | 39 µs |
+| 2,000 runs | 4.5 ms | 25 µs |
+| 8,000 runs | 22.4 ms | 58 µs |
 
-Both serialize identically, so a replica running one converges with a replica running the other. A `Document` inside a `CRDT[T]` produces deltas the size of the edit rather than the size of the document.
+`Text` slows down as runs accumulate; `Document` does not. Both serialize identically, so a replica running one converges with a replica running the other.
+
+Inside a `CRDT[T]`, an edit to a `Document` costs about 4 µs whatever the document holds, and the delta it produces is the size of the edit rather than the size of the document. The wrapper copies its value before every edit to work out what changed, and a document is copied by sharing rather than duplicating — nothing in its index is ever changed in place, so the copy and the original cannot disturb each other.
 
 **Syncing only what is missing** — a state vector says how much of each writer's output a replica holds, one number per writer rather than per character, so a peer sends only the difference:
 
@@ -371,7 +373,7 @@ node.Compact(watermark)
 
 It reaches the `Text` and `List` values inside the replica too, changes nothing about what the replica holds, and emits no delta. A compacted replica still converges with one that has not compacted.
 
-**Custom convergent types** — implement `crdt.Convergent` and a `CRDT[T]` will merge your type instead of picking a winner:
+**Custom convergent types** — implement `crdt.Convergent` and a `CRDT[T]` merges your type instead of picking a winner, whether the change arrives as a delta or a full merge:
 
 ```go
 func (s MySet) MergeFrom(other any) any {
@@ -383,7 +385,13 @@ func (s MySet) MergeFrom(other any) any {
 }
 ```
 
-`MergeFrom` must be commutative, associative and idempotent.
+`MergeFrom` must be commutative, associative and idempotent — merging in any order, any number of times, has to reach the same value.
+
+A type holding history of its own can also implement `crdt.Compactable`, and `Compact` will reach it:
+
+```go
+func (r Retired) CompactBefore(before hlc.HLC) any { /* drop entries older than before */ }
+```
 
 **`crdt/hlc`** — `Clock` (per-node: `Now`, `Update`, `Reserve`, `SetLatest`) and `HLC` timestamps (`Compare`, `After`) giving a total order across nodes without synchronized wall clocks.
 
@@ -441,6 +449,7 @@ Every directory under [`examples/`](examples/) is a runnable program (`go run ./
 | [`crdt_compaction`](examples/crdt_compaction) | `Compact` for reclaiming the history a long-lived replica accumulates |
 | [`crdt_document`](examples/crdt_document) | `Document`, a text CRDT indexed for editing rather than stored as a slice |
 | [`crdt_sync_incremental`](examples/crdt_sync_incremental) | State vectors: sending only what a peer is missing |
+| [`crdt_custom_type`](examples/crdt_custom_type) | `Convergent` and `Compactable`: making your own type merge instead of losing a writer |
 | [`lww_fields`](examples/lww_fields) | Per-field `LWW[T]` registers resolving a write conflict |
 | [`text_sync`](examples/text_sync) | Collaborative text with `crdt.Text` |
 

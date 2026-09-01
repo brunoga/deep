@@ -14,11 +14,49 @@
 //
 // For full-state synchronization between two nodes use [CRDT.Merge].
 //
-// # Text CRDT
+// # Text and sequences
 //
 // [Text] is a convergent, ordered sequence of [TextRun] segments. It supports
 // concurrent insertions and deletions across nodes and is integrated with
 // [CRDT] directly — no separate registration required.
+//
+// [Document] holds the same runs as a Text but keeps them indexed by position,
+// so an edit costs the same whether the document holds a hundred runs or ten
+// thousand. The two serialize identically and converge with each other; reach
+// for a Document when the document is large or the thing being edited, and a
+// Text when it is a small field among others.
+//
+// [List] is the same idea for elements of any type: an ordinary slice inside a
+// [CRDT] is synchronized as one value, so concurrent edits resolve by
+// last-write-wins, whereas insertions and deletions in a List all survive.
+//
+// # Watching for changes
+//
+// [CRDT.OnChange] reports each change as it is applied, carrying the operations
+// that took effect and whether they came from a local edit, a peer's delta, or
+// a merge. Only operations that survived conflict resolution are reported, so
+// what arrives describes what actually happened — enough to redraw the parts of
+// a view that moved rather than rebuilding it.
+//
+// # Syncing
+//
+// [CRDT.ApplyDelta] carries a change from one replica to another, and
+// [CRDT.Merge] reconciles two replicas wholesale.
+//
+// A [Document] can also sync without exchanging whole documents:
+// [Document.StateVector] says how much of each writer's output a replica holds,
+// [Document.Since] returns what a peer holding that is missing, and
+// [Document.Apply] integrates the result. The cost is then the size of the
+// change rather than the size of the document.
+//
+// # Reclaiming history
+//
+// A replica remembers when each path was written and removed so that it can
+// recognize a stale update, and a sequence keeps deleted elements as tombstones
+// so a concurrent insertion still has an anchor. Neither shrinks on its own.
+// [CRDT.Compact] discards both, as far as a watermark the caller supplies —
+// dropping the record is only safe for changes every replica has seen. Types
+// that hold history of their own take part by implementing [Compactable].
 //
 // # Collections
 //
@@ -408,13 +446,37 @@ func applyToConvergent(root reflect.Value, op deep.Operation) (bool, error) {
 		}
 		target = target.Addr()
 	}
-	applier, ok := target.Interface().(opApplier)
-	if !ok {
+	if applier, ok := target.Interface().(opApplier); ok {
+		inner := op
+		inner.Path = "/"
+		return applier.applyOperation(inner, slog.Default())
+	}
+
+	// A type of the caller's own gets the same treatment through the public
+	// interface: hand it what arrived and keep what it returns. Without this it
+	// would skip the clock filter — because it settles concurrency itself — and
+	// then be overwritten anyway, which is worse than either.
+	value := target
+	if value.Kind() == reflect.Pointer && !value.IsNil() {
+		value = value.Elem()
+	}
+	conv, ok := value.Interface().(Convergent)
+	if !ok || !value.CanSet() {
 		return false, nil
 	}
-	inner := op
-	inner.Path = "/"
-	return applier.applyOperation(inner, slog.Default())
+	if op.New == nil {
+		return false, nil
+	}
+	incoming, err := icore.ConvertValueChecked(reflect.ValueOf(op.New), value.Type())
+	if err != nil {
+		return false, nil // not something this value can merge; let the generic path try
+	}
+	merged := reflect.ValueOf(conv.MergeFrom(incoming.Interface()))
+	if !merged.IsValid() || merged.Type() != value.Type() {
+		return false, nil
+	}
+	value.Set(merged)
+	return true, nil
 }
 
 // canonicalizeKeyedSlices puts every keyed slice reachable from v into a
