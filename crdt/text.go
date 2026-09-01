@@ -365,6 +365,25 @@ func (t Text) normalize() Text {
 // a copy is cheap, large enough that the per-run overhead stays negligible.
 const maxRunRunes = 4096
 
+// canMergeRuns reports whether curr continues last exactly: the same deleted
+// state, identifiers that carry straight on, curr anchored to last's final
+// character, and a combined length within the cap. Two runs like that describe
+// one stretch of text written in one go, and holding them as one is what keeps
+// a document from carrying a run per keystroke.
+func canMergeRuns(last, curr TextRun) bool {
+	if curr.Deleted != last.Deleted {
+		return false
+	}
+	if last.runeCount()+curr.runeCount() > maxRunRunes {
+		return false
+	}
+	expectedID := last.ID
+	expectedID.Logical += int32(last.runeCount())
+	prevID := last.ID
+	prevID.Logical += int32(last.runeCount() - 1)
+	return curr.ID == expectedID && curr.Prev == prevID
+}
+
 // mergeAdjacent joins runs that sit next to each other and hold consecutive
 // character IDs, so a document does not accumulate one run per edit. It assumes
 // the runs are already in document order.
@@ -379,15 +398,10 @@ func (t Text) mergeAdjacent() Text {
 		lastIdx := len(result) - 1
 		last := &result[lastIdx]
 		curr := ordered[i]
-		expectedID := last.ID
-		expectedID.Logical += int32(last.runeCount())
-		prevID := last.ID
-		prevID.Logical += int32(last.runeCount() - 1)
-		joined := int32(last.runeCount() + curr.runeCount())
-		if curr.Deleted == last.Deleted && curr.ID == expectedID && curr.Prev == prevID &&
-			joined <= maxRunRunes {
+		if canMergeRuns(*last, curr) {
 			// The counts are taken before the values are joined: afterwards the
 			// cached count on last no longer describes what it holds.
+			joined := int32(last.runeCount() + curr.runeCount())
 			last.Value += curr.Value
 			last.N = joined
 		} else {
