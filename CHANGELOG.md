@@ -6,6 +6,32 @@ All notable changes to this project are documented here, newest first.
 > version's entry before tagging, so the tag, the GitHub release notes, and this
 > file always agree.
 
+## Unreleased
+
+### Fixed
+
+- **A `Convergent` type of the caller's own was overwritten by a delta instead
+  of merged.** Such a type skips the clock filter, because it settles
+  concurrency itself — but only the sequence types this package defines were
+  actually handed the operation, so anything else was then overwritten by
+  whichever delta arrived last. Both writers' changes were meant to survive and
+  neither reliably did, and the two replicas disagreed about which. A type
+  implementing `Convergent` is now merged through that interface whether the
+  change arrives as a delta or as a full merge. Only `CRDT.Merge` handled these
+  types before, which is why the tests did not catch it.
+
+### Documentation
+
+- The `crdt` package documentation covers what the package has grown into:
+  `Document` alongside `Text`, `List`, watching for changes with `OnChange`,
+  syncing incrementally, and reclaiming history with `Compact`.
+- Added `examples/crdt_custom_type`, showing a type of your own merging through
+  `Convergent` and dropping its own history through `Compactable` — the example
+  that turned up the bug above.
+- Corrected the `Document` figures in the README, which predated the change to a
+  persistent index: an edit made directly on a document costs a little more than
+  it did, and an edit made through a `CRDT` costs far less.
+
 ## v5.10.1
 
 ### Performance

@@ -283,3 +283,68 @@ func TestCustomConvergentType(t *testing.T) {
 		t.Errorf("expected both tags to survive the merge, got %v", va.Tags)
 	}
 }
+
+// A type of the caller's own that implements Convergent must merge when a
+// delta arrives, not only when two replicas are merged wholesale. It skips the
+// clock filter because it settles concurrency itself; if the delta then
+// overwrote it instead of merging, a concurrent edit would be lost and the two
+// replicas would disagree about which — worse than either behaviour alone.
+func TestCustomConvergentTypeThroughDelta(t *testing.T) {
+	type doc struct {
+		Tags  growOnly `json:"tags"`
+		Title string   `json:"title"`
+	}
+
+	a := NewCRDT(doc{}, "a")
+	b := NewCRDT(doc{}, "b")
+
+	fromA := a.Edit(func(d *doc) {
+		d.Tags = growOnly{"alpha"}
+		d.Title = "from a"
+	})
+	fromB := b.Edit(func(d *doc) {
+		d.Tags = growOnly{"beta"}
+		d.Title = "from b"
+	})
+
+	a.ApplyDelta(fromB)
+	b.ApplyDelta(fromA)
+
+	if !deep.Equal(a.View(), b.View()) {
+		t.Fatalf("replicas diverged:\n  a %+v\n  b %+v", a.View(), b.View())
+	}
+	if got := a.View().Tags; len(got) != 2 {
+		t.Errorf("expected both tags to survive, got %v", got)
+	}
+	// The ordinary field is still last-write-wins, which is the contrast.
+	if a.View().Title == "" {
+		t.Error("the plain field lost its value entirely")
+	}
+}
+
+// The same type must also survive a delta that has been through JSON.
+func TestCustomConvergentTypeThroughJSON(t *testing.T) {
+	type doc struct {
+		Tags growOnly `json:"tags"`
+	}
+
+	a := NewCRDT(doc{}, "a")
+	b := NewCRDT(doc{Tags: growOnly{"existing"}}, "b")
+
+	delta := a.Edit(func(d *doc) { d.Tags = growOnly{"added"} })
+
+	wire, err := json.Marshal(delta)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var received Delta[doc]
+	if err := json.Unmarshal(wire, &received); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	b.ApplyDelta(received)
+
+	got := b.View().Tags
+	if len(got) != 2 {
+		t.Errorf("after a delta through JSON: %v, want both tags", got)
+	}
+}
