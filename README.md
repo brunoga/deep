@@ -307,7 +307,7 @@ A patch is a **flat operation list** â€” `[]Operation` with JSON Pointer paths â
 
 ## Examples
 
-Every directory under [`examples/`](examples/) is a runnable program (`go run ./examples/<name>`) built around one concept.
+Every directory under [`examples/`](examples/) is a runnable program (`go run ./examples/<name>`) built around one concept. The [examples guide](examples/README.md) describes what each one demonstrates and suggests a reading order.
 
 **Core operations and patches**
 

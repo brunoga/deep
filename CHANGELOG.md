@@ -6,6 +6,17 @@ All notable changes to this project are documented here, newest first.
 > version's entry before tagging, so the tag, the GitHub release notes, and this
 > file always agree.
 
+## Unreleased
+
+### Documentation
+
+- Added `examples/README.md`: a guide to all 24 examples with a suggested
+  reading order and what each one demonstrates, so browsing into the directory
+  lands on something other than a list of names.
+- `TestExamplesAreDocumented` asserts that every example is linked from both the
+  root README and the examples guide, and that neither links to an example that
+  no longer exists.
+
 ## v5.5.0
 
 ### Fixed
