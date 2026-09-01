@@ -6,7 +6,7 @@ All notable changes to this project are documented here, newest first.
 > version's entry before tagging, so the tag, the GitHub release notes, and this
 > file always agree.
 
-## Unreleased
+## v5.7.0
 
 ### Performance
 
@@ -44,7 +44,6 @@ All notable changes to this project are documented here, newest first.
   held, so they may read or edit the replica.
 - **`crdt.Text.Len`** returns the number of visible characters, in runes — the
   same unit `Insert` and `Delete` take positions in.
-
 - **`crdt.List[T]`**, a sequence that merges. An ordinary slice inside a
   `CRDT[T]` is synchronized as one value, so concurrent edits resolve by
   last-write-wins and one writer's version of the whole slice wins. A `List`
