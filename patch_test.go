@@ -402,3 +402,61 @@ func TestLWWSet(t *testing.T) {
 		t.Error("LWW.Set should reject older timestamp")
 	}
 }
+
+// TestJSONPatchStrictRoundTrip asserts that a strict patch survives the trip
+// through ToJSONPatch/ParseJSONPatch: the strict Old checks are encoded as
+// RFC 6902 test operations and decoded back into Strict + Old.
+func TestJSONPatchStrictRoundTrip(t *testing.T) {
+	type Cfg struct {
+		Theme string `json:"theme"`
+		Size  int    `json:"size"`
+	}
+	p := deep.Patch[Cfg]{
+		Operations: []deep.Operation{
+			{Kind: deep.OpReplace, Path: "/theme", Old: "dark", New: "light"},
+			{Kind: deep.OpRemove, Path: "/size", Old: 12},
+		},
+	}.AsStrict()
+
+	data, err := p.ToJSONPatch()
+	if err != nil {
+		t.Fatalf("ToJSONPatch: %v", err)
+	}
+
+	got, err := deep.ParseJSONPatch[Cfg](data)
+	if err != nil {
+		t.Fatalf("ParseJSONPatch: %v", err)
+	}
+	if !got.Strict {
+		t.Errorf("Strict flag lost in round-trip: %s", data)
+	}
+	if len(got.Operations) != 2 {
+		t.Fatalf("got %d operations, want 2: %s", len(got.Operations), data)
+	}
+	if got.Operations[0].Old != "dark" {
+		t.Errorf("Old[0] = %v, want dark", got.Operations[0].Old)
+	}
+	if old, ok := got.Operations[1].Old.(float64); !ok || old != 12 {
+		t.Errorf("Old[1] = %v, want 12", got.Operations[1].Old)
+	}
+}
+
+// TestJSONPatchNonStrictHasNoTests asserts a non-strict patch does not emit
+// test operations even when Old values are present.
+func TestJSONPatchNonStrictHasNoTests(t *testing.T) {
+	type Cfg struct {
+		Theme string `json:"theme"`
+	}
+	p := deep.Patch[Cfg]{
+		Operations: []deep.Operation{
+			{Kind: deep.OpReplace, Path: "/theme", Old: "dark", New: "light"},
+		},
+	}
+	data, err := p.ToJSONPatch()
+	if err != nil {
+		t.Fatalf("ToJSONPatch: %v", err)
+	}
+	if strings.Contains(string(data), `"test"`) {
+		t.Errorf("non-strict patch emitted test ops: %s", data)
+	}
+}

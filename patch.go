@@ -169,6 +169,11 @@ func (p Patch[T]) Reverse() Patch[T] {
 
 // ToJSONPatch returns a JSON Patch representation compatible with RFC 6902
 // and the github.com/brunoga/jsonpatch extensions.
+//
+// A strict patch (see [Patch.AsStrict]) emits a test operation carrying the
+// expected Old value before each replace and remove — RFC 6902's native way
+// of expressing precondition checks — so strictness survives the round-trip
+// through [ParseJSONPatch].
 func (p Patch[T]) ToJSONPatch() ([]byte, error) {
 	var res []map[string]any
 
@@ -183,6 +188,13 @@ func (p Patch[T]) ToJSONPatch() ([]byte, error) {
 	}
 
 	for _, op := range p.Operations {
+		if p.Strict && (op.Kind == OpReplace || op.Kind == OpRemove) && op.Old != nil {
+			res = append(res, map[string]any{
+				"op":    "test",
+				"path":  op.Path,
+				"value": op.Old,
+			})
+		}
 		m := map[string]any{
 			"op":   op.Kind.String(),
 			"path": op.Path,
@@ -213,34 +225,48 @@ func (p Patch[T]) ToJSONPatch() ([]byte, error) {
 // ParseJSONPatch parses a JSON Patch document (RFC 6902 plus deep extensions)
 // back into a Patch[T]. This is the inverse of Patch.ToJSONPatch().
 //
-// Wire convention: a leading {"op":"test","path":"/","if":<predicate>} entry
-// is interpreted as the global Patch.Guard rather than a regular test op.
-// This mirrors what ToJSONPatch emits; user-authored documents that happen
-// to start with that exact triple will have it lifted into Guard. A test op
-// on "/" without an "if" key is preserved as a regular operation (it has no
-// special meaning in this format), and any subsequent test op is treated
-// normally. To round-trip a regular test op at "/", attach it via Builder
-// rather than serialising it as the document's first entry.
+// Wire conventions:
+//
+//   - A leading {"op":"test","path":"/","if":<predicate>} entry is interpreted
+//     as the global Patch.Guard rather than a regular test op, mirroring what
+//     ToJSONPatch emits. To round-trip a regular test op at "/", attach it via
+//     Builder rather than serialising it as the document's first entry.
+//   - A {"op":"test","path":<p>,"value":<v>} entry immediately followed by a
+//     replace or remove at the same path becomes that operation's Old value
+//     and marks the patch strict, mirroring what ToJSONPatch emits for a
+//     strict patch.
+//   - Any other test op — and any unknown op — is dropped: the operation model
+//     has no general test kind.
 func ParseJSONPatch[T any](data []byte) (Patch[T], error) {
 	var ops []map[string]any
 	if err := json.Unmarshal(data, &ops); err != nil {
 		return Patch[T]{}, fmt.Errorf("ParseJSONPatch: %w", err)
 	}
 	res := Patch[T]{}
+	var pendingTest map[string]any // last test-with-value entry, awaiting its op
 	for i, m := range ops {
 		opStr, _ := m["op"].(string)
 		path, _ := m["path"].(string)
 
 		// Global condition encoding: ONLY the leading entry (matched as
-		// op==test, path=="/", "if" present) is lifted into Guard. A later
-		// test op with the same shape is kept as a regular operation so a
-		// document with multiple "/" tests round-trips faithfully.
+		// op==test, path=="/", "if" present) is lifted into Guard.
 		if i == 0 && opStr == "test" && path == "/" {
 			if ifPred, ok := m["if"].(map[string]any); ok {
 				res.Guard = condition.FromPredicate(ifPred)
 				continue
 			}
 		}
+
+		// Strict Old-value encoding: remember a test-with-value entry and
+		// attach it to the operation that follows at the same path.
+		if opStr == "test" {
+			if _, ok := m["value"]; ok {
+				pendingTest = m
+				continue
+			}
+		}
+		test := pendingTest
+		pendingTest = nil
 
 		op := Operation{Path: path}
 
@@ -276,6 +302,11 @@ func ParseJSONPatch[T any](data []byte) (Patch[T], error) {
 			op.New = m["value"]
 		default:
 			continue // unknown op, skip
+		}
+
+		if test != nil && path == test["path"] && (op.Kind == OpReplace || op.Kind == OpRemove) {
+			op.Old = test["value"]
+			res.Strict = true
 		}
 
 		res.Operations = append(res.Operations, op)
