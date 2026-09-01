@@ -616,3 +616,58 @@ func TestTextRuneCountStaysAccurate(t *testing.T) {
 		t.Errorf("merge produced invalid UTF-8: %q", merged.String())
 	}
 }
+
+// TestTextMergeSplitsAtAnchors covers a run anchored partway into another.
+//
+// A replica that types "base" and then "-A" holds one run, because the two
+// stretches were written consecutively. A replica that only saw "base" anchors
+// its own insertion to the last character of that word — a character which, on
+// the first replica, now sits in the middle of a longer run. Merging has to
+// divide that run there: without the division the run is emitted whole and the
+// insertion lands after "-A" rather than before it, so the two replicas order
+// the document differently.
+//
+// Exchanging whole documents hides this, because each side then carries the
+// other's run boundaries. It shows up as soon as replicas exchange only what
+// the other is missing.
+func TestTextMergeSplitsAtAnchors(t *testing.T) {
+	ca, cb := hlc.NewClock("a"), hlc.NewClock("b")
+
+	base := Text{}.Insert(0, "base", ca)
+
+	// One replica continues typing, which merges the new text into the run.
+	extended := base.Insert(4, "-A", ca)
+	if len(extended) != 1 {
+		t.Fatalf("expected the typing to merge into one run, got %d", len(extended))
+	}
+
+	// The other only ever saw "base", and anchors its insertion to it.
+	other := base.Insert(4, "-B", cb)
+
+	// Only the part the first replica is missing, as an incremental sync sends.
+	var missing Text
+	for _, run := range other {
+		if run.ID.NodeID == "b" {
+			missing = append(missing, run)
+		}
+	}
+
+	merged := MergeTextRuns(extended, missing)
+	reverse := MergeTextRuns(missing, extended)
+
+	if merged.String() != reverse.String() {
+		t.Fatalf("merge order changed the result: %q vs %q", merged.String(), reverse.String())
+	}
+	for _, want := range []string{"base", "-A", "-B"} {
+		if !strings.Contains(merged.String(), want) {
+			t.Errorf("lost %q from %q", want, merged.String())
+		}
+	}
+
+	// The full-state merge must agree with it, since both describe the same
+	// document.
+	if full := MergeTextRuns(extended, other).String(); full != merged.String() {
+		t.Errorf("merging the whole document gives %q, merging only what is missing gives %q",
+			full, merged.String())
+	}
+}

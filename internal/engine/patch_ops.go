@@ -1583,6 +1583,15 @@ func (p *readOnlyPatch) dependencies(path string) (reads []string, writes []stri
 
 type customDiffPatch struct {
 	patch any
+	// oldValue and newValue are the values the custom differ was given. A
+	// custom patch describes a change in terms only its own type understands,
+	// which is what makes it efficient to apply — but the flat operation form
+	// has no way to carry that. Keeping the values lets the flat form fall back
+	// to replacing the whole value, which any consumer can apply. Without them
+	// a custom differ flattens to nothing at all and the change is silently
+	// lost.
+	oldValue any
+	newValue any
 }
 
 func (p *customDiffPatch) apply(root, v reflect.Value, path string) {
@@ -1623,7 +1632,11 @@ func (p *customDiffPatch) reverse() diffPatch {
 	m := reflect.ValueOf(p.patch).MethodByName("Reverse")
 	if m.IsValid() {
 		res := m.Call(nil)
-		return &customDiffPatch{patch: res[0].Interface()}
+		return &customDiffPatch{
+			patch:    res[0].Interface(),
+			oldValue: p.newValue,
+			newValue: p.oldValue,
+		}
 	}
 	return p // Cannot reverse?
 }
@@ -1643,11 +1656,12 @@ func (p *customDiffPatch) dependencies(path string) (reads []string, writes []st
 }
 
 func (p *customDiffPatch) walk(path string, fn func(path string, op OpKind, old, new any) error) error {
-	m := reflect.ValueOf(p.patch).MethodByName("Walk")
-	if m.IsValid() {
-		// This is tricky. Fn needs to be adapted.
+	if p.oldValue == nil && p.newValue == nil {
+		return nil
 	}
-	return nil
+	// The custom patch cannot describe itself as operations, so the flat form
+	// says what the value became rather than how it got there.
+	return fn(path, OpReplace, p.oldValue, p.newValue)
 }
 
 func (p *customDiffPatch) toJSONPatch(path string) []map[string]any {

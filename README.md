@@ -350,7 +350,16 @@ doc.MergeFrom(peer.Text()) // converges with a peer, Text or Document
 | 2,000 runs | 4.8 ms | 5.9 µs |
 | 8,000 runs | 22.3 ms | 7.4 µs |
 
-Both serialize identically, so a replica running one converges with a replica running the other. Hold a `Document` directly for a large collaborative document; a `Document` inside a `CRDT[T]` converges but does not bring its speed with it, because `Edit` copies and compares the value to work out what changed.
+Both serialize identically, so a replica running one converges with a replica running the other.
+
+**Syncing only what is missing** — a state vector says how much of each writer's output a replica holds, one number per writer rather than per character, so a peer sends only the difference:
+
+```go
+update := server.Since(client.StateVector()) // what the client lacks
+client.Apply(update)
+```
+
+A 23-character edit to a 5,000-character document sends **151 bytes instead of 5,239**, and the state vector asking for it is 35. Deletions travel too, applying an update twice changes nothing, and syncing both directions converges. Hold a `Document` directly for a large collaborative document; a `Document` inside a `CRDT[T]` converges but does not bring its speed with it, because `Edit` copies and compares the value to work out what changed.
 
 **Reclaiming history** — a replica remembers when every path was written and deleted, and a sequence keeps deleted elements as tombstones, so a long-lived replica carries more history than data. `Compact` discards it, down to a watermark you supply:
 
@@ -431,6 +440,7 @@ Every directory under [`examples/`](examples/) is a runnable program (`go run ./
 | [`crdt_observers`](examples/crdt_observers) | `OnChange` for incremental UI updates |
 | [`crdt_compaction`](examples/crdt_compaction) | `Compact` for reclaiming the history a long-lived replica accumulates |
 | [`crdt_document`](examples/crdt_document) | `Document`, a text CRDT indexed for editing rather than stored as a slice |
+| [`crdt_sync_incremental`](examples/crdt_sync_incremental) | State vectors: sending only what a peer is missing |
 | [`lww_fields`](examples/lww_fields) | Per-field `LWW[T]` registers resolving a write conflict |
 | [`text_sync`](examples/text_sync) | Collaborative text with `crdt.Text` |
 
