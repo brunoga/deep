@@ -307,17 +307,41 @@ func (d *Document) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// Diff reports the change from d to other as one whole-value operation: the
-// receiving side merges rather than overwrites.
-func (d *Document) Diff(other *Document) deep.Patch[Document] {
-	if d.String() == other.String() && d.Len() == other.Len() {
-		if len(d.Text()) == len(other.Text()) {
-			return deep.Patch[Document]{}
-		}
+// DocumentPatch is the change from one document to another, expressed as the
+// part the first is missing rather than as the whole of the second.
+type DocumentPatch struct {
+	Update Update
+}
+
+// Apply merges the change into the document.
+func (p *DocumentPatch) Apply(d **Document) {
+	if d == nil || *d == nil {
+		return
 	}
-	return deep.Patch[Document]{Operations: []deep.Operation{
-		{Kind: deep.OpReplace, Path: "/", Old: d.Text(), New: other.Text()},
-	}}
+	(*d).Apply(p.Update)
+}
+
+// FlatOperation describes the change for a patch's flat operation form. Saying
+// what is missing rather than what the document became is what keeps a delta
+// the size of the edit: a document held inside a [CRDT] would otherwise put its
+// whole contents into every delta it produced.
+func (p *DocumentPatch) FlatOperation() (old, new any) { return nil, p.Update }
+
+// Diff reports the change from d to other.
+//
+// The engine calls this instead of comparing the two documents structurally,
+// which would walk both indexes to describe a change the document can state
+// directly. Working out what other holds that d does not is the same question
+// [Document.Since] answers for a peer.
+func (d *Document) Diff(other *Document) (*DocumentPatch, error) {
+	if d == nil || other == nil {
+		return nil, nil
+	}
+	update := other.Since(d.StateVector())
+	if update.IsEmpty() {
+		return nil, nil
+	}
+	return &DocumentPatch{Update: update}, nil
 }
 
 // Patch applies p to d, merging rather than overwriting.
@@ -342,11 +366,27 @@ func (d *Document) applyOperation(op deep.Operation, _ *slog.Logger) (bool, erro
 		return false, nil
 	}
 	switch v := op.New.(type) {
+	case Update:
+		d.Apply(v)
+		return true, nil
 	case Text:
 		d.MergeFrom(v)
 		return true, nil
 	case *Document:
 		d.MergeFrom(v)
+		return true, nil
+	case map[string]any:
+		// An update that has been through JSON arrives as the decoder's generic
+		// shape; re-decode it into what it was.
+		data, err := json.Marshal(v)
+		if err != nil {
+			return false, err
+		}
+		var u Update
+		if err := json.Unmarshal(data, &u); err != nil {
+			return false, err
+		}
+		d.Apply(u)
 		return true, nil
 	case []any:
 		data, err := json.Marshal(v)

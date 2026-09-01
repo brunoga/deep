@@ -23,6 +23,23 @@ All notable changes to this project are documented here, newest first.
   changes nothing, deletions travel even though the peer already holds the
   characters, and syncing in both directions reaches what a full merge would.
 
+- **A `crdt.Document` inside a `CRDT[T]` now produces deltas the size of the
+  edit, and produces them quickly.** The engine compared two indexes
+  structurally to work out what an edit had changed, which walked both trees and
+  put the result into the delta node by node. A `Document` now reports the
+  change itself, as the part the other side is missing — the same question
+  [Document.Since] answers for a peer.
+
+  | 50 edits to a 500-run document inside a `CRDT` | Before | After |
+  | :--- | ---: | ---: |
+  | Time | 124 ms | 4.6 ms |
+  | Delta for a one-character edit | whole document | 200 bytes |
+
+  Operations aimed at a value that merges itself also skip the clock filter and
+  are handed to that value rather than applied generically. Both replicas write
+  the same path when they edit the same document, so last-write-wins would have
+  kept only one side of a concurrent edit.
+
 ### Fixed
 
 - **Merging could order a document differently on two replicas.** A run

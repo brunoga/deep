@@ -310,9 +310,20 @@ func (c *CRDT[T]) applyDelta(delta Delta[T]) (deep.Patch[T], bool) {
 	}
 	defer canonicalizeKeyedSlices(reflect.ValueOf(&c.value).Elem())
 
+	root := reflect.ValueOf(&c.value).Elem()
+
 	var filtered []deep.Operation
 	for _, op := range delta.patch.Operations {
 		opTime := delta.Timestamp
+
+		// A value that merges itself settles concurrency on its own terms, so
+		// its operations skip the clock filter entirely. Filtering them would
+		// throw away one side of a concurrent edit: both replicas write the
+		// same path, and last-write-wins would keep only the later one.
+		if convergentTarget(root, op.Path) {
+			filtered = append(filtered, op)
+			continue
+		}
 
 		// LWW: effective local time is the max of the write clock and tombstone.
 		lTime := c.clocks[op.Path]
@@ -335,11 +346,75 @@ func (c *CRDT[T]) applyDelta(delta Delta[T]) (deep.Patch[T], bool) {
 	if len(filtered) == 0 {
 		return deep.Patch[T]{}, false
 	}
-	appliedPatch := deep.Patch[T]{Operations: filtered}
-	if err := deep.Apply(&c.value, appliedPatch); err != nil {
-		return deep.Patch[T]{}, false
+
+	// An operation aimed at a value that merges itself is handed to that value
+	// rather than applied by the generic path, which would overwrite it. This
+	// is also what lets such an operation carry a description of the change
+	// rather than the whole new value.
+	remaining := filtered[:0:0]
+	for _, op := range filtered {
+		if handled, err := applyToConvergent(root, op); handled {
+			if err != nil {
+				return deep.Patch[T]{}, false
+			}
+			continue
+		}
+		remaining = append(remaining, op)
 	}
-	return appliedPatch, true
+
+	if len(remaining) > 0 {
+		if err := deep.Apply(&c.value, deep.Patch[T]{Operations: remaining}); err != nil {
+			return deep.Patch[T]{}, false
+		}
+	}
+	return deep.Patch[T]{Operations: filtered}, true
+}
+
+// opApplier is a convergent value that can take an operation aimed at it.
+type opApplier interface {
+	applyOperation(op deep.Operation, logger *slog.Logger) (bool, error)
+}
+
+// convergentTarget reports whether the path names a value that merges itself.
+func convergentTarget(root reflect.Value, path string) bool {
+	if path == "" || path == "/" {
+		return false
+	}
+	target, err := icore.DeepPath(path).Resolve(root)
+	if err != nil || !target.IsValid() {
+		return false
+	}
+	if isSelfMerging(target.Type()) {
+		return true
+	}
+	return target.CanAddr() && isSelfMerging(target.Addr().Type())
+}
+
+// applyToConvergent hands op to the value it names when that value merges
+// itself, reporting whether it did.
+func applyToConvergent(root reflect.Value, op deep.Operation) (bool, error) {
+	if op.Path == "" || op.Path == "/" {
+		return false, nil
+	}
+	target, err := icore.DeepPath(op.Path).Resolve(root)
+	if err != nil || !target.IsValid() {
+		return false, nil
+	}
+	// The method is on the pointer, so an addressable value has to be taken by
+	// address first; a pointer field already is one.
+	if target.Kind() != reflect.Pointer {
+		if !target.CanAddr() {
+			return false, nil
+		}
+		target = target.Addr()
+	}
+	applier, ok := target.Interface().(opApplier)
+	if !ok {
+		return false, nil
+	}
+	inner := op
+	inner.Path = "/"
+	return applier.applyOperation(inner, slog.Default())
 }
 
 // canonicalizeKeyedSlices puts every keyed slice reachable from v into a
