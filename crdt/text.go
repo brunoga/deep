@@ -49,6 +49,14 @@ type TextRun struct {
 }
 
 // Text represents a CRDT-friendly text structure using runs.
+//
+// A Text held by this package is always stored in document order. Every
+// operation here either preserves that order or restores it: Insert splices a
+// run into the position the ordering would give it, Delete only flips flags,
+// and [MergeTextRuns] — the one place runs arrive from elsewhere — derives the
+// order from scratch. Operations can therefore read the runs directly instead
+// of rebuilding the ordering tree, which is what keeps editing from costing
+// more as a document grows.
 type Text []TextRun
 
 // String returns the full text content, skipping deleted runs.
@@ -62,20 +70,58 @@ func (t Text) String() string {
 	return b.String()
 }
 
+// Len returns the number of visible characters, counted in runes — the same
+// unit Insert and Delete take positions in.
+func (t Text) Len() int {
+	n := 0
+	for _, run := range t {
+		if !run.Deleted {
+			n += runeLen(run.Value)
+		}
+	}
+	return n
+}
+
 // Insert inserts a string at the given character position.
 func (t Text) Insert(pos int, value string, clock *hlc.Clock) Text {
 	if value == "" {
 		return t
 	}
-	prevID := t.findIDAt(pos - 1)
-	result := t.splitAt(pos)
+	// Order once and reuse it: locating the anchor and splitting both need the
+	// document order, and deriving it twice per keystroke is what made typing
+	// cost more as the document grew.
+	ordered := t.getOrdered()
+	prevID := ordered.findIDAt(pos - 1)
+	result := ordered.splitAt(pos)
 	newRun := TextRun{
 		ID:    clock.Reserve(runeLen(value)),
 		Value: value,
 		Prev:  prevID,
 	}
-	result = append(result, newRun)
-	return result.normalize()
+
+	// Place the run where it belongs rather than appending it. The new run has
+	// the newest ID, so among everything anchored to prevID it sorts first,
+	// which puts it directly after the anchor — exactly where this splice puts
+	// it. Keeping the slice in document order lets the ordering pass below take
+	// its fast path instead of rebuilding the tree.
+	at := len(result)
+	if prevID == (hlc.HLC{}) {
+		at = 0
+	} else {
+		for i, run := range result {
+			last := run.ID
+			last.Logical += int32(runeLen(run.Value) - 1)
+			if last == prevID {
+				at = i + 1
+				break
+			}
+		}
+	}
+	result = append(append(Text{}, result...), TextRun{})
+	copy(result[at+1:], result[at:])
+	result[at] = newRun
+
+	return result.mergeAdjacent()
 }
 
 // Delete removes length characters starting at pos.
@@ -83,9 +129,8 @@ func (t Text) Delete(pos, length int) Text {
 	if length <= 0 {
 		return t
 	}
-	result := t.splitAt(pos).splitAt(pos + length)
+	ordered := append(Text{}, t.getOrdered().splitAt(pos).splitAt(pos+length)...)
 	currentPos := 0
-	ordered := result.getOrdered()
 	for i := range ordered {
 		runLen := runeLen(ordered[i].Value)
 		if !ordered[i].Deleted {
@@ -95,15 +140,18 @@ func (t Text) Delete(pos, length int) Text {
 			currentPos += runLen
 		}
 	}
-	return ordered.normalize()
+	// Only flags changed, so the order still holds.
+	return ordered.mergeAdjacent()
 }
 
+// findIDAt returns the ID of the character at pos. It expects t to be in
+// document order.
 func (t Text) findIDAt(pos int) hlc.HLC {
 	if pos < 0 {
 		return hlc.HLC{}
 	}
 	currentPos := 0
-	for _, run := range t.getOrdered() {
+	for _, run := range t {
 		if run.Deleted {
 			continue
 		}
@@ -118,11 +166,13 @@ func (t Text) findIDAt(pos int) hlc.HLC {
 	return hlc.HLC{}
 }
 
+// splitAt splits the run containing pos so that a run boundary falls there. It
+// expects t to be in document order and returns runs in that same order.
 func (t Text) splitAt(pos int) Text {
 	if pos <= 0 {
 		return t
 	}
-	ordered := t.getOrdered()
+	ordered := t
 	currentPos := 0
 	for i, run := range ordered {
 		if run.Deleted {
@@ -162,6 +212,9 @@ func (t Text) getOrdered() Text {
 	if len(t) <= 1 {
 		return t
 	}
+	if t.inSequence() {
+		return t
+	}
 	children := make(map[hlc.HLC][]TextRun)
 	for _, run := range t {
 		children[run.Prev] = append(children[run.Prev], run)
@@ -171,28 +224,125 @@ func (t Text) getOrdered() Text {
 			return runs[i].ID.After(runs[j].ID)
 		})
 	}
-	var result Text
-	seen := make(map[hlc.HLC]bool)
-	var walk func(hlc.HLC)
-	walk = func(id hlc.HLC) {
-		for _, run := range children[id] {
-			if !seen[run.ID] {
-				seen[run.ID] = true
-				result = append(result, run)
-				for i := 0; i < runeLen(run.Value); i++ {
-					charID := run.ID
-					charID.Logical += int32(i)
-					walk(charID)
-				}
+	result := make(Text, 0, len(t))
+	seen := make(map[hlc.HLC]bool, len(t))
+
+	// Visit a run, then the runs anchored to each of its characters in turn.
+	// Only characters that something is actually anchored to are worth looking
+	// at: probing every character of every run costs a map lookup per character
+	// of the document, which dominates once runs are long.
+	var stack []TextRun
+	push := func(anchor hlc.HLC) {
+		group := children[anchor]
+		for i := len(group) - 1; i >= 0; i-- {
+			stack = append(stack, group[i])
+		}
+	}
+	push(hlc.HLC{})
+	for len(stack) > 0 {
+		run := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if seen[run.ID] {
+			continue
+		}
+		seen[run.ID] = true
+		result = append(result, run)
+
+		n := runeLen(run.Value)
+		for i := n - 1; i >= 0; i-- {
+			charID := run.ID
+			charID.Logical += int32(i)
+			if _, ok := children[charID]; ok {
+				push(charID)
 			}
 		}
 	}
-	walk(hlc.HLC{})
+
+	// Runs whose anchor never arrived would otherwise be dropped.
+	if len(result) < len(t) {
+		for _, run := range t {
+			if !seen[run.ID] {
+				seen[run.ID] = true
+				result = append(result, run)
+			}
+		}
+	}
 	return result
 }
 
+// anchorFrame tracks one run while checking whether a sequence is in document
+// order: the range of character IDs other runs may anchor to, how far through
+// that range the check has advanced, and the last sibling seen at that point.
+type anchorFrame struct {
+	base    hlc.HLC // ID of the run's first character
+	n       int32   // number of characters in the run
+	cursor  int32   // character offset whose children are currently being read
+	lastSib hlc.HLC
+	hasSib  bool
+}
+
+// hosts reports the character offset of id within the frame's run.
+func (f anchorFrame) hosts(id hlc.HLC) (int32, bool) {
+	if id.WallTime != f.base.WallTime || id.NodeID != f.base.NodeID {
+		return 0, false
+	}
+	off := id.Logical - f.base.Logical
+	if off < 0 || off >= f.n {
+		return 0, false
+	}
+	return off, true
+}
+
+// inSequence reports whether t is already in the order getOrdered would put it
+// in, which is true of every Text this package produces — each operation either
+// keeps the order or restores it. Deriving the order costs a map of every run
+// plus a sort; confirming an existing one costs a single pass, so it is worth
+// checking before doing the work.
+//
+// The check replays the walk against the stored sequence. Runs anchored to the
+// same character must appear in descending ID order, and each run must anchor
+// into a run still open at this point in the walk — the stack holds those, and
+// leaving a run's subtree pops it. A sequence that satisfies both is the one
+// the walk would produce.
+func (t Text) inSequence() bool {
+	// The virtual root: one character, the zero ID, which the first run anchors
+	// to.
+	stack := []anchorFrame{{n: 1}}
+	for _, run := range t {
+		for {
+			top := &stack[len(stack)-1]
+			if off, ok := top.hosts(run.Prev); ok && off >= top.cursor {
+				if off > top.cursor {
+					top.cursor, top.hasSib = off, false
+				}
+				if top.hasSib && !top.lastSib.After(run.ID) {
+					return false // siblings out of order
+				}
+				top.lastSib, top.hasSib = run.ID, true
+				break
+			}
+			if len(stack) == 1 {
+				return false // anchored somewhere the walk would not be
+			}
+			stack = stack[:len(stack)-1]
+		}
+		stack = append(stack, anchorFrame{base: run.ID, n: int32(runeLen(run.Value))})
+	}
+	return true
+}
+
+// normalize restores document order and then merges adjacent runs. Use it for
+// runs that arrived from elsewhere; operations that already preserve order call
+// mergeAdjacent directly.
 func (t Text) normalize() Text {
-	ordered := t.getOrdered()
+	return t.getOrdered().mergeAdjacent()
+}
+
+// mergeAdjacent joins runs that sit next to each other and hold consecutive
+// character IDs, so a document does not accumulate one run per edit. It assumes
+// the runs are already in document order.
+func (t Text) mergeAdjacent() Text {
+	ordered := t
 	if len(ordered) <= 1 {
 		return ordered
 	}

@@ -8,7 +8,36 @@ All notable changes to this project are documented here, newest first.
 
 ## Unreleased
 
+### Performance
+
+- **Editing a `crdt.Text` is roughly 13x faster**, and reading one is around 25x
+  faster. Every operation derived the document order from scratch, several
+  times per keystroke — locating the insertion point, splitting the run, and
+  normalizing each rebuilt the whole ordering tree — so the cost of typing a
+  character grew with the size of the document.
+
+  The order is now derived once per operation, and not at all when the runs are
+  already in it, which is the case for every `Text` this package produces.
+  Confirming an existing order takes one pass where deriving it costs a map of
+  every run plus a sort. The walk itself no longer probes every character of
+  every run, and no longer recounts a run's length once per character.
+
+  | Workload | Before | After |
+  | :--- | ---: | ---: |
+  | Type 1,000 characters | 715 ms | 52 ms |
+  | Type 2,000 characters | 3.07 s | 239 ms |
+  | 800 insertions mid-document | 189 ms | 14 ms |
+  | Read a 1,000-character document | 587 µs | 25 µs |
+
+  Editing remains linear in document size per operation; this removes the
+  repeated work around it rather than changing the algorithm. Serialized size is
+  unchanged — a document still carries one run per edit, which is the next thing
+  to address.
+
 ### Added
+
+- **`crdt.Text.Len`** returns the number of visible characters, in runes — the
+  same unit `Insert` and `Delete` take positions in.
 
 - **`crdt.List[T]`**, a sequence that merges. An ordinary slice inside a
   `CRDT[T]` is synchronized as one value, so concurrent edits resolve by
