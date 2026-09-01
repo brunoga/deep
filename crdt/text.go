@@ -291,14 +291,14 @@ func MergeTextRuns(a, b Text) Text {
 			splits[base] = make(map[int32]bool)
 		}
 		splits[base][run.ID.Logical] = true
-		splits[base][run.ID.Logical+int32(len(run.Value))] = true
+		splits[base][run.ID.Logical+int32(runeLen(run.Value))] = true
 	}
 	combinedMap := make(map[hlc.HLC]TextRun)
 	for _, run := range allRuns {
 		base := baseID{run.ID.WallTime, run.ID.NodeID}
 		relevantSplits := []int32{}
 		for s := range splits[base] {
-			if s > run.ID.Logical && s < run.ID.Logical+int32(len(run.Value)) {
+			if s > run.ID.Logical && s < run.ID.Logical+int32(runeLen(run.Value)) {
 				relevantSplits = append(relevantSplits, s)
 			}
 		}
@@ -310,7 +310,7 @@ func MergeTextRuns(a, b Text) Text {
 			offset := int(s - currentLogical)
 			id := run.ID
 			id.Logical = currentLogical
-			newRun := TextRun{ID: id, Value: currentValue[:offset], Prev: currentPrev, Deleted: run.Deleted}
+			newRun := TextRun{ID: id, Value: runeSlice(currentValue, 0, offset), Prev: currentPrev, Deleted: run.Deleted}
 			if existing, ok := combinedMap[id]; ok {
 				if newRun.Deleted {
 					existing.Deleted = true
@@ -321,7 +321,7 @@ func MergeTextRuns(a, b Text) Text {
 			}
 			currentPrev = id
 			currentPrev.Logical += int32(offset - 1)
-			currentValue = currentValue[offset:]
+			currentValue = runeSlice(currentValue, offset, runeLen(currentValue))
 			currentLogical = s
 		}
 		id := run.ID

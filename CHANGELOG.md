@@ -6,6 +6,18 @@ All notable changes to this project are documented here, newest first.
 > version's entry before tagging, so the tag, the GitHub release notes, and this
 > file always agree.
 
+## Unreleased
+
+### Fixed
+
+- **`crdt.Text` merging still corrupted non-ASCII text.** v5.6.0 converted
+  editing to runes but left `MergeTextRuns` counting the split boundaries it
+  introduces in bytes, so merging two replicas that had split the same
+  multi-byte run at different points sliced through a character: the result was
+  invalid UTF-8 and the two replicas disagreed about it. Merging now counts
+  runes like the rest of the type. Editing a document on one replica was
+  correct in v5.6.0; merging concurrent edits to non-ASCII text was not.
+
 ## v5.6.0
 
 ### Behavior changes
