@@ -47,6 +47,20 @@ func MapKey[T any, M ~map[K]V, K comparable, V any](p Path[T, M], k K) Path[T, V
 	return Path[T, V]{path: fmt.Sprintf("%s/%s", p.String(), icore.EscapeKey(fmt.Sprintf("%v", k)))}
 }
 
+// EscapePathKey escapes a map key or keyed-slice key for use as a JSON
+// Pointer token (RFC 6901): "~" becomes "~0" and "/" becomes "~1". Generated
+// code uses it when building operation paths; it is also useful when
+// constructing paths by hand.
+func EscapePathKey(key string) string {
+	return icore.EscapeKey(key)
+}
+
+// UnescapePathKey reverses EscapePathKey, turning a JSON Pointer token back
+// into the original key.
+func UnescapePathKey(token string) string {
+	return icore.UnescapeKey(token)
+}
+
 // pathCache stores resolved paths keyed by selector function pointer.
 var pathCache sync.Map // map[uintptr]string
 
