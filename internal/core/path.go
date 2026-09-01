@@ -545,8 +545,7 @@ func ParseJSONPointer(path string) []PathPart {
 
 	parts := make([]PathPart, len(tokens))
 	for i, token := range tokens {
-		token = strings.ReplaceAll(token, "~1", "/")
-		token = strings.ReplaceAll(token, "~0", "~")
+		token = UnescapeKey(token)
 		if idx, err := strconv.Atoi(token); err == nil && idx >= 0 {
 			parts[i] = PathPart{Key: token, Index: idx, IsIndex: true}
 		} else {
@@ -578,6 +577,15 @@ func EscapeKey(key string) string {
 	key = strings.ReplaceAll(key, "~", "~0")
 	key = strings.ReplaceAll(key, "/", "~1")
 	return key
+}
+
+// UnescapeKey reverses EscapeKey, turning the RFC 6901 escape sequences "~1"
+// and "~0" back into "/" and "~". The order (slash first) matters: unescaping
+// "~0" first would turn "~01" into "~1" and then wrongly into "/".
+func UnescapeKey(token string) string {
+	token = strings.ReplaceAll(token, "~1", "/")
+	token = strings.ReplaceAll(token, "~0", "~")
+	return token
 }
 
 // JoinPath joins two JSON Pointer paths with a slash.

@@ -965,21 +965,28 @@ func (p *mapPatch) reverse() diffPatch {
 	}
 }
 
+// keyPath joins path and a map or slice key as a JSON Pointer, escaping the
+// key per RFC 6901 so keys containing "/" or "~" survive the round-trip
+// through the flat operation form.
+func keyPath(path string, k any) string {
+	return path + "/" + icore.EscapeKey(fmt.Sprintf("%v", k))
+}
+
 func (p *mapPatch) walk(path string, fn func(path string, op OpKind, old, new any) error) error {
 	for k, val := range p.added {
-		fullPath := fmt.Sprintf("%s/%v", path, k)
+		fullPath := keyPath(path, k)
 		if err := fn(fullPath, OpAdd, nil, icore.ValueToInterface(val)); err != nil {
 			return err
 		}
 	}
 	for k, oldVal := range p.removed {
-		fullPath := fmt.Sprintf("%s/%v", path, k)
+		fullPath := keyPath(path, k)
 		if err := fn(fullPath, OpRemove, icore.ValueToInterface(oldVal), nil); err != nil {
 			return err
 		}
 	}
 	for k, patch := range p.modified {
-		fullPath := fmt.Sprintf("%s/%v", path, k)
+		fullPath := keyPath(path, k)
 		if err := patch.walk(fullPath, fn); err != nil {
 			return err
 		}
@@ -1007,17 +1014,17 @@ func (p *mapPatch) format(indent int) string {
 func (p *mapPatch) toJSONPatch(path string) []map[string]any {
 	var ops []map[string]any
 	for k := range p.removed {
-		fullPath := fmt.Sprintf("%s/%v", path, k)
+		fullPath := keyPath(path, k)
 		op := map[string]any{"op": "remove", "path": fullPath}
 		ops = append(ops, op)
 	}
 	for k, patch := range p.modified {
-		fullPath := fmt.Sprintf("%s/%v", path, k)
+		fullPath := keyPath(path, k)
 		subOps := patch.toJSONPatch(fullPath)
 		ops = append(ops, subOps...)
 	}
 	for k, val := range p.added {
-		fullPath := fmt.Sprintf("%s/%v", path, k)
+		fullPath := keyPath(path, k)
 		op := map[string]any{"op": "add", "path": fullPath, "value": icore.ValueToInterface(val)}
 		ops = append(ops, op)
 	}
@@ -1399,7 +1406,7 @@ func (p *slicePatch) walk(path string, fn func(path string, op OpKind, old, new 
 	for _, op := range p.ops {
 		fullPath := fmt.Sprintf("%s/%d", path, op.Index)
 		if op.Key != nil {
-			fullPath = fmt.Sprintf("%s/%v", path, op.Key)
+			fullPath = keyPath(path, op.Key)
 		}
 		switch op.Kind {
 		case OpAdd:
