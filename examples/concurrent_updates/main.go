@@ -1,3 +1,5 @@
+//go:generate go run github.com/brunoga/deep/v5/cmd/deep-gen -type=Stock -output stock_deep.go .
+
 package main
 
 import (
@@ -15,9 +17,9 @@ type Stock struct {
 func main() {
 	s := Stock{SKU: "BOLT-1", Quantity: 100}
 
-	// User A generates a patch to decrease stock by 10.
-	// WithStrict(true) records current values so the patch fails if the
-	// state has changed by the time it is applied (optimistic locking).
+	// User A generates a patch to decrease stock by 10. Diff records the
+	// current value as Old; AsStrict makes Apply verify it, so the patch
+	// fails if the state moved on in the meantime (optimistic locking).
 	rawPatch, err := deep.Diff(s, Stock{SKU: "BOLT-1", Quantity: 90})
 	if err != nil {
 		log.Fatal(err)

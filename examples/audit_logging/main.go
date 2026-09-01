@@ -53,13 +53,15 @@ func main() {
 	// OpLog operations fire structured log messages during Apply.
 	// WithLogger routes them to any slog.Logger — useful for tracing,
 	// per-request loggers, or test capture.
-	namePath := deep.Field(func(u *User) *string { return &u.Name })
-
-	tracePatch := deep.Edit(&u1).
-		Log("applying name update").
-		With(deep.Set(namePath, "Alice Smith")).
-		Log("name update complete").
-		Build()
+	// Wrap the audited change itself in log operations, so the trace and the
+	// audit log above describe the same update.
+	tracePatch := patch.WithGuard(nil)
+	tracePatch.Operations = append(
+		[]deep.Operation{{Kind: deep.OpLog, Path: "/", New: "applying user update"}},
+		tracePatch.Operations...,
+	)
+	tracePatch.Operations = append(tracePatch.Operations,
+		deep.Operation{Kind: deep.OpLog, Path: "/", New: "user update complete"})
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
 		ReplaceAttr: func(_ []string, a slog.Attr) slog.Attr {
@@ -75,4 +77,8 @@ func main() {
 		log.Fatal(err)
 	}
 	fmt.Printf("Result: %+v\n", u1)
+
+	if deep.Equal(u1, u2) {
+		fmt.Println("\nThe audited patch reproduced the target state exactly.")
+	}
 }
