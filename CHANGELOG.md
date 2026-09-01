@@ -8,6 +8,23 @@ All notable changes to this project are documented here, newest first.
 
 ## Unreleased
 
+### Fixed
+
+- **`crdt.Text` corrupted non-ASCII text.** Positions and lengths were counted
+  in bytes while character IDs advance per character, so a split could land
+  inside a multi-byte sequence: inserting into `"héllo"` produced invalid
+  UTF-8, and deleting an emoji left its trailing bytes behind. Text is now
+  rune-based throughout.
+- **Replicas holding a keyed slice could diverge.** `Apply` appends a new
+  element at the end, so after concurrent additions the order depended on which
+  delta arrived first and two replicas with identical elements disagreed. Since
+  element order in a keyed slice is not synchronized state — `Diff` emits
+  nothing when one is merely reordered — replicas now keep keyed slices in key
+  order, which is the same on every replica.
+- **`NewCRDT` aliased the value it was given** instead of copying it, so a
+  caller mutating its own value reached inside the replica behind the mutex,
+  and two replicas seeded from one value shared state.
+
 ### Documentation
 
 - Added `examples/README.md`: a guide to all 24 examples with a suggested

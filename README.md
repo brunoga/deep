@@ -299,6 +299,16 @@ type Document struct {
 
 **Standalone convergent containers** — `crdt.Counter` (increment/decrement), `crdt.Set[T]` (add-wins set) and `crdt.Map[K,V]` (LWW map), each with a commutative, idempotent `Merge`.
 
+**How collections merge inside a `CRDT[T]`** — everything converges, but only the first two merge concurrent edits rather than picking a winner:
+
+| Field type | Concurrent edits |
+| :--- | :--- |
+| `map[K]V` | Different keys both survive |
+| `[]T` with `deep:"key"` on `T` | Different elements both survive; an element's fields merge independently. Order is not synchronized — replicas keep these in key order, so sort on read if order matters |
+| `[]T` without a key | Whole-slice last-write-wins: one writer's version wins |
+
+Prefer a map or a keyed slice for any collection edited concurrently.
+
 **`crdt/hlc`** — `Clock` (per-node: `Now`, `Update`, `Reserve`, `SetLatest`) and `HLC` timestamps (`Compare`, `After`) giving a total order across nodes without synchronized wall clocks.
 
 ## Architecture
