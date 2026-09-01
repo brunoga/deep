@@ -6,7 +6,19 @@ All notable changes to this project are documented here, newest first.
 > version's entry before tagging, so the tag, the GitHub release notes, and this
 > file always agree.
 
-## Unreleased
+## v5.6.0
+
+### Behavior changes
+
+- `crdt.Text` positions and lengths are counted in **runes**, not bytes. Code
+  that computed positions from `len(string)` must count runes instead
+  (`utf8.RuneCountInString`). ASCII-only documents are unaffected, including
+  ones already persisted.
+- Replicas keep keyed slices in key order. Element order in a keyed slice was
+  never synchronized state, so this replaces an order that depended on delta
+  arrival with one every replica agrees on. Sort on read, or carry an explicit
+  ordering field, when a particular order matters. `deep.Apply` outside the
+  `crdt` package is unchanged.
 
 ### Fixed
 
