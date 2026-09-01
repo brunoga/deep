@@ -322,6 +322,19 @@ tasks = tasks.Delete(2, 1)                           // remove one at index 2
 tasks.Items()                                        // []string in order
 ```
 
+**Observing changes** — `OnChange` reports the operations that were actually applied, so a UI can redraw just what moved instead of diffing snapshots:
+
+```go
+cancel := node.OnChange(func(c crdt.Change[Doc]) {
+    for _, op := range c.Patch.Operations {
+        redraw(op.Path, op.New) // c.Source is local, remote, or merge
+    }
+})
+defer cancel()
+```
+
+Only surviving operations are reported: a remote write that lost to a newer local one never appears. Callbacks run on the goroutine that made the change, with no lock held, so they may read or edit the replica.
+
 **Custom convergent types** — implement `crdt.Convergent` and a `CRDT[T]` will merge your type instead of picking a winner:
 
 ```go
@@ -388,6 +401,7 @@ Every directory under [`examples/`](examples/) is a runnable program (`go run ./
 | [`crdt_undo_redo`](examples/crdt_undo_redo) | Distributed undo/redo via `Reverse` |
 | [`crdt_containers`](examples/crdt_containers) | `Counter`, `Set` and `Map` |
 | [`crdt_list`](examples/crdt_list) | `List[T]`, a sequence that merges concurrent insertions and deletions |
+| [`crdt_observers`](examples/crdt_observers) | `OnChange` for incremental UI updates |
 | [`lww_fields`](examples/lww_fields) | Per-field `LWW[T]` registers resolving a write conflict |
 | [`text_sync`](examples/text_sync) | Collaborative text with `crdt.Text` |
 

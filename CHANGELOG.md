@@ -36,6 +36,12 @@ All notable changes to this project are documented here, newest first.
 
 ### Added
 
+- **`CRDT[T].OnChange`** reports each change as it is applied, carrying the
+  operations that actually took effect and where the change came from (local
+  edit, remote delta, or merge). A consumer can redraw exactly what moved
+  instead of diffing snapshots, and never sees an operation that lost conflict
+  resolution. Callbacks run on the goroutine that made the change with no lock
+  held, so they may read or edit the replica.
 - **`crdt.Text.Len`** returns the number of visible characters, in runes — the
   same unit `Insert` and `Delete` take positions in.
 
