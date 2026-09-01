@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/brunoga/deep/v5/crdt/hlc"
+	"unicode/utf8"
 )
 
 func TestText_Insert(t *testing.T) {
@@ -275,5 +276,51 @@ func TestText_Concurrent_OverlappingDeletions(t *testing.T) {
 	expected := "AG"
 	if docA.View().String() != expected || docB.View().String() != expected {
 		t.Errorf("Overlapping deletion failed. A=%q, B=%q, expected %q", docA.View().String(), docB.View().String(), expected)
+	}
+}
+
+// TestTextUnicodePositions asserts that positions and lengths are counted in
+// runes, not bytes. Byte offsets used to hand out character IDs that did not
+// exist and let a split land inside a multi-byte sequence, so inserting into
+// or deleting from any non-ASCII text produced invalid UTF-8.
+func TestTextUnicodePositions(t *testing.T) {
+	clock := hlc.NewClock("a")
+
+	doc := Text{}.Insert(0, "héllo", clock) // é occupies two bytes
+	if got := doc.Insert(2, "X", clock).String(); got != "héXllo" {
+		t.Errorf("Insert at rune position 2 = %q, want %q", got, "héXllo")
+	}
+
+	emoji := Text{}.Insert(0, "a😀b", clock) // the emoji is four bytes
+	if got := emoji.Delete(1, 1).String(); got != "ab" {
+		t.Errorf("Delete of one rune = %q, want %q", got, "ab")
+	}
+
+	mixed := Text{}.Insert(0, "日本語", clock)
+	if got := mixed.Insert(1, "-", clock).String(); got != "日-本語" {
+		t.Errorf("Insert into CJK text = %q, want %q", got, "日-本語")
+	}
+	if got := mixed.Delete(0, 2).String(); got != "語" {
+		t.Errorf("Delete of two runes = %q, want %q", got, "語")
+	}
+}
+
+// TestTextUnicodeConvergence asserts that concurrent edits to non-ASCII text
+// still converge, and that neither replica ends up with mojibake.
+func TestTextUnicodeConvergence(t *testing.T) {
+	ca, cb := hlc.NewClock("a"), hlc.NewClock("b")
+	base := Text{}.Insert(0, "héllo wörld", ca)
+
+	docA := base.Insert(5, " 😀", ca)
+	docB := base.Insert(0, "» ", cb)
+
+	mergedA := MergeTextRuns(docA, docB)
+	mergedB := MergeTextRuns(docB, docA)
+
+	if mergedA.String() != mergedB.String() {
+		t.Errorf("diverged: %q vs %q", mergedA.String(), mergedB.String())
+	}
+	if !utf8.ValidString(mergedA.String()) {
+		t.Errorf("merge produced invalid UTF-8: %q", mergedA.String())
 	}
 }

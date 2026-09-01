@@ -5,10 +5,40 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/brunoga/deep/v5"
 	"github.com/brunoga/deep/v5/crdt/hlc"
 )
+
+// Positions and lengths throughout this file are counted in runes, not bytes.
+// A character ID is its run's ID advanced by the character's rune offset, so
+// the two have to agree: counting bytes would hand out IDs that do not exist
+// and let a split land inside a multi-byte sequence, corrupting the text.
+
+// runeLen returns the number of runes in s.
+func runeLen(s string) int { return utf8.RuneCountInString(s) }
+
+// runeSlice returns s[from:to] with the bounds counted in runes.
+func runeSlice(s string, from, to int) string {
+	start, i := -1, 0
+	for off := range s {
+		if i == from {
+			start = off
+		}
+		if i == to {
+			return s[start:off]
+		}
+		i++
+	}
+	if start < 0 {
+		if from == i {
+			return ""
+		}
+		return s
+	}
+	return s[start:]
+}
 
 // TextRun represents a contiguous run of characters with a unique starting ID.
 type TextRun struct {
@@ -40,7 +70,7 @@ func (t Text) Insert(pos int, value string, clock *hlc.Clock) Text {
 	prevID := t.findIDAt(pos - 1)
 	result := t.splitAt(pos)
 	newRun := TextRun{
-		ID:    clock.Reserve(len(value)),
+		ID:    clock.Reserve(runeLen(value)),
 		Value: value,
 		Prev:  prevID,
 	}
@@ -57,7 +87,7 @@ func (t Text) Delete(pos, length int) Text {
 	currentPos := 0
 	ordered := result.getOrdered()
 	for i := range ordered {
-		runLen := len(ordered[i].Value)
+		runLen := runeLen(ordered[i].Value)
 		if !ordered[i].Deleted {
 			if currentPos >= pos && currentPos+runLen <= pos+length {
 				ordered[i].Deleted = true
@@ -77,7 +107,7 @@ func (t Text) findIDAt(pos int) hlc.HLC {
 		if run.Deleted {
 			continue
 		}
-		runLen := len(run.Value)
+		runLen := runeLen(run.Value)
 		if pos >= currentPos && pos < currentPos+runLen {
 			id := run.ID
 			id.Logical += int32(pos - currentPos)
@@ -98,12 +128,12 @@ func (t Text) splitAt(pos int) Text {
 		if run.Deleted {
 			continue
 		}
-		runLen := len(run.Value)
+		runLen := runeLen(run.Value)
 		if pos > currentPos && pos < currentPos+runLen {
 			offset := pos - currentPos
 			left := TextRun{
 				ID:      run.ID,
-				Value:   run.Value[:offset],
+				Value:   runeSlice(run.Value, 0, offset),
 				Prev:    run.Prev,
 				Deleted: run.Deleted,
 			}
@@ -113,7 +143,7 @@ func (t Text) splitAt(pos int) Text {
 			rightPrev.Logical += int32(offset - 1)
 			right := TextRun{
 				ID:      rightID,
-				Value:   run.Value[offset:],
+				Value:   runeSlice(run.Value, offset, runLen),
 				Prev:    rightPrev,
 				Deleted: run.Deleted,
 			}
@@ -149,7 +179,7 @@ func (t Text) getOrdered() Text {
 			if !seen[run.ID] {
 				seen[run.ID] = true
 				result = append(result, run)
-				for i := 0; i < len(run.Value); i++ {
+				for i := 0; i < runeLen(run.Value); i++ {
 					charID := run.ID
 					charID.Logical += int32(i)
 					walk(charID)
@@ -173,9 +203,9 @@ func (t Text) normalize() Text {
 		last := &result[lastIdx]
 		curr := ordered[i]
 		expectedID := last.ID
-		expectedID.Logical += int32(len(last.Value))
+		expectedID.Logical += int32(runeLen(last.Value))
 		prevID := last.ID
-		prevID.Logical += int32(len(last.Value) - 1)
+		prevID.Logical += int32(runeLen(last.Value) - 1)
 		if curr.Deleted == last.Deleted && curr.ID == expectedID && curr.Prev == prevID {
 			last.Value += curr.Value
 		} else {

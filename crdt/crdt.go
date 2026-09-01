@@ -19,12 +19,34 @@
 // [Text] is a convergent, ordered sequence of [TextRun] segments. It supports
 // concurrent insertions and deletions across nodes and is integrated with
 // [CRDT] directly — no separate registration required.
+//
+// # Collections
+//
+// How a collection merges depends on how its elements are addressed:
+//
+//   - Map entries are addressed by key, so concurrent writes to different keys
+//     both survive and a write to one key never disturbs another.
+//   - A slice whose element type carries a deep:"key" tag is addressed by that
+//     key, so concurrent edits to different elements both survive, and an
+//     element's fields merge independently. Element order is not part of the
+//     synchronized state — Diff emits nothing when a keyed slice is merely
+//     reordered — so replicas keep these slices in key order. Sort on read, or
+//     carry an explicit ordering field, when a particular order matters.
+//   - A slice with no key tag is synchronized as one value: concurrent edits
+//     resolve by last-write-wins, so one writer's version of the whole slice
+//     wins. Prefer a map or a keyed slice for anything edited concurrently.
+//
+// Every case converges — replicas that have seen the same operations agree —
+// but only the first two merge concurrent edits rather than choosing between
+// them.
 package crdt
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 
@@ -89,10 +111,12 @@ func (d *Delta[T]) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// NewCRDT creates a new CRDT wrapper.
+// NewCRDT creates a new CRDT wrapper around a deep copy of initial, so later
+// changes to the caller's value cannot reach inside the replica (and two
+// replicas seeded from one value do not share state).
 func NewCRDT[T any](initial T, nodeID string) *CRDT[T] {
 	return &CRDT[T]{
-		value:      initial,
+		value:      deep.Clone(initial),
 		clocks:     make(map[string]hlc.HLC),
 		tombstones: make(map[string]hlc.HLC),
 		nodeID:     nodeID,
@@ -122,6 +146,7 @@ func (c *CRDT[T]) Edit(fn func(*T)) Delta[T] {
 
 	workingCopy := deep.Clone(c.value)
 	fn(&workingCopy)
+	canonicalizeKeyedSlices(reflect.ValueOf(&workingCopy).Elem())
 
 	patch, err := deep.Diff(c.value, workingCopy)
 	if err != nil {
@@ -166,6 +191,7 @@ func (c *CRDT[T]) ApplyDelta(delta Delta[T]) bool {
 	if _, ok := any(c.value).(Text); ok {
 		return deep.Apply(&c.value, delta.patch) == nil
 	}
+	defer canonicalizeKeyedSlices(reflect.ValueOf(&c.value).Elem())
 
 	var filtered []deep.Operation
 	for _, op := range delta.patch.Operations {
@@ -193,6 +219,87 @@ func (c *CRDT[T]) ApplyDelta(delta Delta[T]) bool {
 		return false
 	}
 	return deep.Apply(&c.value, deep.Patch[T]{Operations: filtered}) == nil
+}
+
+// canonicalizeKeyedSlices puts every keyed slice reachable from v into a
+// deterministic order.
+//
+// A slice whose element type carries a deep:"key" tag is a collection of
+// identified elements, not an ordered list: Diff addresses those elements by
+// key and emits nothing at all when they are merely reordered, so element
+// order is not part of the synchronized state. Apply, however, appends a new
+// element at the end, which means the order a replica ends up with depends on
+// the order deltas happened to arrive — two replicas holding exactly the same
+// elements could disagree, and a CRDT must not do that.
+//
+// Sorting by key gives every replica the same order for the same set of
+// elements. Order within a keyed slice is therefore not meaningful in a CRDT;
+// keep an explicit sort field, or use a map, when a particular order matters.
+func canonicalizeKeyedSlices(v reflect.Value) {
+	if !v.IsValid() {
+		return
+	}
+	switch v.Kind() {
+	case reflect.Pointer, reflect.Interface:
+		if !v.IsNil() {
+			canonicalizeKeyedSlices(v.Elem())
+		}
+	case reflect.Struct:
+		if v.Type() == textType {
+			return // Text has its own ordering
+		}
+		for i := 0; i < v.NumField(); i++ {
+			f := v.Field(i)
+			if !f.CanInterface() {
+				continue
+			}
+			canonicalizeKeyedSlices(f)
+		}
+	case reflect.Slice, reflect.Array:
+		if v.Kind() == reflect.Slice && v.Type() == textType {
+			return
+		}
+		for i := 0; i < v.Len(); i++ {
+			canonicalizeKeyedSlices(v.Index(i))
+		}
+		if v.Kind() != reflect.Slice || !v.CanSet() {
+			return
+		}
+		keyIdx, ok := keyFieldOf(v.Type())
+		if !ok {
+			return
+		}
+		sort.SliceStable(v.Interface(), func(i, j int) bool {
+			return keyString(v.Index(i), keyIdx) < keyString(v.Index(j), keyIdx)
+		})
+	case reflect.Map:
+		for _, k := range v.MapKeys() {
+			elem := v.MapIndex(k)
+			// Map values are not addressable; work on a copy and write it back.
+			copied := reflect.New(elem.Type()).Elem()
+			copied.Set(elem)
+			canonicalizeKeyedSlices(copied)
+			v.SetMapIndex(k, copied)
+		}
+	}
+}
+
+// keyFieldOf returns the index of the deep:"key" field on a slice's element
+// type, looking through a pointer element.
+func keyFieldOf(sliceType reflect.Type) (int, bool) {
+	elem := sliceType.Elem()
+	for elem.Kind() == reflect.Pointer {
+		elem = elem.Elem()
+	}
+	if elem.Kind() != reflect.Struct {
+		return 0, false
+	}
+	return icore.GetKeyField(elem)
+}
+
+// keyString renders an element's key for ordering.
+func keyString(elem reflect.Value, keyIdx int) string {
+	return fmt.Sprintf("%v", icore.ExtractKey(elem, keyIdx))
 }
 
 // textType is the reflect.Type of crdt.Text, used to identify Text fields
@@ -263,6 +370,8 @@ func (c *CRDT[T]) Merge(other *CRDT[T]) bool {
 		c.mergeMeta(other)
 		return true
 	}
+
+	defer canonicalizeKeyedSlices(reflect.ValueOf(&c.value).Elem())
 
 	patch, err := deep.Diff(c.value, other.value)
 	if err != nil || patch.IsEmpty() {
