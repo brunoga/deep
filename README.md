@@ -1,34 +1,25 @@
-# Deep v5: The High-Performance Type-Safe Synchronization Toolkit
+# deep: Type-Safe Diff, Patch, Clone and Sync for Go
 
-`deep` is a comprehensive Go library for comparing, cloning, and synchronizing complex data structures. Deep introduces a revolutionary architecture centered on **Code Generation** and **Type-Safe Selectors**, delivering up to **15x** performance improvements over traditional reflection-based libraries.
+`deep` is a comprehensive Go library for comparing, cloning, patching and synchronizing complex data structures. It combines **code generation** (fast, reflection-free implementations for your types) with a **reflection engine** (which handles everything else, including unexported fields and cyclic structures) behind one uniform API.
 
 ## Key Features
 
-- **Extreme Performance**: Reflection-free operations via `deep-gen` (10x-20x faster than v4).
-- **Compile-Time Safety**: Type-safe field selectors replace brittle string paths.
-- **Data-Oriented**: Patches are pure, flat data structures, natively serializable to JSON.
-- **Integrated Causality**: Native support for HLC (Hybrid Logical Clocks) and LWW (Last-Write-Wins).
-- **First-Class CRDTs**: Built-in support for `Text` and `LWW[T]` convergent registers.
-- **Standard Compliant**: Export to RFC 6902 JSON Patch with advanced predicate extensions.
-- **Hybrid Architecture**: Optimized generated paths with a robust reflection safety net.
-
-## Performance Comparison (Deep Generated vs v4 Reflection)
-
-Benchmarks performed on typical struct models (`User` with IDs, Names, Slices):
-
-| Operation | v4 (Reflection) | Deep (Generated) | Speedup |
-| :--- | :--- | :--- | :--- |
-| **Apply Patch** | 726 ns/op | **50 ns/op** | **14.5x** |
-| **Diff + Apply** | 2,391 ns/op | **270 ns/op** | **8.8x** |
-| **Clone** | 1,872 ns/op | **290 ns/op** | **6.4x** |
-| **Equality** | 202 ns/op | **84 ns/op** | **2.4x** |
-
-Run `go test -bench=. ./...` to reproduce. `BenchmarkApplyGenerated` uses generated code;
-`BenchmarkApplyReflection` uses the fallback path on a type with no generated code.
+- **Four core operations**: `Diff`, `Apply`, `Equal`, `Clone` — one call each, for any type.
+- **Hybrid architecture**: `deep-gen` generates optimized fast paths; a reflection engine transparently handles types without generated code, unexported fields, cycles, and exotic shapes.
+- **Compile-time safety**: type-safe field selectors replace brittle string paths.
+- **Data-oriented patches**: a patch is a flat, serializable list of operations — portable, mergeable, reversible.
+- **Conditional patching**: guards and per-operation conditions travel inside the patch.
+- **Strict mode**: optimistic-concurrency checks that verify expected old values before writing.
+- **Standard interop**: RFC 6902 JSON Patch import/export, including strict checks as `test` ops.
+- **First-class CRDTs**: `CRDT[T]` wrapper with hybrid logical clocks, plus `LWW`, `Text`, `Counter`, `Set` and `Map` convergent types.
 
 ## Quick Start
 
-### 1. Define your models
+```bash
+go get github.com/brunoga/deep/v5
+```
+
+### 1. Define your model
 
 ```go
 type User struct {
@@ -39,23 +30,19 @@ type User struct {
 }
 ```
 
-### 2. Generate optimized code
-
-Add a `go:generate` directive to your source file:
+### 2. Generate the fast path (optional but recommended)
 
 ```go
 //go:generate go run github.com/brunoga/deep/v5/cmd/deep-gen -type=User .
 ```
 
-Then run:
-
 ```bash
 go generate ./...
 ```
 
-This writes `user_deep.go` in the same directory. Commit it alongside your source.
+This writes `user_deep.go` next to your source. Commit it. Everything works without this step too — the reflection engine picks up any type automatically — generation just makes it much faster (see benchmarks below).
 
-### 3. Use the Type-Safe API
+### 3. Use the API
 
 ```go
 import deep "github.com/brunoga/deep/v5"
@@ -63,86 +50,188 @@ import deep "github.com/brunoga/deep/v5"
 u1 := User{ID: 1, Name: "Alice", Roles: []string{"user"}}
 u2 := User{ID: 1, Name: "Bob", Roles: []string{"user", "admin"}}
 
-// State-based Diffing
+// Compare two values; get a patch describing the changes.
 patch, err := deep.Diff(u1, u2)
-if err != nil {
-    log.Fatal(err)
-}
 
-// Operation-based Building (Fluent, Type-Safe API)
-namePath  := deep.Field(func(u *User) *string        { return &u.Name  })
+// Apply a patch.
+err = deep.Apply(&u1, patch)
+
+// Deep equality and deep copy.
+same := deep.Equal(u1, u2)
+clone := deep.Clone(u1)
+```
+
+## Benchmarks
+
+Generated code vs the reflection engine, on the same five-field struct (nested struct, slice, map). Reproduce with `go test -bench 'Generated|Reflection' -benchmem .`:
+
+| Operation | Reflection | Generated | Speedup |
+| :--- | ---: | ---: | ---: |
+| **Diff** | 3,121 ns/op (77 allocs) | **546 ns/op** (16 allocs) | **5.7×** |
+| **Apply** | 1,476 ns/op (49 allocs) | **80 ns/op** (2 allocs) | **18.5×** |
+| **Equal** | 245 ns/op (5 allocs) | **100 ns/op** (2 allocs) | **2.4×** |
+| **Clone** | 986 ns/op (15 allocs) | **188 ns/op** (5 allocs) | **5.3×** |
+
+Deep copy compared with other clone libraries, same struct:
+
+| Library | ns/op | allocs/op | Unexported fields | Cyclic structures |
+| :--- | ---: | ---: | :---: | :---: |
+| **deep (generated)** | **168** | 5 | ✅ | — (¹) |
+| [barkimedes/go-deepcopy](https://github.com/barkimedes/go-deepcopy) | 740 | 16 | silently zeroed | ✅ |
+| deep (reflection) | 981 | 15 | ✅ | ✅ |
+| [mitchellh/copystructure](https://github.com/mitchellh/copystructure) | 3,149 | 91 | silently zeroed | stack overflow |
+
+¹ Generated `Clone` assumes acyclic data; cyclic values are the reflection engine's territory.
+
+Numbers from an Intel Core Ultra 9 285K; relative ordering is what matters. The competitor benchmarks live out-of-tree so this module stays dependency-free.
+
+## Core Operations
+
+- `deep.Diff(a, b) (Patch[T], error)` — computes the operations turning `a` into `b`. Changed `chan`/`func` values diff to a whole-value replace that shares the reference; the error return covers values the reflection engine cannot process.
+- `deep.Apply(&target, patch, opts...) error` — applies a patch. Individual operation failures are collected: the returned error is an `*ApplyError` whose `Unwrap() []error` yields every failure; the remaining operations still apply. Pass `deep.WithLogger(l)` to route `log` operations to a specific `*slog.Logger`.
+- `deep.Equal(a, b) bool` — deep equality, including unexported fields and cyclic values.
+- `deep.Clone(v) T` — deep copy. The reflection path handles unexported fields and cycles; non-nil `chan` and `func` values are cloned as `nil`.
+
+All four automatically dispatch to generated methods when they exist and fall back to reflection when they don't — including per-operation: a generated `Patch` method hands any operation it does not model (slice indexing, `move`/`copy`, strict map entries) to the reflection engine.
+
+## Type-Safe Selectors
+
+Selectors turn field accessors into JSON Pointer paths at compile time — no string literals to typo:
+
+```go
+namePath  := deep.Field(func(u *User) *string         { return &u.Name })
 scorePath := deep.Field(func(u *User) *map[string]int { return &u.Score })
+rolesPath := deep.Field(func(u *User) *[]string       { return &u.Roles })
 
-patch2 := deep.Edit(&u1).
+deep.At(rolesPath, 0)            // "/roles/0"    — slice element
+deep.MapKey(scorePath, "power")  // "/score/power" — map value
+namePath.String()                // "/name"
+```
+
+Selectors work for unexported fields too — expose an accessor method returning the field's address and pass it to `Field`.
+
+Map keys are RFC 6901-escaped automatically (`/` → `~1`, `~` → `~0`). Building paths by hand? Use `deep.EscapePathKey` / `deep.UnescapePathKey`.
+
+## Building Patches
+
+`Diff` derives patches from state; the builder constructs them explicitly:
+
+```go
+patch := deep.Edit(&user).
     With(
-        deep.Set(namePath, "Alice Smith"),
+        deep.Set(namePath, "Alice Smith"),            // replace
         deep.Add(deep.MapKey(scorePath, "power"), 100),
+        deep.Remove(deep.MapKey(scorePath, "legacy")),
+        deep.Move(oldPath, newPath),
+        deep.Copy(srcPath, dstPath),
     ).
+    Log("update applied").              // structured log line during Apply
+    Guard(deep.Eq(statusPath, "paid")). // whole patch is a no-op unless this holds
     Build()
-
-// Application
-if err := deep.Apply(&u1, patch); err != nil {
-    log.Fatal(err)
-}
 ```
 
-## Advanced Features
+`Edit`'s argument is used only for type inference; the builder produces a standalone `Patch[T]`, not a live view.
 
-### Integrated CRDTs
+## Conditions
 
-Convert any field into a convergent register:
+Conditions are data — they serialize with the patch and are enforced wherever it is applied, including remote peers.
 
-```go
-type Document struct {
-    Title   crdt.LWW[string] // Native Last-Write-Wins
-    Content crdt.Text        // Collaborative Text CRDT
-}
-```
+Comparisons: `Eq`, `Ne`, `Gt`, `Ge`, `Lt`, `Le` • Membership: `In` • Structure: `Exists`, `Type` (`"string"`, `"number"`, `"boolean"`, `"object"`, `"array"`, `"null"`) • Text: `Matches` (regexp) • Combinators: `And`, `Or`, `Not`.
 
-### Conditional Patching
-
-Conditions travel with the patch and are enforced wherever it is applied —
-including on remote peers via JSON Patch interop.
-
-**Global guard** — the entire patch is a no-op if the condition fails. Use this
-for state-machine transitions where partial application would leave things in a
-bad state:
+**Patch-level guard** — all-or-nothing, for state-machine transitions:
 
 ```go
-statusPath := deep.Field(func(o *Order) *string { return &o.Status })
-
-// Atomically transition to "shipped" only if the order is currently "paid".
 patch := deep.Edit(&order).
     With(deep.Set(statusPath, "shipped")).
     Guard(deep.Eq(statusPath, "paid")).
     Build()
 ```
 
-**Per-operation conditions** (`Op.If` / `Op.Unless`) — individual operations are
-skipped independently within a single patch. Use this when some fields are
-conditional but others should always be updated:
+**Per-operation conditions** — individual ops skip independently:
 
 ```go
-paidAtPath  := deep.Field(func(i *Invoice) *time.Time { return &i.PaidAt  })
-feePath     := deep.Field(func(i *Invoice) *float64   { return &i.LateFee })
-balancePath := deep.Field(func(i *Invoice) *float64   { return &i.Balance })
-
-// Always record the payment time; only add a late fee if a balance is overdue.
 patch := deep.Edit(&invoice).
     With(deep.Set(paidAtPath, time.Now())).
     With(deep.Set(feePath, 25.0).If(deep.Gt(balancePath, 0.0))).
+    With(deep.Set(notePath, "").Unless(deep.Exists(notePath))).
     Build()
 ```
 
-### Observability
+A condition evaluating to **false** skips its operation (or, for a guard, the patch — `Apply` returns an error so the caller knows it did not run). A condition that **cannot be evaluated** — malformed value, bad path — is an error, not a silent skip.
 
-Embed `OpLog` operations in a patch to emit structured trace messages during `Apply`.
-Route them to any `*slog.Logger` — useful for request-scoped loggers, test capture, or
-tracing without touching your model types:
+## Struct Tags
+
+| Tag | Effect |
+| :--- | :--- |
+| `json:"name"` | Field appears in paths as `/name` (the Go field name is accepted on apply as well) |
+| `json:"-"` or `deep:"-"` | Invisible to deep: skipped by Diff, Equal **and Clone**; operations targeting it are silently ignored |
+| `deep:"readonly"` | Operations targeting the field fail with an error (`log` operations are still allowed) |
+| `deep:"atomic"` | Diffed as a single whole-value replace — no per-field/per-element operations |
+| `deep:"key"` | Marks a slice element's identity field: the slice diffs by key (add/remove/modify per element) instead of by index, so reordering produces no operations |
 
 ```go
-namePath := deep.Field(func(u *User) *string { return &u.Name })
+type Item struct {
+    SKU string `deep:"key" json:"sku"`
+    Qty int    `json:"qty"`
+}
+type Inventory struct {
+    Items []Item `json:"items"` // diffs as "/items/<sku>", order-insensitive
+}
+```
 
+**Embedded fields** are addressed by their type name (`/Meta/version` for an embedded `Meta`), matching how Go names them.
+
+## Strict Mode (Optimistic Concurrency)
+
+```go
+strict := patch.AsStrict()
+err := deep.Apply(&target, strict) // fails if any Old value no longer matches
+```
+
+Every `replace`/`remove` verifies the operation's `Old` value against the current state before writing. `Diff` fills `Old` automatically. Strictness survives JSON Patch interop: `ToJSONPatch` emits an RFC 6902 `test` op before each checked operation, and `ParseJSONPatch` folds them back into `Old` + `Strict`.
+
+## Merging Patches
+
+```go
+merged := deep.Merge(base, other, resolver) // resolver may be nil: other wins
+```
+
+Operations are deduplicated by path; on conflict a custom `ConflictResolver` (`Resolve(path string, local, remote any) any`) decides, and the output is sorted by path for determinism.
+
+## Patch Utilities
+
+```go
+patch.IsEmpty()       // no operations?
+patch.Reverse()       // undo patch (swaps Old/New, add↔remove; log ops are dropped)
+patch.WithGuard(cond) // returns a copy with a patch-level guard
+patch.String()        // human-readable summary
+```
+
+## Serialization
+
+**Native JSON** — `Patch[T]` marshals directly; compact keys keep the wire format small (`k`=kind, `p`=path, `f`=from, `o`=old, `n`=new, `if`/`un`=conditions):
+
+```json
+{"ops":[{"k":2,"p":"/name","o":"Alice","n":"Bob"}],"strict":true}
+```
+
+**RFC 6902 JSON Patch** — for interop with other tooling:
+
+```go
+jsonData, err := patch.ToJSONPatch()
+// [{"op":"replace","path":"/name","value":"Bob"}]
+restored, err := deep.ParseJSONPatch[User](jsonData)
+```
+
+Deep extensions: a leading `test` op on `/` with an `"if"` key carries the patch guard, per-op conditions ride as `"if"`/`"unless"` keys, `log` is a non-standard op, and strict `Old` checks map to standard `test` ops.
+
+> **Note**: after any JSON round-trip, numbers in `Old`/`New` are `float64` (standard Go JSON behavior). Generated code coerces numerics automatically; be aware of it when inspecting operations directly.
+
+## Observability
+
+Embed `log` operations to emit structured trace messages during `Apply` — request-scoped loggers, test capture, tracing, all without touching your model types:
+
+```go
 patch := deep.Edit(&u).
     Log("starting update").
     With(deep.Set(namePath, "Alice Smith")).
@@ -155,59 +244,71 @@ deep.Apply(&u, patch, deep.WithLogger(logger))
 // {"level":"INFO","msg":"deep log","message":"update complete","path":"/"}
 ```
 
-When no logger is provided, `slog.Default()` is used — so existing `slog.SetDefault`
-configuration is respected without any extra wiring.
+Without `WithLogger`, `slog.Default()` is used.
 
-### Patch Utilities
+## deep-gen
 
-```go
-// Reverse a patch to produce an undo patch.
-undo := patch.Reverse()
-
-// Enable strict mode — Apply verifies Old values match before each operation.
-strictPatch := patch.AsStrict()
+```
+deep-gen -type=TypeA,TypeB [-output file.go] [dir]
 ```
 
-### Undo/Redo with CRDTs
+Generates `Patch`, `Diff`, `Equal` and `Clone` methods (plus internal helpers) for the named struct types. Output defaults to `<firsttype>_deep.go` in the target directory.
 
-`CRDT[T].Reverse` applies the inverse of a delta to the local node and returns a
-new `Delta[T]` with a fresh HLC timestamp, making it causally after the original
-edit and safe to propagate to peers:
+Rules worth knowing:
+
+- **Every referenced struct needs generated code too.** If `Doc` has a `Detail` field (direct, embedded, pointer, or as a slice/map element), `Detail` must be listed in `-type` or generated by another run over the same package. Multiple runs per package are supported.
+- **Types from other packages** (`time.Time`, generic instantiations, interfaces) are handled through `deep.Equal`/`deep.Clone`, which dispatch to the type's own methods when present. A small set of stdlib value types (`time.Time`, `time.Duration`, …) stays on a fast assignment path.
+- **What generation can't express falls back to reflection** — per operation, transparently: channels/funcs, slice-index paths, `move`/`copy`, strict map-entry checks, conditions on nested paths.
+- Generated files never need hand-editing and are safe to regenerate; deep-gen ignores its own previous output while parsing.
+
+## CRDTs and Synchronization
+
+The `crdt` package builds multi-writer synchronization on top of patches, ordered by hybrid logical clocks (`crdt/hlc`).
+
+**`CRDT[T]`** — wraps any type in a concurrency-safe, convergent container:
 
 ```go
-// Apply an edit, then undo it.
-delta, _ := node.Edit(func(v *MyDoc) { v.Title = "Draft" })
-undo := node.Reverse(delta)   // applies inverse locally, returns undo delta
+nodeA := crdt.NewCRDT(GameState{}, "node-a")
+nodeB := crdt.NewCRDT(GameState{}, "node-b")
 
-// Redo: reverse the undo.
+delta := nodeA.Edit(func(s *GameState) { s.Score = 10 }) // timestamped Delta[T]
+nodeB.ApplyDelta(delta)                                  // idempotent, causally ordered
+
+nodeA.Merge(nodeB)     // full-state merge, LWW per path
+state := nodeA.View()  // snapshot copy
+```
+
+`CRDT[T]` is JSON-serializable (state + clock + per-path metadata survive the round-trip).
+
+**Undo/redo** — `Reverse` applies a delta's inverse locally and returns a fresh-timestamped undo delta, safe to propagate; reversing the undo redoes:
+
+```go
+delta := node.Edit(func(d *Doc) { d.Title = "Draft" })
+undo := node.Reverse(delta)
 redo := node.Reverse(undo)
 ```
 
-### Standard Interop
-
-Export your Deep patches to standard RFC 6902 JSON Patch format, and parse them back:
+**Field-level types:**
 
 ```go
-jsonData, err := patch.ToJSONPatch()
-// Output: [{"op":"replace","path":"/name","value":"Bob"}]
-
-restored, err := deep.ParseJSONPatch[User](jsonData)
+type Document struct {
+    Title   crdt.LWW[string] // last-write-wins register: Set(v, ts)
+    Content crdt.Text        // collaborative text: Insert/Delete/String, MergeTextRuns
+}
 ```
 
-> **JSON deserialization note**: When a patch is JSON-encoded and then decoded, numeric
-> values in `Operation.Old` and `Operation.New` are unmarshaled as `float64` (standard
-> Go JSON behavior). Generated `Patch` methods handle this automatically with
-> numeric coercion. If you use the reflection fallback, be aware of this when inspecting
-> `Old`/`New` directly.
+**Standalone convergent containers** — `crdt.Counter` (increment/decrement), `crdt.Set[T]` (add-wins set) and `crdt.Map[K,V]` (LWW map), each with a commutative, idempotent `Merge`.
 
-## Architecture: Why v5?
+**`crdt/hlc`** — `Clock` (per-node: `Now`, `Update`, `Reserve`, `SetLatest`) and `HLC` timestamps (`Compare`, `After`) giving a total order across nodes without synchronized wall clocks.
 
-v4 used a **Recursive Tree Patch** model. Every field was a nested patch object. While flexible, this caused high memory allocations and made serialization difficult.
+## Architecture
 
-Deep uses a **Flat Operation Model**. A patch is a simple slice of `Operations`. This makes patches:
-1. **Portable**: Trivially serializable to any format.
-2. **Fast**: Iterating a slice is much faster than traversing a tree.
-3. **Composable**: Merging two patches is a stateless operation.
+A patch is a **flat operation list** — `[]Operation` with JSON Pointer paths — rather than a recursive tree. That makes patches trivially serializable, cheap to iterate, and composable (merging is stateless). Application is a **hybrid**: generated `applyOperation` methods handle the common shapes at native speed and report anything else as unhandled, at which point the reflection engine — which understands every Go shape, unexported fields included — takes over for that one operation. Both paths implement the same semantics; divergence is treated as a bug.
+
+## Examples
+
+The [`examples/`](examples/) directory contains runnable programs covering state management, HTTP PATCH APIs, WebSocket sync, keyed inventories, policy engines, three-way merge, CRDT text sync, and more.
 
 ## License
+
 Apache 2.0

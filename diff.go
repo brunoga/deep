@@ -7,8 +7,9 @@ import (
 
 // Diff compares two values and returns a Patch describing the changes from a to b.
 // Generated types (produced by deep-gen) dispatch to a reflection-free implementation.
-// For other types, Diff falls back to the reflection engine which may return an error
-// for unsupported kinds (chan, func, etc.).
+// For other types, Diff falls back to the reflection engine. Changed chan and func
+// values diff to a whole-value replace that shares the reference; the error return
+// covers values the engine cannot process.
 func Diff[T any](a, b T) (Patch[T], error) {
 	// 1. Try generated optimized path (pointer receiver, pointer arg)
 	if differ, ok := any(&a).(interface {
