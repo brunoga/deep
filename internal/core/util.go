@@ -44,22 +44,35 @@ func ConvertValue(v reflect.Value, targetType reflect.Type) reflect.Value {
 		}
 	}
 
-	// Handle Map -> Struct (JSON Unmarshal)
-	if v.Kind() == reflect.Map && targetType.Kind() == reflect.Struct {
-		if v.Type().Key().Kind() == reflect.String {
-			// Best effort: marshal map to JSON, unmarshal to struct
-			data, err := json.Marshal(v.Interface())
-			if err == nil {
-				newStruct := reflect.New(targetType).Elem()
-				// We need a pointer to the struct for Unmarshal
-				if err := json.Unmarshal(data, newStruct.Addr().Interface()); err == nil {
-					return newStruct
-				}
+	// Values that have been through JSON arrive as the generic shapes the
+	// decoder produces — map[string]any for an object, []any for an array — and
+	// none of the conversions above apply to them. Re-encoding and decoding
+	// into the target type recovers the original value. This is what lets an
+	// operation survive a round-trip through the wire: Operation.Old and
+	// Operation.New are `any`, so a patch that was serialized and read back
+	// carries decoded shapes rather than the types it was built from.
+	if isJSONShape(v.Kind()) && isJSONDecodable(targetType.Kind()) {
+		if data, err := json.Marshal(v.Interface()); err == nil {
+			decoded := reflect.New(targetType)
+			if err := json.Unmarshal(data, decoded.Interface()); err == nil {
+				return decoded.Elem()
 			}
 		}
 	}
 
 	return v
+}
+
+// isJSONShape reports whether k is one of the kinds a JSON decoder produces for
+// a composite value.
+func isJSONShape(k reflect.Kind) bool {
+	return k == reflect.Map || k == reflect.Slice || k == reflect.Array || k == reflect.Interface
+}
+
+// isJSONDecodable reports whether a composite value can be rebuilt into k by
+// decoding JSON into it.
+func isJSONDecodable(k reflect.Kind) bool {
+	return k == reflect.Struct || k == reflect.Slice || k == reflect.Array || k == reflect.Map
 }
 
 // ConvertValueChecked is ConvertValue with a verdict: it reports an error

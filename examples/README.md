@@ -64,6 +64,7 @@ If you are new to the library, these four cover the shape of everything else:
 | [`crdt_sync`](crdt_sync) | Two nodes exchanging deltas and converging |
 | [`crdt_undo_redo`](crdt_undo_redo) | Distributed undo/redo via `Reverse`, and why redelivering a delta is harmless |
 | [`crdt_containers`](crdt_containers) | `Counter`, `Set` (add-wins) and `Map` (last-write-wins per key) |
+| [`crdt_list`](crdt_list) | `List[T]`: concurrent insertions and deletions in a sequence all survive, where an ordinary slice would keep one writer's version |
 | [`lww_fields`](lww_fields) | Per-field `LWW[T]` registers resolving a genuine write conflict |
 | [`text_sync`](text_sync) | Collaborative text: concurrent edits across a partition, merged with `MergeTextRuns` |
 

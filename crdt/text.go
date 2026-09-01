@@ -215,6 +215,16 @@ func (t Text) normalize() Text {
 	return result
 }
 
+// MergeFrom implements [Convergent], so a Text merges with a peer's copy
+// instead of one replacing the other under last-write-wins.
+func (t Text) MergeFrom(other any) any {
+	o, ok := other.(Text)
+	if !ok {
+		return t
+	}
+	return MergeTextRuns(t, o)
+}
+
 // Diff compares t with other and returns a Patch.
 func (t Text) Diff(other Text) deep.Patch[Text] {
 	if len(t) == len(other) {
