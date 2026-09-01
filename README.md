@@ -307,7 +307,51 @@ A patch is a **flat operation list** — `[]Operation` with JSON Pointer paths �
 
 ## Examples
 
-The [`examples/`](examples/) directory contains runnable programs covering state management, HTTP PATCH APIs, WebSocket sync, keyed inventories, policy engines, three-way merge, CRDT text sync, and more.
+Every directory under [`examples/`](examples/) is a runnable program (`go run ./examples/<name>`) built around one concept.
+
+**Core operations and patches**
+
+| Example | Concept |
+| :--- | :--- |
+| [`config_manager`](examples/config_manager) | Diff, apply, and roll back with `Reverse` |
+| [`state_management`](examples/state_management) | An undo stack built from reverse patches |
+| [`nested_structs`](examples/nested_structs) | Nested and embedded struct paths; targeted field updates |
+| [`slice_paths`](examples/slice_paths) | `At` for positional slice elements; how slice diffs are shaped |
+| [`keyed_inventory`](examples/keyed_inventory) | `deep:"key"` — order-insensitive, identity-based slice diffs |
+| [`struct_map_keys`](examples/struct_map_keys) | Non-string map keys in paths |
+| [`move_copy_ops`](examples/move_copy_ops) | `Move` and `Copy` operations |
+| [`multi_error`](examples/multi_error) | Error collection and `ApplyError` unwrapping |
+
+**Tags, conditions, and safety**
+
+| Example | Concept |
+| :--- | :--- |
+| [`atomic_config`](examples/atomic_config) | `deep:"readonly"` enforcement and `deep:"atomic"` whole-value updates |
+| [`ignored_fields`](examples/ignored_fields) | `json:"-"` / `deep:"-"` — keeping secrets out of patches |
+| [`policy_engine`](examples/policy_engine) | Patch-level `Guard` with composed conditions |
+| [`conditional_ops`](examples/conditional_ops) | Per-operation `If` / `Unless` inside one patch |
+| [`concurrent_updates`](examples/concurrent_updates) | Strict mode as optimistic locking |
+| [`three_way_merge`](examples/three_way_merge) | `Merge` with a custom `ConflictResolver` |
+| [`reflection_fallback`](examples/reflection_fallback) | Unexported fields and cyclic structures |
+
+**Transport and interop**
+
+| Example | Concept |
+| :--- | :--- |
+| [`json_interop`](examples/json_interop) | Native JSON, RFC 6902 export, and `ParseJSONPatch` ingest |
+| [`http_patch_api`](examples/http_patch_api) | A patch-driven HTTP PATCH endpoint |
+| [`websocket_sync`](examples/websocket_sync) | Broadcasting state deltas to clients |
+| [`audit_logging`](examples/audit_logging) | Diffs as an audit trail, plus `OpLog` tracing |
+
+**CRDTs**
+
+| Example | Concept |
+| :--- | :--- |
+| [`crdt_sync`](examples/crdt_sync) | `CRDT[T]` delta exchange and convergence |
+| [`crdt_undo_redo`](examples/crdt_undo_redo) | Distributed undo/redo via `Reverse` |
+| [`crdt_containers`](examples/crdt_containers) | `Counter`, `Set` and `Map` |
+| [`lww_fields`](examples/lww_fields) | Per-field `LWW[T]` registers resolving a write conflict |
+| [`text_sync`](examples/text_sync) | Collaborative text with `crdt.Text` |
 
 ## License
 

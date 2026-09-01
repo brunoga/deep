@@ -1,3 +1,5 @@
+//go:generate go run github.com/brunoga/deep/v5/cmd/deep-gen -type=SystemConfig -output systemconfig_deep.go .
+
 package main
 
 import (
