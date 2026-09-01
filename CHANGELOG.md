@@ -6,7 +6,7 @@ All notable changes to this project are documented here, newest first.
 > version's entry before tagging, so the tag, the GitHub release notes, and this
 > file always agree.
 
-## Unreleased
+## v5.10.2
 
 ### Fixed
 
