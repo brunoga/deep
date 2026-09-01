@@ -39,6 +39,28 @@ All notable changes to this project are documented here, newest first.
 
 ### Added
 
+- **`CRDT[T].Compact`** discards the bookkeeping a replica accumulates. A
+  replica remembers when every path was written and when every path was
+  deleted, so it can recognize a stale update, and a sequence keeps deleted
+  elements as tombstones so a concurrent insertion still has an anchor. Neither
+  shrinks on its own: a map emptied of five hundred keys still held five hundred
+  entries, and a document typed and retyped held two hundred runs behind nine
+  visible characters. Compaction reclaimed 99% of a long-lived replica's stored
+  state in the new example, with its value unchanged.
+
+  What the record protects against is an old update arriving late, so dropping
+  it is only safe for changes every replica has already seen — the caller passes
+  that watermark, since only the application knows who its peers are. A replica
+  that has compacted still converges with one that has not.
+
+  `Compact` reaches the `Text` and `List` values inside a replica as well, and
+  emits no delta: discarding history does not change what the replica holds.
+- **`crdt.Text.Compact` and `crdt.List[T].Compact`** do the same for a sequence
+  on its own. A tombstone that something is still anchored to is kept whatever
+  its age, since removing it would change this replica's ordering without
+  changing any other's.
+- **`crdt.Compactable`**, the interface behind that, so a type of your own can
+  take part.
 - **`hlc.Clock.ReserveSequence`** allocates identifiers for the elements of a
   sequence. Unlike `Reserve` it does not follow the wall clock, so consecutive
   calls return adjacent blocks that a sequence can hold as one run. The

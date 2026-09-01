@@ -449,6 +449,61 @@ type Convergent interface {
 
 var convergentType = reflect.TypeOf((*Convergent)(nil)).Elem()
 
+// Compactable is implemented by values that can discard history every replica
+// has already seen — [Text] and [List] do. [CRDT.Compact] calls it on the
+// values it finds inside a replica, so a caller compacts a whole replica in one
+// go rather than reaching into its fields.
+type Compactable interface {
+	// CompactBefore returns the value with history at or before the watermark
+	// discarded. What the value represents must not change.
+	CompactBefore(before hlc.HLC) any
+}
+
+var compactableType = reflect.TypeOf((*Compactable)(nil)).Elem()
+
+// compactValue replaces every Compactable reachable from v with its compacted
+// form. It works on the replica's own value rather than through an edit: this
+// discards history that is no longer needed, it does not change what the
+// replica holds, so there is nothing to tell peers about.
+func compactValue(v reflect.Value, before hlc.HLC) {
+	if !v.IsValid() {
+		return
+	}
+	if v.CanSet() && v.Type().Implements(compactableType) {
+		if c, ok := v.Interface().(Compactable); ok {
+			compacted := c.CompactBefore(before)
+			if cv := reflect.ValueOf(compacted); cv.IsValid() && cv.Type() == v.Type() {
+				v.Set(cv)
+			}
+			return
+		}
+	}
+	switch v.Kind() {
+	case reflect.Pointer, reflect.Interface:
+		if !v.IsNil() {
+			compactValue(v.Elem(), before)
+		}
+	case reflect.Struct:
+		for i := 0; i < v.NumField(); i++ {
+			if f := v.Field(i); f.CanInterface() {
+				compactValue(f, before)
+			}
+		}
+	case reflect.Slice, reflect.Array:
+		for i := 0; i < v.Len(); i++ {
+			compactValue(v.Index(i), before)
+		}
+	case reflect.Map:
+		for _, k := range v.MapKeys() {
+			elem := v.MapIndex(k)
+			copied := reflect.New(elem.Type()).Elem()
+			copied.Set(elem)
+			compactValue(copied, before)
+			v.SetMapIndex(k, copied)
+		}
+	}
+}
+
 // isSelfMerging reports whether values of t merge themselves.
 func isSelfMerging(t reflect.Type) bool { return t.Implements(convergentType) }
 
@@ -475,6 +530,54 @@ func selfMergingAncestorPath(root reflect.Value, opPath string) (string, bool) {
 		}
 		path = path[:idx]
 	}
+}
+
+// Compact discards bookkeeping for changes at or before before, and reports how
+// many entries it dropped.
+//
+// A replica remembers when each path was last written and when each was
+// removed, so that it can tell a stale update from a new one. That record only
+// grows: a path written once is remembered for good, and a long-lived replica
+// ends up carrying more history than data — a map emptied of its five hundred
+// keys still holds five hundred entries saying when each went.
+//
+// Dropping the record is only safe for changes every replica has already seen,
+// because what it protects against is an old update arriving late. Pass the
+// oldest timestamp still in flight anywhere in the system — in practice the
+// minimum, across peers, of the last delta each has acknowledged. Passing
+// something newer risks accepting an update that should have lost, or bringing
+// back a value that was deleted.
+//
+// Compacting reaches the sequences inside the value too, dropping text and list
+// entries that were deleted before the watermark. It does this to the replica's
+// own copy rather than as an edit: no delta is produced, because what the
+// replica represents does not change.
+//
+// A replica that has compacted still converges with one that has not: merging
+// with a peer that still remembers restores what was dropped.
+func (c *CRDT[T]) Compact(before hlc.HLC) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Sequences hold their own history — a deletion leaves a tombstone behind
+	// so that a concurrent insertion still has something to attach to — and it
+	// is collectable under the same condition.
+	compactValue(reflect.ValueOf(&c.value).Elem(), before)
+
+	dropped := 0
+	for path, ts := range c.clocks {
+		if !ts.After(before) {
+			delete(c.clocks, path)
+			dropped++
+		}
+	}
+	for path, ts := range c.tombstones {
+		if !ts.After(before) {
+			delete(c.tombstones, path)
+			dropped++
+		}
+	}
+	return dropped
 }
 
 // Reverse applies the inverse of delta to this node and returns a new Delta

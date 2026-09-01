@@ -335,6 +335,16 @@ defer cancel()
 
 Only surviving operations are reported: a remote write that lost to a newer local one never appears. Callbacks run on the goroutine that made the change, with no lock held, so they may read or edit the replica.
 
+**Reclaiming history** — a replica remembers when every path was written and deleted, and a sequence keeps deleted elements as tombstones, so a long-lived replica carries more history than data. `Compact` discards it, down to a watermark you supply:
+
+```go
+// Older than anything still in flight: usually the oldest timestamp
+// every peer has acknowledged.
+node.Compact(watermark)
+```
+
+It reaches the `Text` and `List` values inside the replica too, changes nothing about what the replica holds, and emits no delta. A compacted replica still converges with one that has not compacted.
+
 **Custom convergent types** — implement `crdt.Convergent` and a `CRDT[T]` will merge your type instead of picking a winner:
 
 ```go
@@ -402,6 +412,7 @@ Every directory under [`examples/`](examples/) is a runnable program (`go run ./
 | [`crdt_containers`](examples/crdt_containers) | `Counter`, `Set` and `Map` |
 | [`crdt_list`](examples/crdt_list) | `List[T]`, a sequence that merges concurrent insertions and deletions |
 | [`crdt_observers`](examples/crdt_observers) | `OnChange` for incremental UI updates |
+| [`crdt_compaction`](examples/crdt_compaction) | `Compact` for reclaiming the history a long-lived replica accumulates |
 | [`lww_fields`](examples/lww_fields) | Per-field `LWW[T]` registers resolving a write conflict |
 | [`text_sync`](examples/text_sync) | Collaborative text with `crdt.Text` |
 
