@@ -4,7 +4,10 @@ import (
 	"sync"
 	"testing"
 
+	"fmt"
 	"github.com/brunoga/deep/v5/crdt/hlc"
+	"math/rand"
+	"sort"
 	"strings"
 	"unicode/utf8"
 )
@@ -350,5 +353,142 @@ func TestTextUnicodeConvergence(t *testing.T) {
 	}
 	if !utf8.ValidString(mergedA.String()) {
 		t.Errorf("merge produced invalid UTF-8: %q", mergedA.String())
+	}
+}
+
+// walkOrdered derives the document order the slow way, for tests to compare
+// against.
+func walkOrdered(t Text) Text {
+	children := make(map[hlc.HLC][]TextRun)
+	for _, run := range t {
+		children[run.Prev] = append(children[run.Prev], run)
+	}
+	for _, runs := range children {
+		sort.Slice(runs, func(i, j int) bool { return runs[i].ID.After(runs[j].ID) })
+	}
+	var result Text
+	seen := make(map[hlc.HLC]bool)
+	var walk func(hlc.HLC)
+	walk = func(id hlc.HLC) {
+		for _, run := range children[id] {
+			if seen[run.ID] {
+				continue
+			}
+			seen[run.ID] = true
+			result = append(result, run)
+			for i := 0; i < runeLen(run.Value); i++ {
+				charID := run.ID
+				charID.Logical += int32(i)
+				walk(charID)
+			}
+		}
+	}
+	walk(hlc.HLC{})
+	for _, run := range t {
+		if !seen[run.ID] {
+			seen[run.ID] = true
+			result = append(result, run)
+		}
+	}
+	return result
+}
+
+// TestTextInSequenceIsSound is the safety property behind the ordering fast
+// path: whenever inSequence reports that a Text is already in document order,
+// deriving the order from scratch must return exactly that sequence. A false
+// positive would silently render a document in the wrong order, so this is
+// checked over randomized edit histories rather than a handful of cases.
+func TestTextInSequenceIsSound(t *testing.T) {
+	fastPaths := 0
+	for seed := int64(0); seed < 300; seed++ {
+		rng := rand.New(rand.NewSource(seed))
+		clocks := []*hlc.Clock{hlc.NewClock("a"), hlc.NewClock("b"), hlc.NewClock("c")}
+
+		docs := []Text{{}, {}, {}}
+		for step := 0; step < 12; step++ {
+			i := rng.Intn(len(docs))
+			doc, clock := docs[i], clocks[i]
+			switch rng.Intn(4) {
+			case 0, 1:
+				pos := 0
+				if n := doc.Len(); n > 0 {
+					pos = rng.Intn(n + 1)
+				}
+				words := []string{"a", "bc", "déf", "😀", "hello"}
+				docs[i] = doc.Insert(pos, words[rng.Intn(len(words))], clock)
+			case 2:
+				if n := doc.Len(); n > 1 {
+					pos := rng.Intn(n - 1)
+					docs[i] = doc.Delete(pos, 1+rng.Intn(n-pos-1))
+				}
+			case 3:
+				j := rng.Intn(len(docs))
+				docs[i] = MergeTextRuns(doc, docs[j])
+			}
+
+			got := docs[i]
+			if !got.inSequence() {
+				continue
+			}
+			fastPaths++
+			want := walkOrdered(got)
+			if len(want) != len(got) {
+				t.Fatalf("seed %d step %d: inSequence accepted a sequence of %d runs, walk produced %d",
+					seed, step, len(got), len(want))
+			}
+			for k := range got {
+				if got[k].ID != want[k].ID {
+					t.Fatalf("seed %d step %d: inSequence accepted the wrong order at run %d\n  got  %v\n  want %v",
+						seed, step, k, ids(got), ids(want))
+				}
+			}
+		}
+	}
+	if fastPaths == 0 {
+		t.Fatal("the fast path never triggered; the property was not exercised")
+	}
+	t.Logf("fast path confirmed on %d generated documents", fastPaths)
+}
+
+func ids(t Text) []string {
+	out := make([]string, 0, len(t))
+	for _, r := range t {
+		out = append(out, fmt.Sprintf("%s:%q", r.ID, r.Value))
+	}
+	return out
+}
+
+// TestTextRandomizedConvergence checks the property that matters for a CRDT:
+// replicas that have seen the same edits agree, whatever order they saw them
+// in. It also exercises the ordering fast path against real edit histories.
+func TestTextRandomizedConvergence(t *testing.T) {
+	for seed := int64(0); seed < 50; seed++ {
+		rng := rand.New(rand.NewSource(seed))
+		ca, cb := hlc.NewClock("a"), hlc.NewClock("b")
+
+		base := Text{}.Insert(0, "shared start", ca)
+		docA, docB := base, base
+
+		for step := 0; step < 6; step++ {
+			if n := docA.Len(); n > 0 {
+				docA = docA.Insert(rng.Intn(n+1), "A", ca)
+			}
+			if n := docB.Len(); n > 0 {
+				docB = docB.Insert(rng.Intn(n+1), "B", cb)
+			}
+		}
+
+		mergedA := MergeTextRuns(docA, docB)
+		mergedB := MergeTextRuns(docB, docA)
+		if mergedA.String() != mergedB.String() {
+			t.Fatalf("seed %d diverged:\n  a=%q\n  b=%q", seed, mergedA.String(), mergedB.String())
+		}
+		if !utf8.ValidString(mergedA.String()) {
+			t.Fatalf("seed %d produced invalid UTF-8: %q", seed, mergedA.String())
+		}
+		// Merging again changes nothing.
+		if again := MergeTextRuns(mergedA, docB); again.String() != mergedA.String() {
+			t.Fatalf("seed %d: merge is not idempotent", seed)
+		}
 	}
 }
