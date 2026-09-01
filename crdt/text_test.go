@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/brunoga/deep/v5/crdt/hlc"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -302,6 +303,33 @@ func TestTextUnicodePositions(t *testing.T) {
 	}
 	if got := mixed.Delete(0, 2).String(); got != "語" {
 		t.Errorf("Delete of two runes = %q, want %q", got, "語")
+	}
+}
+
+// TestTextUnicodeMergeSplitsRun covers the merge path specifically: two
+// replicas splitting the *same* multi-byte run at different points. Merging
+// re-splits runs at every boundary either side introduced, and it counted
+// those boundaries in bytes while the rest of the type counts runes, so the
+// split landed inside a character and the replicas both corrupted the text and
+// disagreed about it.
+func TestTextUnicodeMergeSplitsRun(t *testing.T) {
+	ca, cb := hlc.NewClock("a"), hlc.NewClock("b")
+	base := Text{}.Insert(0, "日本語テキスト", ca) // a single run, every rune multi-byte
+
+	docA := base.Insert(2, "A", ca)
+	docB := base.Insert(5, "B", cb)
+
+	mergedA := MergeTextRuns(docA, docB)
+	mergedB := MergeTextRuns(docB, docA)
+
+	if mergedA.String() != mergedB.String() {
+		t.Fatalf("diverged: %q vs %q", mergedA.String(), mergedB.String())
+	}
+	if !utf8.ValidString(mergedA.String()) {
+		t.Fatalf("merge produced invalid UTF-8: %q", mergedA.String())
+	}
+	if !strings.Contains(mergedA.String(), "A") || !strings.Contains(mergedA.String(), "B") {
+		t.Errorf("lost an edit: %q", mergedA.String())
 	}
 }
 
