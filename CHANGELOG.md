@@ -6,6 +6,43 @@ All notable changes to this project are documented here, newest first.
 > version's entry before tagging, so the tag, the GitHub release notes, and this
 > file always agree.
 
+## Unreleased
+
+### Added
+
+- **`crdt.Document`**, a text CRDT indexed for editing. It holds the same runs
+  as `crdt.Text` and serializes identically — a replica running one converges
+  with a replica running the other — but keeps them in a balanced tree ordered
+  by position rather than a slice. Finding a position and editing there cost
+  logarithmic rather than linear time in the number of runs, and an edit does
+  not copy the document.
+
+  Runs accumulate as edits scatter around a document, which is where a `Text`
+  slows down:
+
+  | 50 edits to a document of | `Text` | `Document` |
+  | :--- | ---: | ---: |
+  | 500 runs | 1.2 ms | 8.7 µs |
+  | 2,000 runs | 4.8 ms | 5.9 µs |
+  | 8,000 runs | 22.3 ms | 7.4 µs |
+
+  Twenty thousand insertions at random positions take 7 ms, about 350 ns each,
+  and the cost per edit does not grow: 117 ns at five hundred runs, 112 ns at
+  sixteen thousand.
+
+  The tree is only an index. Which order the runs are in is decided the same way
+  as in `Text`, by the run each is anchored to, and merging goes through
+  `MergeTextRuns` — so the two cannot disagree about ordering, and the proven
+  implementation stays the reference. A property test drives both through two
+  hundred randomized edit sequences and requires them to produce the same text
+  at every step.
+
+  Hold a `Document` directly for a large collaborative document. One inside a
+  `CRDT[T]` converges but does not bring its speed with it: `Edit` copies the
+  value and compares the copy to work out what changed, which costs time
+  proportional to the size of the document however small the edit. That is the
+  wrapper's doing, and a `Text` pays it too.
+
 ## v5.8.0
 
 ### Performance
