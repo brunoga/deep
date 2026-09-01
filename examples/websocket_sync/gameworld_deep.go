@@ -6,6 +6,7 @@ import (
 	deep "github.com/brunoga/deep/v5"
 	"github.com/brunoga/deep/v5/condition"
 	"log/slog"
+	"reflect"
 	"regexp"
 	"strings"
 )
@@ -45,13 +46,19 @@ func (t *GameWorld) Patch(p deep.Patch[GameWorld], logger *slog.Logger) error {
 func (t *GameWorld) applyOperation(op deep.Operation, logger *slog.Logger) (bool, error) {
 	if op.If != nil {
 		ok, err := t.evaluateCondition(*op.If)
-		if err != nil || !ok {
+		if err != nil {
+			return true, fmt.Errorf("condition evaluation failed at %s: %w", op.Path, err)
+		}
+		if !ok {
 			return true, nil
 		}
 	}
 	if op.Unless != nil {
 		ok, err := t.evaluateCondition(*op.Unless)
-		if err != nil || ok {
+		if err != nil {
+			return true, fmt.Errorf("condition evaluation failed at %s: %w", op.Path, err)
+		}
+		if ok {
 			return true, nil
 		}
 	}
@@ -76,24 +83,18 @@ func (t *GameWorld) applyOperation(op deep.Operation, logger *slog.Logger) (bool
 		}
 		return true, fmt.Errorf("unsupported root operation: %s", op.Kind)
 	case "/players", "/Players":
-		if op.Kind == deep.OpLog {
-			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Players)
-			return true, nil
-		}
 		if op.Kind == deep.OpReplace && op.Strict {
 			if old, ok := op.Old.(map[string]Player); !ok || !deep.Equal(t.Players, old) {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Players)
 			}
 		}
-		if v, ok := op.New.(map[string]Player); ok {
-			t.Players = v
-			return true, nil
+		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
+			if v, ok := op.New.(map[string]Player); ok {
+				t.Players = v
+				return true, nil
+			}
 		}
 	case "/time", "/Time":
-		if op.Kind == deep.OpLog {
-			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Time)
-			return true, nil
-		}
 		if op.Kind == deep.OpReplace && op.Strict {
 			_oldOK := false
 			if _oldV, ok := op.Old.(int); ok {
@@ -108,28 +109,32 @@ func (t *GameWorld) applyOperation(op deep.Operation, logger *slog.Logger) (bool
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Time)
 			}
 		}
-		if v, ok := op.New.(int); ok {
-			t.Time = v
-			return true, nil
-		}
-		if f, ok := op.New.(float64); ok {
-			t.Time = int(f)
-			return true, nil
+		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
+			if v, ok := op.New.(int); ok {
+				t.Time = v
+				return true, nil
+			}
+			if f, ok := op.New.(float64); ok {
+				t.Time = int(f)
+				return true, nil
+			}
 		}
 	default:
 		if strings.HasPrefix(op.Path, "/players/") {
 			parts := strings.Split(op.Path[len("/players/"):], "/")
-			key := parts[0]
-			if op.Kind == deep.OpRemove {
-				delete(t.Players, key)
-				return true, nil
-			}
-			if t.Players == nil {
-				t.Players = make(map[string]Player)
-			}
-			if v, ok := op.New.(Player); ok {
-				t.Players[key] = v
-				return true, nil
+			key := deep.UnescapePathKey(parts[0])
+			if len(parts) == 1 && !op.Strict {
+				if op.Kind == deep.OpRemove {
+					delete(t.Players, key)
+					return true, nil
+				}
+				if v, ok := op.New.(Player); ok && (op.Kind == deep.OpAdd || op.Kind == deep.OpReplace) {
+					if t.Players == nil {
+						t.Players = make(map[string]Player)
+					}
+					t.Players[key] = v
+					return true, nil
+				}
 			}
 		}
 	}
@@ -142,7 +147,7 @@ func (t *GameWorld) Diff(other *GameWorld) deep.Patch[GameWorld] {
 	if other.Players != nil {
 		for k, v := range other.Players {
 			if t.Players == nil {
-				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: fmt.Sprintf("/players/%v", k), New: v})
+				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/players/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
 				continue
 			}
 			if oldV, ok := t.Players[k]; !ok || !oldV.Equal(&v) {
@@ -150,14 +155,14 @@ func (t *GameWorld) Diff(other *GameWorld) deep.Patch[GameWorld] {
 				if !ok {
 					kind = deep.OpAdd
 				}
-				p.Operations = append(p.Operations, deep.Operation{Kind: kind, Path: fmt.Sprintf("/players/%v", k), Old: oldV, New: v})
+				p.Operations = append(p.Operations, deep.Operation{Kind: kind, Path: "/players/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: oldV, New: v})
 			}
 		}
 	}
 	if t.Players != nil {
 		for k, v := range t.Players {
-			if other.Players == nil || !contains(other.Players, k) {
-				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: fmt.Sprintf("/players/%v", k), Old: v})
+			if _, ok := other.Players[k]; !ok {
+				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: "/players/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: v})
 			}
 		}
 	}
@@ -203,10 +208,18 @@ func (t *GameWorld) evaluateCondition(c condition.Condition) (bool, error) {
 			return true, nil
 		}
 		if c.Op == "type" {
-			return condition.CheckType(t.Time, c.Value.(string)), nil
+			tn, ok := c.Value.(string)
+			if !ok {
+				return false, fmt.Errorf("type requires string value")
+			}
+			return condition.CheckType(t.Time, tn), nil
 		}
 		if c.Op == "matches" {
-			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Time))
+			pat, ok := c.Value.(string)
+			if !ok {
+				return false, fmt.Errorf("matches requires string pattern")
+			}
+			return regexp.MatchString(pat, fmt.Sprintf("%v", t.Time))
 		}
 		var _cv float64
 		switch v := c.Value.(type) {
@@ -256,7 +269,10 @@ func (t *GameWorld) evaluateCondition(c condition.Condition) (bool, error) {
 			return false, nil
 		}
 	}
-	return false, fmt.Errorf("unsupported condition path or op: %s", c.Path)
+	// Anything the fast path does not model — nested paths, collection
+	// lookups, unusual ops — is evaluated by the reflection engine, which
+	// handles the full condition language.
+	return condition.Evaluate(reflect.ValueOf(t).Elem(), &c)
 }
 
 // Equal returns true if t and other are deeply equal.
@@ -328,13 +344,19 @@ func (t *Player) Patch(p deep.Patch[Player], logger *slog.Logger) error {
 func (t *Player) applyOperation(op deep.Operation, logger *slog.Logger) (bool, error) {
 	if op.If != nil {
 		ok, err := t.evaluateCondition(*op.If)
-		if err != nil || !ok {
+		if err != nil {
+			return true, fmt.Errorf("condition evaluation failed at %s: %w", op.Path, err)
+		}
+		if !ok {
 			return true, nil
 		}
 	}
 	if op.Unless != nil {
 		ok, err := t.evaluateCondition(*op.Unless)
-		if err != nil || ok {
+		if err != nil {
+			return true, fmt.Errorf("condition evaluation failed at %s: %w", op.Path, err)
+		}
+		if ok {
 			return true, nil
 		}
 	}
@@ -359,10 +381,6 @@ func (t *Player) applyOperation(op deep.Operation, logger *slog.Logger) (bool, e
 		}
 		return true, fmt.Errorf("unsupported root operation: %s", op.Kind)
 	case "/x", "/X":
-		if op.Kind == deep.OpLog {
-			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.X)
-			return true, nil
-		}
 		if op.Kind == deep.OpReplace && op.Strict {
 			_oldOK := false
 			if _oldV, ok := op.Old.(int); ok {
@@ -377,19 +395,17 @@ func (t *Player) applyOperation(op deep.Operation, logger *slog.Logger) (bool, e
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.X)
 			}
 		}
-		if v, ok := op.New.(int); ok {
-			t.X = v
-			return true, nil
-		}
-		if f, ok := op.New.(float64); ok {
-			t.X = int(f)
-			return true, nil
+		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
+			if v, ok := op.New.(int); ok {
+				t.X = v
+				return true, nil
+			}
+			if f, ok := op.New.(float64); ok {
+				t.X = int(f)
+				return true, nil
+			}
 		}
 	case "/y", "/Y":
-		if op.Kind == deep.OpLog {
-			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Y)
-			return true, nil
-		}
 		if op.Kind == deep.OpReplace && op.Strict {
 			_oldOK := false
 			if _oldV, ok := op.Old.(int); ok {
@@ -404,27 +420,27 @@ func (t *Player) applyOperation(op deep.Operation, logger *slog.Logger) (bool, e
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Y)
 			}
 		}
-		if v, ok := op.New.(int); ok {
-			t.Y = v
-			return true, nil
-		}
-		if f, ok := op.New.(float64); ok {
-			t.Y = int(f)
-			return true, nil
+		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
+			if v, ok := op.New.(int); ok {
+				t.Y = v
+				return true, nil
+			}
+			if f, ok := op.New.(float64); ok {
+				t.Y = int(f)
+				return true, nil
+			}
 		}
 	case "/name", "/Name":
-		if op.Kind == deep.OpLog {
-			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Name)
-			return true, nil
-		}
 		if op.Kind == deep.OpReplace && op.Strict {
 			if _oldV, ok := op.Old.(string); !ok || t.Name != _oldV {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Name)
 			}
 		}
-		if v, ok := op.New.(string); ok {
-			t.Name = v
-			return true, nil
+		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
+			if v, ok := op.New.(string); ok {
+				t.Name = v
+				return true, nil
+			}
 		}
 	default:
 	}
@@ -482,10 +498,18 @@ func (t *Player) evaluateCondition(c condition.Condition) (bool, error) {
 			return true, nil
 		}
 		if c.Op == "type" {
-			return condition.CheckType(t.X, c.Value.(string)), nil
+			tn, ok := c.Value.(string)
+			if !ok {
+				return false, fmt.Errorf("type requires string value")
+			}
+			return condition.CheckType(t.X, tn), nil
 		}
 		if c.Op == "matches" {
-			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.X))
+			pat, ok := c.Value.(string)
+			if !ok {
+				return false, fmt.Errorf("matches requires string pattern")
+			}
+			return regexp.MatchString(pat, fmt.Sprintf("%v", t.X))
 		}
 		var _cv float64
 		switch v := c.Value.(type) {
@@ -539,10 +563,18 @@ func (t *Player) evaluateCondition(c condition.Condition) (bool, error) {
 			return true, nil
 		}
 		if c.Op == "type" {
-			return condition.CheckType(t.Y, c.Value.(string)), nil
+			tn, ok := c.Value.(string)
+			if !ok {
+				return false, fmt.Errorf("type requires string value")
+			}
+			return condition.CheckType(t.Y, tn), nil
 		}
 		if c.Op == "matches" {
-			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Y))
+			pat, ok := c.Value.(string)
+			if !ok {
+				return false, fmt.Errorf("matches requires string pattern")
+			}
+			return regexp.MatchString(pat, fmt.Sprintf("%v", t.Y))
 		}
 		var _cv float64
 		switch v := c.Value.(type) {
@@ -596,10 +628,18 @@ func (t *Player) evaluateCondition(c condition.Condition) (bool, error) {
 			return true, nil
 		}
 		if c.Op == "type" {
-			return condition.CheckType(t.Name, c.Value.(string)), nil
+			tn, ok := c.Value.(string)
+			if !ok {
+				return false, fmt.Errorf("type requires string value")
+			}
+			return condition.CheckType(t.Name, tn), nil
 		}
 		if c.Op == "matches" {
-			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Name))
+			pat, ok := c.Value.(string)
+			if !ok {
+				return false, fmt.Errorf("matches requires string pattern")
+			}
+			return regexp.MatchString(pat, fmt.Sprintf("%v", t.Name))
 		}
 		_sv, _ok := c.Value.(string)
 		if !_ok {
@@ -636,7 +676,10 @@ func (t *Player) evaluateCondition(c condition.Condition) (bool, error) {
 			return false, nil
 		}
 	}
-	return false, fmt.Errorf("unsupported condition path or op: %s", c.Path)
+	// Anything the fast path does not model — nested paths, collection
+	// lookups, unusual ops — is evaluated by the reflection engine, which
+	// handles the full condition language.
+	return condition.Evaluate(reflect.ValueOf(t).Elem(), &c)
 }
 
 // Equal returns true if t and other are deeply equal.
@@ -661,9 +704,4 @@ func (t *Player) Clone() *Player {
 		Name: t.Name,
 	}
 	return res
-}
-
-func contains[M ~map[K]V, K comparable, V any](m M, k K) bool {
-	_, ok := m[k]
-	return ok
 }

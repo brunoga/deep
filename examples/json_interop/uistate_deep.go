@@ -6,6 +6,7 @@ import (
 	deep "github.com/brunoga/deep/v5"
 	"github.com/brunoga/deep/v5/condition"
 	"log/slog"
+	"reflect"
 	"regexp"
 )
 
@@ -44,13 +45,19 @@ func (t *UIState) Patch(p deep.Patch[UIState], logger *slog.Logger) error {
 func (t *UIState) applyOperation(op deep.Operation, logger *slog.Logger) (bool, error) {
 	if op.If != nil {
 		ok, err := t.evaluateCondition(*op.If)
-		if err != nil || !ok {
+		if err != nil {
+			return true, fmt.Errorf("condition evaluation failed at %s: %w", op.Path, err)
+		}
+		if !ok {
 			return true, nil
 		}
 	}
 	if op.Unless != nil {
 		ok, err := t.evaluateCondition(*op.Unless)
-		if err != nil || ok {
+		if err != nil {
+			return true, fmt.Errorf("condition evaluation failed at %s: %w", op.Path, err)
+		}
+		if ok {
 			return true, nil
 		}
 	}
@@ -75,32 +82,28 @@ func (t *UIState) applyOperation(op deep.Operation, logger *slog.Logger) (bool, 
 		}
 		return true, fmt.Errorf("unsupported root operation: %s", op.Kind)
 	case "/theme", "/Theme":
-		if op.Kind == deep.OpLog {
-			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Theme)
-			return true, nil
-		}
 		if op.Kind == deep.OpReplace && op.Strict {
 			if _oldV, ok := op.Old.(string); !ok || t.Theme != _oldV {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Theme)
 			}
 		}
-		if v, ok := op.New.(string); ok {
-			t.Theme = v
-			return true, nil
+		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
+			if v, ok := op.New.(string); ok {
+				t.Theme = v
+				return true, nil
+			}
 		}
 	case "/sidebar_open", "/Open":
-		if op.Kind == deep.OpLog {
-			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Open)
-			return true, nil
-		}
 		if op.Kind == deep.OpReplace && op.Strict {
 			if _oldV, ok := op.Old.(bool); !ok || t.Open != _oldV {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Open)
 			}
 		}
-		if v, ok := op.New.(bool); ok {
-			t.Open = v
-			return true, nil
+		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
+			if v, ok := op.New.(bool); ok {
+				t.Open = v
+				return true, nil
+			}
 		}
 	default:
 	}
@@ -155,10 +158,18 @@ func (t *UIState) evaluateCondition(c condition.Condition) (bool, error) {
 			return true, nil
 		}
 		if c.Op == "type" {
-			return condition.CheckType(t.Theme, c.Value.(string)), nil
+			tn, ok := c.Value.(string)
+			if !ok {
+				return false, fmt.Errorf("type requires string value")
+			}
+			return condition.CheckType(t.Theme, tn), nil
 		}
 		if c.Op == "matches" {
-			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Theme))
+			pat, ok := c.Value.(string)
+			if !ok {
+				return false, fmt.Errorf("matches requires string pattern")
+			}
+			return regexp.MatchString(pat, fmt.Sprintf("%v", t.Theme))
 		}
 		_sv, _ok := c.Value.(string)
 		if !_ok {
@@ -199,10 +210,18 @@ func (t *UIState) evaluateCondition(c condition.Condition) (bool, error) {
 			return true, nil
 		}
 		if c.Op == "type" {
-			return condition.CheckType(t.Open, c.Value.(string)), nil
+			tn, ok := c.Value.(string)
+			if !ok {
+				return false, fmt.Errorf("type requires string value")
+			}
+			return condition.CheckType(t.Open, tn), nil
 		}
 		if c.Op == "matches" {
-			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Open))
+			pat, ok := c.Value.(string)
+			if !ok {
+				return false, fmt.Errorf("matches requires string pattern")
+			}
+			return regexp.MatchString(pat, fmt.Sprintf("%v", t.Open))
 		}
 		_bv, _ok := c.Value.(bool)
 		if !_ok {
@@ -215,7 +234,10 @@ func (t *UIState) evaluateCondition(c condition.Condition) (bool, error) {
 			return t.Open != _bv, nil
 		}
 	}
-	return false, fmt.Errorf("unsupported condition path or op: %s", c.Path)
+	// Anything the fast path does not model — nested paths, collection
+	// lookups, unusual ops — is evaluated by the reflection engine, which
+	// handles the full condition language.
+	return condition.Evaluate(reflect.ValueOf(t).Elem(), &c)
 }
 
 // Equal returns true if t and other are deeply equal.
@@ -236,9 +258,4 @@ func (t *UIState) Clone() *UIState {
 		Open:  t.Open,
 	}
 	return res
-}
-
-func contains[M ~map[K]V, K comparable, V any](m M, k K) bool {
-	_, ok := m[k]
-	return ok
 }

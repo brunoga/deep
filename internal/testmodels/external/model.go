@@ -33,6 +33,7 @@ type Job struct {
 	Priority Priority              `json:"priority"`
 	Notes    crdt.Text             `json:"notes"`
 	Title    crdt.LWW[string]      `json:"title"`
+	History  crdt.LWW[[]int]       `json:"history"`
 	Checked  clock.Time            `json:"checked"`
 	Grid     [2]int                `json:"grid"`
 	Done     chan struct{}         `json:"done"`

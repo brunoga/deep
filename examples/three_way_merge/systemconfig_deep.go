@@ -6,6 +6,7 @@ import (
 	deep "github.com/brunoga/deep/v5"
 	"github.com/brunoga/deep/v5/condition"
 	"log/slog"
+	"reflect"
 	"regexp"
 	"strings"
 )
@@ -45,13 +46,19 @@ func (t *SystemConfig) Patch(p deep.Patch[SystemConfig], logger *slog.Logger) er
 func (t *SystemConfig) applyOperation(op deep.Operation, logger *slog.Logger) (bool, error) {
 	if op.If != nil {
 		ok, err := t.evaluateCondition(*op.If)
-		if err != nil || !ok {
+		if err != nil {
+			return true, fmt.Errorf("condition evaluation failed at %s: %w", op.Path, err)
+		}
+		if !ok {
 			return true, nil
 		}
 	}
 	if op.Unless != nil {
 		ok, err := t.evaluateCondition(*op.Unless)
-		if err != nil || ok {
+		if err != nil {
+			return true, fmt.Errorf("condition evaluation failed at %s: %w", op.Path, err)
+		}
+		if ok {
 			return true, nil
 		}
 	}
@@ -76,24 +83,18 @@ func (t *SystemConfig) applyOperation(op deep.Operation, logger *slog.Logger) (b
 		}
 		return true, fmt.Errorf("unsupported root operation: %s", op.Kind)
 	case "/app", "/AppName":
-		if op.Kind == deep.OpLog {
-			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.AppName)
-			return true, nil
-		}
 		if op.Kind == deep.OpReplace && op.Strict {
 			if _oldV, ok := op.Old.(string); !ok || t.AppName != _oldV {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.AppName)
 			}
 		}
-		if v, ok := op.New.(string); ok {
-			t.AppName = v
-			return true, nil
+		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
+			if v, ok := op.New.(string); ok {
+				t.AppName = v
+				return true, nil
+			}
 		}
 	case "/threads", "/MaxThreads":
-		if op.Kind == deep.OpLog {
-			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.MaxThreads)
-			return true, nil
-		}
 		if op.Kind == deep.OpReplace && op.Strict {
 			_oldOK := false
 			if _oldV, ok := op.Old.(int); ok {
@@ -108,42 +109,44 @@ func (t *SystemConfig) applyOperation(op deep.Operation, logger *slog.Logger) (b
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.MaxThreads)
 			}
 		}
-		if v, ok := op.New.(int); ok {
-			t.MaxThreads = v
-			return true, nil
-		}
-		if f, ok := op.New.(float64); ok {
-			t.MaxThreads = int(f)
-			return true, nil
+		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
+			if v, ok := op.New.(int); ok {
+				t.MaxThreads = v
+				return true, nil
+			}
+			if f, ok := op.New.(float64); ok {
+				t.MaxThreads = int(f)
+				return true, nil
+			}
 		}
 	case "/endpoints", "/Endpoints":
-		if op.Kind == deep.OpLog {
-			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Endpoints)
-			return true, nil
-		}
 		if op.Kind == deep.OpReplace && op.Strict {
 			if old, ok := op.Old.(map[string]string); !ok || !deep.Equal(t.Endpoints, old) {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Endpoints)
 			}
 		}
-		if v, ok := op.New.(map[string]string); ok {
-			t.Endpoints = v
-			return true, nil
+		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
+			if v, ok := op.New.(map[string]string); ok {
+				t.Endpoints = v
+				return true, nil
+			}
 		}
 	default:
 		if strings.HasPrefix(op.Path, "/endpoints/") {
 			parts := strings.Split(op.Path[len("/endpoints/"):], "/")
-			key := parts[0]
-			if op.Kind == deep.OpRemove {
-				delete(t.Endpoints, key)
-				return true, nil
-			}
-			if t.Endpoints == nil {
-				t.Endpoints = make(map[string]string)
-			}
-			if v, ok := op.New.(string); ok {
-				t.Endpoints[key] = v
-				return true, nil
+			key := deep.UnescapePathKey(parts[0])
+			if len(parts) == 1 && !op.Strict {
+				if op.Kind == deep.OpRemove {
+					delete(t.Endpoints, key)
+					return true, nil
+				}
+				if v, ok := op.New.(string); ok && (op.Kind == deep.OpAdd || op.Kind == deep.OpReplace) {
+					if t.Endpoints == nil {
+						t.Endpoints = make(map[string]string)
+					}
+					t.Endpoints[key] = v
+					return true, nil
+				}
 			}
 		}
 	}
@@ -162,7 +165,7 @@ func (t *SystemConfig) Diff(other *SystemConfig) deep.Patch[SystemConfig] {
 	if other.Endpoints != nil {
 		for k, v := range other.Endpoints {
 			if t.Endpoints == nil {
-				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: fmt.Sprintf("/endpoints/%v", k), New: v})
+				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/endpoints/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
 				continue
 			}
 			if oldV, ok := t.Endpoints[k]; !ok || v != oldV {
@@ -170,14 +173,14 @@ func (t *SystemConfig) Diff(other *SystemConfig) deep.Patch[SystemConfig] {
 				if !ok {
 					kind = deep.OpAdd
 				}
-				p.Operations = append(p.Operations, deep.Operation{Kind: kind, Path: fmt.Sprintf("/endpoints/%v", k), Old: oldV, New: v})
+				p.Operations = append(p.Operations, deep.Operation{Kind: kind, Path: "/endpoints/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: oldV, New: v})
 			}
 		}
 	}
 	if t.Endpoints != nil {
 		for k, v := range t.Endpoints {
-			if other.Endpoints == nil || !contains(other.Endpoints, k) {
-				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: fmt.Sprintf("/endpoints/%v", k), Old: v})
+			if _, ok := other.Endpoints[k]; !ok {
+				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: "/endpoints/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: v})
 			}
 		}
 	}
@@ -220,10 +223,18 @@ func (t *SystemConfig) evaluateCondition(c condition.Condition) (bool, error) {
 			return true, nil
 		}
 		if c.Op == "type" {
-			return condition.CheckType(t.AppName, c.Value.(string)), nil
+			tn, ok := c.Value.(string)
+			if !ok {
+				return false, fmt.Errorf("type requires string value")
+			}
+			return condition.CheckType(t.AppName, tn), nil
 		}
 		if c.Op == "matches" {
-			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.AppName))
+			pat, ok := c.Value.(string)
+			if !ok {
+				return false, fmt.Errorf("matches requires string pattern")
+			}
+			return regexp.MatchString(pat, fmt.Sprintf("%v", t.AppName))
 		}
 		_sv, _ok := c.Value.(string)
 		if !_ok {
@@ -264,10 +275,18 @@ func (t *SystemConfig) evaluateCondition(c condition.Condition) (bool, error) {
 			return true, nil
 		}
 		if c.Op == "type" {
-			return condition.CheckType(t.MaxThreads, c.Value.(string)), nil
+			tn, ok := c.Value.(string)
+			if !ok {
+				return false, fmt.Errorf("type requires string value")
+			}
+			return condition.CheckType(t.MaxThreads, tn), nil
 		}
 		if c.Op == "matches" {
-			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.MaxThreads))
+			pat, ok := c.Value.(string)
+			if !ok {
+				return false, fmt.Errorf("matches requires string pattern")
+			}
+			return regexp.MatchString(pat, fmt.Sprintf("%v", t.MaxThreads))
 		}
 		var _cv float64
 		switch v := c.Value.(type) {
@@ -317,7 +336,10 @@ func (t *SystemConfig) evaluateCondition(c condition.Condition) (bool, error) {
 			return false, nil
 		}
 	}
-	return false, fmt.Errorf("unsupported condition path or op: %s", c.Path)
+	// Anything the fast path does not model — nested paths, collection
+	// lookups, unusual ops — is evaluated by the reflection engine, which
+	// handles the full condition language.
+	return condition.Evaluate(reflect.ValueOf(t).Elem(), &c)
 }
 
 // Equal returns true if t and other are deeply equal.
@@ -356,9 +378,4 @@ func (t *SystemConfig) Clone() *SystemConfig {
 		}
 	}
 	return res
-}
-
-func contains[M ~map[K]V, K comparable, V any](m M, k K) bool {
-	_, ok := m[k]
-	return ok
 }
