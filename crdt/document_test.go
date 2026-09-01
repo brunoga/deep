@@ -8,6 +8,7 @@ import (
 
 	"github.com/brunoga/deep/v5/crdt/hlc"
 	"strings"
+	"time"
 )
 
 func TestDocumentBasicEditing(t *testing.T) {
@@ -344,6 +345,243 @@ func TestDocumentInCRDTKeepsConcurrentEdits(t *testing.T) {
 	for _, want := range []string{"base", "-A", "-B"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("lost %q from %q", want, got)
+		}
+	}
+}
+
+// Copying a document shares its tree rather than duplicating it, which is only
+// safe because no operation changes a node in place. If one ever did, an edit
+// to a copy would reach back into whatever it was copied from — so this checks
+// both directions after every kind of edit, and checks that the copy really is
+// shared rather than quietly duplicated.
+func TestDocumentCopyIsIndependentAndShared(t *testing.T) {
+	original := NewDocument(hlc.NewClock("a"))
+	original.Insert(0, "the original text")
+	before := original.String()
+
+	copyOf, err := original.Copy()
+	if err != nil {
+		t.Fatalf("Copy: %v", err)
+	}
+	if copyOf.root != original.root {
+		t.Error("Copy duplicated the tree instead of sharing it")
+	}
+
+	// Every kind of edit, on the copy.
+	copyOf.Insert(0, "PREFIX ")
+	copyOf.Insert(copyOf.Len(), " SUFFIX")
+	copyOf.Insert(10, "-MIDDLE-")
+	copyOf.Delete(2, 3)
+	if original.String() != before {
+		t.Errorf("editing the copy changed the original: %q, want %q", original.String(), before)
+	}
+
+	// And on the original, against a copy taken beforehand.
+	second, _ := original.Copy()
+	secondBefore := second.String()
+	original.Insert(4, "X")
+	original.Delete(0, 2)
+	if second.String() != secondBefore {
+		t.Errorf("editing the original changed an earlier copy: %q, want %q",
+			second.String(), secondBefore)
+	}
+
+	// A merge into one must not disturb the other.
+	third, _ := original.Copy()
+	thirdBefore := third.String()
+	other := NewDocument(hlc.NewClock("b"))
+	other.Insert(0, "from elsewhere")
+	original.MergeFrom(other.Text())
+	if third.String() != thirdBefore {
+		t.Errorf("merging into the original changed an earlier copy: %q, want %q",
+			third.String(), thirdBefore)
+	}
+}
+
+// The wrapper takes a copy of its value before every edit. With a shared tree
+// that copy no longer grows with the document, so an edit costs what the edit
+// costs rather than what the document weighs.
+func TestDocumentInCRDTCostDoesNotGrowWithDocument(t *testing.T) {
+	type article struct {
+		Body *Document `json:"body"`
+	}
+
+	measure := func(runs int) time.Duration {
+		c := NewCRDT(article{Body: NewDocument(hlc.NewClock("a"))}, "a")
+		c.Edit(func(v *article) { v.Body.Insert(0, "seed") })
+		for i := 0; i < runs; i++ {
+			c.Edit(func(v *article) { v.Body.Insert(0, "x") })
+		}
+		start := time.Now()
+		for i := 0; i < 50; i++ {
+			c.Edit(func(v *article) { v.Body.Insert(v.Body.Len(), "y") })
+		}
+		return time.Since(start) / 50
+	}
+
+	small, large := measure(200), measure(3000)
+	t.Logf("per edit: %s at 200 runs, %s at 3000", small, large)
+
+	// Fifteen times the runs must not mean anything like fifteen times the cost.
+	if large > small*5 {
+		t.Errorf("cost grew with the document: %s per edit at 200 runs, %s at 3000", small, large)
+	}
+}
+
+// A document describes an edit from its own record of what it changed, which
+// is only right when the document being compared against is what it was copied
+// from. Everything else has to fall back to comparing the two. Getting that
+// wrong would drop content from a delta silently, so each case is checked by
+// applying the delta and requiring it to reproduce the document.
+func TestDocumentDiffFallsBackWhenRecordDoesNotApply(t *testing.T) {
+	apply := func(t *testing.T, from, to *Document) string {
+		t.Helper()
+		patch, err := from.Diff(to)
+		if err != nil {
+			t.Fatalf("Diff: %v", err)
+		}
+		got, _ := from.Copy()
+		if patch != nil {
+			patch.Apply(&got)
+		}
+		return got.String()
+	}
+
+	t.Run("copied then edited", func(t *testing.T) {
+		old := NewDocument(hlc.NewClock("a"))
+		old.Insert(0, "hello")
+		next, _ := old.Copy()
+		next.Insert(next.Len(), " world")
+
+		if got := apply(t, old, next); got != next.String() {
+			t.Errorf("got %q, want %q", got, next.String())
+		}
+	})
+
+	t.Run("copied then edited with a deletion", func(t *testing.T) {
+		old := NewDocument(hlc.NewClock("a"))
+		old.Insert(0, "hello cruel world")
+		next, _ := old.Copy()
+		next.Delete(5, 6)
+		next.Insert(next.Len(), "!")
+
+		if got := apply(t, old, next); got != next.String() {
+			t.Errorf("got %q, want %q", got, next.String())
+		}
+	})
+
+	t.Run("unrelated documents", func(t *testing.T) {
+		old := NewDocument(hlc.NewClock("a"))
+		old.Insert(0, "one")
+		other := NewDocument(hlc.NewClock("b"))
+		other.Insert(0, "two")
+
+		// Nothing links these, so the record cannot describe the difference and
+		// the comparison has to be done properly.
+		if got := apply(t, old, other); !strings.Contains(got, "two") {
+			t.Errorf("got %q, which lost the other document's content", got)
+		}
+	})
+
+	t.Run("after merging", func(t *testing.T) {
+		old := NewDocument(hlc.NewClock("a"))
+		old.Insert(0, "base")
+
+		peer := NewDocument(hlc.NewClock("b"))
+		peer.Insert(0, "from a peer ")
+
+		next, _ := old.Copy()
+		next.MergeFrom(peer.Text()) // wholesale change, so the record is reset
+		next.Insert(0, "then typed ")
+
+		if got := apply(t, old, next); got != next.String() {
+			t.Errorf("got %q, want %q", got, next.String())
+		}
+	})
+
+	t.Run("two replicas, each with its own clock", func(t *testing.T) {
+		// Two documents edited independently are two replicas, and each needs
+		// its own clock: what one holds of the other is described by a single
+		// bound per writer, which only means anything if each writer's output
+		// goes to one document.
+		old := NewDocument(hlc.NewClock("a"))
+		old.Insert(0, "shared")
+
+		other := NewDocument(hlc.NewClock("b"))
+		other.MergeFrom(old.Text())
+		other.Insert(other.Len(), " and more")
+		old.Insert(0, "prefix ")
+
+		got := apply(t, old, other)
+		if !strings.Contains(got, "and more") {
+			t.Errorf("got %q, which lost the other replica's edit", got)
+		}
+		if !strings.Contains(got, "prefix") {
+			t.Errorf("got %q, which lost this replica's own edit", got)
+		}
+	})
+}
+
+// The record must survive a document being edited many times over, which is
+// what a CRDT does: copy, edit, keep the copy, copy again.
+func TestDocumentRepeatedEditRoundTrips(t *testing.T) {
+	type article struct {
+		Body *Document `json:"body"`
+	}
+
+	a := NewCRDT(article{Body: NewDocument(hlc.NewClock("a"))}, "a")
+	b := NewCRDT(article{Body: NewDocument(hlc.NewClock("b"))}, "b")
+
+	words := []string{"alpha ", "beta ", "gamma ", "delta "}
+	for i, w := range words {
+		word := w
+		delta := a.Edit(func(v *article) { v.Body.Insert(v.Body.Len(), word) })
+		b.ApplyDelta(delta)
+		if got, want := b.View().Body.String(), a.View().Body.String(); got != want {
+			t.Fatalf("after edit %d: b has %q, a has %q", i, got, want)
+		}
+	}
+
+	// Deletions travel through the same path.
+	delta := a.Edit(func(v *article) { v.Body.Delete(0, 6) })
+	b.ApplyDelta(delta)
+	if got, want := b.View().Body.String(), a.View().Body.String(); got != want {
+		t.Fatalf("after a deletion: b has %q, a has %q", got, want)
+	}
+	if want := "beta gamma delta "; a.View().Body.String() != want {
+		t.Errorf("document is %q, want %q", a.View().Body.String(), want)
+	}
+}
+
+// After merging a peer's text in, a local insertion at the spot the merge
+// touched must still land where every replica agrees it should. Runs sharing an
+// anchor are ordered by identifier, so placing a new run at the cursor can put
+// it before one that was merged in and sorts ahead of it — this replica would
+// then read the document differently from everyone else.
+func TestDocumentInsertStaysCanonicalAfterMerge(t *testing.T) {
+	for seed := 0; seed < 50; seed++ {
+		local := NewDocument(hlc.NewClock("a"))
+		local.Insert(0, "base")
+
+		peer := NewDocument(hlc.NewClock("b"))
+		peer.Insert(0, "peer text ")
+
+		local.MergeFrom(peer.Text())
+		local.Insert(0, "typed ")
+
+		// What a replica deriving the order from the runs alone would read.
+		canonical := DocumentFromText(local.Text(), hlc.NewClock("c"))
+		if local.String() != canonical.String() {
+			t.Fatalf("seed %d: this replica reads %q, deriving the order gives %q",
+				seed, local.String(), canonical.String())
+		}
+
+		// And a peer receiving those runs must agree.
+		receiver := NewDocument(hlc.NewClock("d"))
+		receiver.MergeFrom(local.Text())
+		if receiver.String() != local.String() {
+			t.Fatalf("seed %d: a peer reads %q, this replica reads %q",
+				seed, receiver.String(), local.String())
 		}
 	}
 }
