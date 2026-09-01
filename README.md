@@ -306,8 +306,35 @@ type Document struct {
 | `map[K]V` | Different keys both survive |
 | `[]T` with `deep:"key"` on `T` | Different elements both survive; an element's fields merge independently. Order is not synchronized — replicas keep these in key order, so sort on read if order matters |
 | `[]T` without a key | Whole-slice last-write-wins: one writer's version wins |
+| `crdt.List[T]` | Concurrent insertions and deletions all survive, in an order every replica agrees on |
 
-Prefer a map or a keyed slice for any collection edited concurrently.
+Prefer a map, a keyed slice, or a `List` for any collection edited concurrently.
+
+**`crdt.List[T]`** — a sequence that merges rather than overwrites. Elements are placed relative to their neighbours rather than by index, so concurrent edits do not fight over positions:
+
+```go
+type Board struct {
+    Tasks crdt.List[string] `json:"tasks"`
+}
+
+tasks = tasks.Insert(0, "write tests", node.Clock()) // position, value, clock
+tasks = tasks.Delete(2, 1)                           // remove one at index 2
+tasks.Items()                                        // []string in order
+```
+
+**Custom convergent types** — implement `crdt.Convergent` and a `CRDT[T]` will merge your type instead of picking a winner:
+
+```go
+func (s MySet) MergeFrom(other any) any {
+    o, ok := other.(MySet)
+    if !ok {
+        return s
+    }
+    return union(s, o)
+}
+```
+
+`MergeFrom` must be commutative, associative and idempotent.
 
 **`crdt/hlc`** — `Clock` (per-node: `Now`, `Update`, `Reserve`, `SetLatest`) and `HLC` timestamps (`Compare`, `After`) giving a total order across nodes without synchronized wall clocks.
 
@@ -360,6 +387,7 @@ Every directory under [`examples/`](examples/) is a runnable program (`go run ./
 | [`crdt_sync`](examples/crdt_sync) | `CRDT[T]` delta exchange and convergence |
 | [`crdt_undo_redo`](examples/crdt_undo_redo) | Distributed undo/redo via `Reverse` |
 | [`crdt_containers`](examples/crdt_containers) | `Counter`, `Set` and `Map` |
+| [`crdt_list`](examples/crdt_list) | `List[T]`, a sequence that merges concurrent insertions and deletions |
 | [`lww_fields`](examples/lww_fields) | Per-field `LWW[T]` registers resolving a write conflict |
 | [`text_sync`](examples/text_sync) | Collaborative text with `crdt.Text` |
 

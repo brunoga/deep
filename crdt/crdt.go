@@ -35,10 +35,17 @@
 //   - A slice with no key tag is synchronized as one value: concurrent edits
 //     resolve by last-write-wins, so one writer's version of the whole slice
 //     wins. Prefer a map or a keyed slice for anything edited concurrently.
+//   - [List] is a sequence that merges: concurrent insertions and deletions
+//     from different replicas all survive and every replica agrees on the
+//     order. Reach for it when position matters and several writers can edit
+//     at once — the case an ordinary slice cannot express.
 //
 // Every case converges — replicas that have seen the same operations agree —
-// but only the first two merge concurrent edits rather than choosing between
-// them.
+// but only the first, second and last merge concurrent edits rather than
+// choosing between them.
+//
+// [Text] and [List] resolve concurrency themselves by implementing
+// [Convergent]; a type of your own can do the same.
 package crdt
 
 import (
@@ -186,9 +193,9 @@ func (c *CRDT[T]) ApplyDelta(delta Delta[T]) bool {
 
 	c.clock.Update(delta.Timestamp)
 
-	// Text is a convergent CRDT with its own merge semantics — always apply,
-	// skipping the LWW clock filter that would discard concurrent inserts/deletes.
-	if _, ok := any(c.value).(Text); ok {
+	// A self-merging value has its own convergence rules — always apply,
+	// skipping the LWW clock filter that would discard concurrent edits.
+	if _, ok := any(c.value).(Convergent); ok {
 		return deep.Apply(&c.value, delta.patch) == nil
 	}
 	defer canonicalizeKeyedSlices(reflect.ValueOf(&c.value).Elem())
@@ -245,8 +252,8 @@ func canonicalizeKeyedSlices(v reflect.Value) {
 			canonicalizeKeyedSlices(v.Elem())
 		}
 	case reflect.Struct:
-		if v.Type() == textType {
-			return // Text has its own ordering
+		if isSelfMerging(v.Type()) {
+			return // the value orders itself
 		}
 		for i := 0; i < v.NumField(); i++ {
 			f := v.Field(i)
@@ -256,8 +263,8 @@ func canonicalizeKeyedSlices(v reflect.Value) {
 			canonicalizeKeyedSlices(f)
 		}
 	case reflect.Slice, reflect.Array:
-		if v.Kind() == reflect.Slice && v.Type() == textType {
-			return
+		if isSelfMerging(v.Type()) {
+			return // the value orders itself
 		}
 		for i := 0; i < v.Len(); i++ {
 			canonicalizeKeyedSlices(v.Index(i))
@@ -302,36 +309,58 @@ func keyString(elem reflect.Value, keyIdx int) string {
 	return fmt.Sprintf("%v", icore.ExtractKey(elem, keyIdx))
 }
 
-// textType is the reflect.Type of crdt.Text, used to identify Text fields
-// during merge without a full value-tree walk.
-var textType = reflect.TypeOf(Text{})
+// Convergent is implemented by types that resolve concurrent edits themselves
+// rather than being replaced wholesale under last-write-wins. [Text] and [List]
+// implement it.
+//
+// A [CRDT] applies operations on a Convergent value unconditionally, skipping
+// the clock filter that would discard one side of a concurrent edit, and
+// combines two copies by calling MergeFrom rather than choosing a winner.
+// Implement it to plug a data type of your own into that machinery:
+//
+//	func (s MySet) MergeFrom(other any) any {
+//	    o, ok := other.(MySet)
+//	    if !ok {
+//	        return s
+//	    }
+//	    return union(s, o)
+//	}
+//
+// MergeFrom must be commutative, associative and idempotent — merging in any
+// order, any number of times, has to reach the same value — and must return a
+// value of the receiver's own type.
+type Convergent interface {
+	MergeFrom(other any) any
+}
 
-// textAncestorPath walks up from opPath toward the root, resolving each prefix
-// against root, and returns the path of the nearest ancestor whose value is of
-// type Text together with true. It returns ("", false) if the op does not
-// belong to a Text field. Walking stops as soon as a valid non-Text ancestor is
-// found, keeping traversal to O(depth) Resolve calls per op.
-func textAncestorPath(root reflect.Value, opPath string) (string, bool) {
+var convergentType = reflect.TypeOf((*Convergent)(nil)).Elem()
+
+// isSelfMerging reports whether values of t merge themselves.
+func isSelfMerging(t reflect.Type) bool { return t.Implements(convergentType) }
+
+// selfMergingAncestorPath walks up from opPath toward the root, resolving each
+// prefix against root, and returns the path of the nearest ancestor that merges
+// itself together with true. It returns ("", false) if the op does not belong
+// to such a field, keeping traversal to O(depth) Resolve calls per op.
+func selfMergingAncestorPath(root reflect.Value, opPath string) (string, bool) {
+	// The operation's own path is checked first: a Convergent value that is not
+	// addressed element by element — anything but a keyed slice — is named
+	// directly by the operation, with no deeper path to walk up from.
 	path := opPath
 	for {
+		if val, err := icore.DeepPath(path).Resolve(root); err == nil && val.IsValid() {
+			if isSelfMerging(val.Type()) {
+				return path, true
+			}
+			// This value merges by LWW, but it might itself sit inside one that
+			// does not (a TextRun whose parent is a Text), so keep walking up.
+		}
 		idx := strings.LastIndexByte(path, '/')
 		if idx <= 0 {
-			break
+			return "", false
 		}
 		path = path[:idx]
-		val, err := icore.DeepPath(path).Resolve(root)
-		if err != nil || !val.IsValid() {
-			// Unresolvable prefix (e.g. map key not present locally) — keep walking up.
-			continue
-		}
-		if val.Type() == textType {
-			return path, true
-		}
-		// A valid non-Text ancestor was found at this level, but it might itself
-		// be nested inside a Text (e.g. a TextRun struct whose parent is Text).
-		// Keep walking up rather than breaking.
 	}
-	return "", false
 }
 
 // Reverse applies the inverse of delta to this node and returns a new Delta
@@ -363,10 +392,9 @@ func (c *CRDT[T]) Merge(other *CRDT[T]) bool {
 		c.clock.Update(h)
 	}
 
-	// Fast path: T itself is a Text.
-	if v, ok := any(c.value).(Text); ok {
-		otherV := any(other.value).(Text)
-		c.value = any(MergeTextRuns(v, otherV)).(T)
+	// Fast path: T itself merges.
+	if v, ok := any(c.value).(Convergent); ok {
+		c.value = v.MergeFrom(other.value).(T)
 		c.mergeMeta(other)
 		return true
 	}
@@ -388,7 +416,7 @@ func (c *CRDT[T]) Merge(other *CRDT[T]) bool {
 	textPaths := make(map[string]struct{})
 	var filtered []deep.Operation
 	for _, op := range patch.Operations {
-		if textPath, ok := textAncestorPath(localRoot, op.Path); ok {
+		if textPath, ok := selfMergingAncestorPath(localRoot, op.Path); ok {
 			textPaths[textPath] = struct{}{}
 			continue
 		}
@@ -449,9 +477,13 @@ func (c *CRDT[T]) Merge(other *CRDT[T]) bool {
 		if err != nil || !remoteVal.IsValid() {
 			continue
 		}
-		merged := MergeTextRuns(localVal.Interface().(Text), remoteVal.Interface().(Text))
+		local, ok := localVal.Interface().(Convergent)
+		if !ok {
+			continue
+		}
+		merged := local.MergeFrom(remoteVal.Interface())
 		if err := icore.DeepPath(textPath).Set(localRoot, reflect.ValueOf(merged)); err != nil {
-			slog.Default().Error("crdt: Merge text set failed", "path", textPath, "err", err)
+			slog.Default().Error("crdt: merge of self-merging field failed", "path", textPath, "err", err)
 			continue
 		}
 		changed = true

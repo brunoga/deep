@@ -6,6 +6,35 @@ All notable changes to this project are documented here, newest first.
 > version's entry before tagging, so the tag, the GitHub release notes, and this
 > file always agree.
 
+## Unreleased
+
+### Added
+
+- **`crdt.List[T]`**, a sequence that merges. An ordinary slice inside a
+  `CRDT[T]` is synchronized as one value, so concurrent edits resolve by
+  last-write-wins and one writer's version of the whole slice wins. A `List`
+  places elements relative to their neighbours rather than by index, so
+  concurrent insertions and deletions from different replicas all survive and
+  every replica converges on the same order.
+- **`crdt.Convergent`**, the interface behind that behavior, is now exported.
+  A type implementing `MergeFrom(other any) any` is applied unconditionally
+  rather than filtered by last-write-wins, and two copies are merged rather
+  than one replacing the other — so a data type of your own can plug into the
+  same machinery. `Text` and `List` implement it.
+
+### Fixed
+
+- **A patch that had been through JSON could not be applied to a slice or map
+  field.** Decoded values arrive as the generic shapes the JSON decoder
+  produces (`[]any`, `map[string]any`), and only object-to-struct conversion
+  was handled, so an operation carrying a decoded array silently failed to
+  apply — including any delta touching a `crdt.Text` field. Composite values
+  are now rebuilt into the target type.
+- A `Convergent` value that is not addressed element by element was never
+  recognized during `Merge`: the search for a self-merging value started one
+  level above the operation's own path, which only works for the keyed slices
+  `Text` and `List` happen to be.
+
 ## v5.6.1
 
 ### Fixed
