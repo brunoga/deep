@@ -6,6 +6,42 @@ All notable changes to this project are documented here, newest first.
 > version's entry before tagging, so the tag, the GitHub release notes, and this
 > file always agree.
 
+## Unreleased
+
+### Performance
+
+- **An edit to a `crdt.Document` inside a `CRDT[T]` no longer costs what the
+  document weighs.** The wrapper copies its value before every edit, so that it
+  has something to compare the result against; copying a document meant
+  duplicating its whole index, and describing the edit afterwards meant reading
+  every run twice over.
+
+  The index is now persistent — an edit builds new nodes along the path it
+  touches and leaves the rest alone — so copying a document is sharing its root
+  rather than walking it, and the document it was copied from goes on describing
+  what it described before. A document also keeps its own state vector up to
+  date and notes what it changes as it changes, so describing an edit is reading
+  that note rather than rediscovering it by comparison.
+
+  | Per edit, document inside a `CRDT` | 200 runs | 3,000 runs |
+  | :--- | ---: | ---: |
+  | Before | 124 ms / 50 | 425 µs |
+  | Now | **4.2 µs** | **4.2 µs** |
+
+  The record is only trusted when it accounts for the whole difference, which is
+  checked rather than assumed: applying it to where the other document stood has
+  to land exactly where this one stands, for every writer and for the deleted
+  characters both. Anything else is compared the general way.
+
+### Fixed
+
+- **A local insertion just after a merge could order the document differently
+  from every other replica.** Runs sharing an anchor are ordered by identifier,
+  so a run written elsewhere and merged in can belong between the anchor and a
+  newly typed run; placing the new run at the cursor put it first regardless.
+  The ordering is now re-derived when that can have happened, which is only at
+  the spot a merge touched.
+
 ## v5.10.0
 
 ### Added

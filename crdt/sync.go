@@ -83,15 +83,15 @@ func (u Update) IsEmpty() bool { return len(u.Runs) == 0 && len(u.Deleted) == 0 
 
 // StateVector returns what this document holds, to hand to a peer so it can
 // work out what to send.
+//
+// It is maintained as the document changes rather than derived on demand, so
+// asking costs one entry per writer rather than a walk of every run.
 func (d *Document) StateVector() StateVector {
-	sv := make(StateVector)
-	for _, run := range d.Text() {
-		key := originOf(run.ID)
-		if end := run.ID.Logical + int32(run.runeCount()); end > sv[key] {
-			sv[key] = end
-		}
+	out := make(StateVector, len(d.sv))
+	for k, v := range d.sv {
+		out[k] = v
 	}
-	return sv
+	return out
 }
 
 // Since returns what a replica holding sv is missing.

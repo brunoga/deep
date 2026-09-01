@@ -29,6 +29,14 @@ import (
 // A Document is mutable and is not safe for concurrent use; guard it, or keep
 // it inside a [CRDT], which does.
 //
+// Two documents edited independently are two replicas, and each needs its own
+// clock. What one replica holds of another is described by a single bound per
+// writer, which only means anything if a writer's output goes to one document:
+// two documents drawing from one clock produce interleaved identifiers that no
+// such bound can describe, and a sync between them would appear complete while
+// leaving text behind. [Document.Copy] shares a clock deliberately, because a
+// copy stands in for the document it came from rather than alongside it.
+//
 // # Which to use
 //
 // Hold a Document directly for a large collaborative document — a shared
@@ -49,6 +57,21 @@ type Document struct {
 	root  *docNode
 	clock *hlc.Clock
 	rng   uint32
+	// sv is kept up to date as the document changes rather than derived when
+	// asked. Deriving it means walking every run, and it is asked for on every
+	// edit a [CRDT] makes — to say what the edit changed, the wrapper needs to
+	// know where the document stood before it. Keeping it costs one map entry
+	// per writer.
+	sv StateVector
+	// pending is what this document has changed since it was made, copied or
+	// merged. A document knows what it changed as it changes; noting it down
+	// costs nothing and saves rediscovering it by comparison, which means
+	// reading every run. Copy starts a fresh record, so the copy an edit is
+	// made on ends up holding exactly that edit.
+	pending Update
+	// deleted counts the characters deleted so far, which is what says whether
+	// the pending record accounts for every deletion as well as every addition.
+	deleted int
 }
 
 // docNode is one run, together with the totals for the subtree beneath it. The
@@ -66,15 +89,17 @@ var documentSeed atomic.Uint32
 
 // NewDocument returns an empty document that draws identifiers from clock.
 func NewDocument(clock *hlc.Clock) *Document {
-	return &Document{clock: clock, rng: documentSeed.Add(0x9E3779B9) | 1}
+	return &Document{
+		clock: clock,
+		rng:   documentSeed.Add(0x9E3779B9) | 1,
+		sv:    make(StateVector),
+	}
 }
 
 // DocumentFromText returns a document holding the runs of t.
 func DocumentFromText(t Text, clock *hlc.Clock) *Document {
 	d := NewDocument(clock)
-	for _, run := range t.getOrdered() {
-		d.root = joinNodes(d.root, d.newNode(run))
-	}
+	d.reset(t)
 	return d
 }
 
@@ -154,34 +179,85 @@ func (d *Document) Insert(pos int, value string) {
 	// one. Extending it in place matters: forming the neighbourhood by position
 	// would divide that run first, which is exactly the boundary the merge is
 	// there to remove, and would leave one run per keystroke after all.
-	if extendTail(left, run) {
-		d.root = joinNodes(left, right)
+	d.note(run)
+	d.pending.Runs = append(d.pending.Runs, run)
+	if extended := extendTail(left, run); extended != nil {
+		d.root = joinNodes(extended, right)
 		return
 	}
 	d.root = joinNodes(joinNodes(left, d.newNode(run)), right)
+
+	// Placing the run at the cursor is where it belongs unless something else
+	// is already anchored to the same character. Runs sharing an anchor are
+	// ordered by identifier, so a run written elsewhere and merged in can sit
+	// between the anchor and this one — putting this run at the cursor would
+	// then order the document differently here than every other replica orders
+	// it. This only arises just after a merge, at the exact spot the merge
+	// touched, so the ordering is re-derived rather than reasoned about.
+	if displacedBy(right, run) {
+		d.recanonicalize()
+	}
 }
 
-// extendTail appends run to the last run of the subtree when the two describe
-// one continuous stretch, reporting whether it did.
-func extendTail(n *docNode, run TextRun) bool {
+// displacedBy reports whether the subtree begins with a run that shares the new
+// run's anchor and sorts before it.
+func displacedBy(right *docNode, run TextRun) bool {
+	n := right
+	for n != nil && n.left != nil {
+		n = n.left
+	}
 	if n == nil {
 		return false
 	}
+	return n.run.Prev == run.Prev && n.run.ID.After(run.ID)
+}
+
+// recanonicalize rebuilds the tree in the order every replica derives, leaving
+// the record of what this document has changed intact.
+func (d *Document) recanonicalize() {
+	runs := d.Text().getOrdered()
+	d.root = nil
+	for _, run := range runs {
+		d.root = joinNodes(d.root, d.newNode(run))
+	}
+}
+
+// note records a run in the state vector.
+func (d *Document) note(run TextRun) {
+	if d.sv == nil {
+		d.sv = make(StateVector)
+	}
+	key := originOf(run.ID)
+	if end := run.ID.Logical + int32(run.runeCount()); end > d.sv[key] {
+		d.sv[key] = end
+	}
+}
+
+// extendTail returns the subtree with run appended to its final run, or nil
+// when the two do not describe one continuous stretch.
+func extendTail(n *docNode, run TextRun) *docNode {
+	if n == nil {
+		return nil
+	}
 	if n.right != nil {
-		if extendTail(n.right, run) {
-			n.update()
-			return true
+		r := extendTail(n.right, run)
+		if r == nil {
+			return nil
 		}
-		return false
+		c := *n
+		c.right = r
+		c.update()
+		return &c
 	}
 	if !canMergeRuns(n.run, run) {
-		return false
+		return nil
 	}
-	joined := int32(n.run.runeCount() + run.runeCount())
-	n.run.Value += run.Value
-	n.run.N = joined
-	n.update()
-	return true
+	c := *n
+	joined := int32(c.run.runeCount() + run.runeCount())
+	c.run.Value += run.Value
+	c.run.N = joined
+	c.update()
+	return &c
 }
 
 // Delete removes count visible characters starting at pos. The runs stay as
@@ -203,19 +279,33 @@ func (d *Document) Delete(pos, count int) {
 	left, rest := d.splitVisible(d.root, pos)
 	middle, right := d.splitVisible(rest, count)
 
-	var mark func(*docNode)
-	mark = func(n *docNode) {
-		if n == nil {
-			return
-		}
-		mark(n.left)
-		n.run.Deleted = true
-		mark(n.right)
-		n.update()
-	}
-	mark(middle)
+	marked, ranges, chars := markSubtreeDeleted(middle)
+	d.pending.Deleted = append(d.pending.Deleted, ranges...)
+	d.deleted += chars
+	d.root = joinNodes(joinNodes(left, marked), right)
+}
 
-	d.root = joinNodes(joinNodes(left, middle), right)
+// markSubtreeDeleted returns the subtree with every run marked deleted, along
+// with the ranges it marked and how many characters they held.
+func markSubtreeDeleted(n *docNode) (*docNode, []DeletedRange, int) {
+	if n == nil {
+		return nil, nil, 0
+	}
+	c := *n
+	left, leftRanges, leftChars := markSubtreeDeleted(n.left)
+	right, rightRanges, rightChars := markSubtreeDeleted(n.right)
+	c.left, c.right = left, right
+
+	ranges := append(leftRanges, rightRanges...)
+	chars := leftChars + rightChars
+	if !c.run.Deleted {
+		n := c.run.runeCount()
+		ranges = append(ranges, DeletedRange{ID: c.run.ID, N: int32(n)})
+		chars += n
+		c.run.Deleted = true
+	}
+	c.update()
+	return &c, ranges, chars
 }
 
 // MergeFrom implements [Convergent]. Merging combines the two sets of runs and
@@ -259,36 +349,43 @@ func (d *Document) CompactBefore(before hlc.HLC) any {
 // reset rebuilds the index from an ordered run list.
 func (d *Document) reset(runs Text) {
 	d.root = nil
+	d.sv = make(StateVector)
+	d.pending = Update{}
+	d.deleted = 0
 	for _, run := range runs.getOrdered() {
+		d.note(run)
+		if run.Deleted {
+			d.deleted += run.runeCount()
+		}
 		d.root = joinNodes(d.root, d.newNode(run))
 	}
 }
 
-// Copy returns an independent document holding the same text.
+// Copy returns a document holding the same text, independent of this one.
 //
-// Copying a document by walking its structure would visit every node of the
-// tree and rebuild it one field at a time, which is what a general deep copy
-// does with no knowledge of what the tree is for. Rebuilding from the runs
-// instead skips all of that: the runs are already in order, so the copy is one
-// pass. This is the method [deep.Clone] looks for, so it applies wherever a
-// document is copied, including a [CRDT] taking a snapshot of its value.
+// It shares the tree rather than duplicating it, which is safe because no
+// operation ever changes a node: editing builds new nodes along the path it
+// touches and leaves the rest alone, so this document goes on describing what
+// it describes now however much the copy is edited afterwards. A copy is
+// therefore a few words of memory rather than a walk of the whole document,
+// whatever its size.
+//
+// That is what a [CRDT] needs. Every edit it makes takes a copy of the value
+// first, so that it has something to compare the result against and can say
+// what changed; copying the document in full made that cost grow with the
+// document rather than with the edit.
+//
+// This is the method [deep.Clone] looks for, so it applies wherever a document
+// is copied.
 func (d *Document) Copy() (*Document, error) {
 	if d == nil {
 		return nil, nil
 	}
-	out := &Document{clock: d.clock, rng: d.rng}
-	var build func(*docNode) *docNode
-	build = func(n *docNode) *docNode {
-		if n == nil {
-			return nil
-		}
-		c := &docNode{run: n.run, priority: n.priority, size: n.size, visible: n.visible}
-		c.left = build(n.left)
-		c.right = build(n.right)
-		return c
+	sv := make(StateVector, len(d.sv))
+	for k, v := range d.sv {
+		sv[k] = v
 	}
-	out.root = build(d.root)
-	return out, nil
+	return &Document{root: d.root, clock: d.clock, rng: d.rng, sv: sv, deleted: d.deleted}, nil
 }
 
 // MarshalJSON writes the document as its runs, the same shape a [Text] takes.
@@ -337,11 +434,70 @@ func (d *Document) Diff(other *Document) (*DocumentPatch, error) {
 	if d == nil || other == nil {
 		return nil, nil
 	}
+
+	// The usual case is that other is this document with an edit applied, in
+	// which case it already knows what that edit was and there is nothing to
+	// work out. Reading every run to rediscover it would make describing an
+	// edit cost what the document weighs.
+	if update, ok := other.pendingSince(d); ok {
+		if update.IsEmpty() {
+			return nil, nil
+		}
+		return &DocumentPatch{Update: update}, nil
+	}
+
 	update := other.Since(d.StateVector())
 	if update.IsEmpty() {
 		return nil, nil
 	}
 	return &DocumentPatch{Update: update}, nil
+}
+
+// pendingSince returns what this document has changed since old, when its own
+// record of its changes accounts for the whole difference.
+//
+// The record is only trustworthy when old is what this document was copied
+// from. Rather than assume that, the check confirms it: applying the record to
+// where old stood has to land exactly where this document stands, for every
+// writer and for the deleted characters both. Anything else — two unrelated
+// documents, or one that has merged since — fails the check and is compared
+// the general way.
+func (d *Document) pendingSince(old *Document) (Update, bool) {
+	if len(old.sv) > len(d.sv) {
+		return Update{}, false
+	}
+
+	reached := make(StateVector, len(old.sv))
+	for k, v := range old.sv {
+		if v > d.sv[k] {
+			return Update{}, false // old knows something this document does not
+		}
+		reached[k] = v
+	}
+	for _, run := range d.pending.Runs {
+		key := originOf(run.ID)
+		if end := run.ID.Logical + int32(run.runeCount()); end > reached[key] {
+			reached[key] = end
+		}
+	}
+	if len(reached) != len(d.sv) {
+		return Update{}, false
+	}
+	for k, v := range d.sv {
+		if reached[k] != v {
+			return Update{}, false
+		}
+	}
+
+	deleted := old.deleted
+	for _, r := range d.pending.Deleted {
+		deleted += int(r.N)
+	}
+	if deleted != d.deleted {
+		return Update{}, false
+	}
+
+	return d.pending, true
 }
 
 // Patch applies p to d, merging rather than overwriting.
@@ -433,6 +589,11 @@ func (n *docNode) update() {
 }
 
 // joinNodes concatenates two subtrees, keeping the heap order on priorities.
+//
+// Like every operation on the tree it builds new nodes along the path it
+// descends and leaves the ones it passes untouched, so any document still
+// holding the old root keeps describing what it described before. That is what
+// makes copying a document free — see [Document.Copy].
 func joinNodes(a, b *docNode) *docNode {
 	if a == nil {
 		return b
@@ -441,13 +602,15 @@ func joinNodes(a, b *docNode) *docNode {
 		return a
 	}
 	if a.priority > b.priority {
-		a.right = joinNodes(a.right, b)
-		a.update()
-		return a
+		n := *a
+		n.right = joinNodes(a.right, b)
+		n.update()
+		return &n
 	}
-	b.left = joinNodes(a, b.left)
-	b.update()
-	return b
+	n := *b
+	n.left = joinNodes(a, b.left)
+	n.update()
+	return &n
 }
 
 // splitVisible splits n so that the left side holds exactly pos visible runes,
@@ -463,9 +626,10 @@ func (d *Document) splitVisible(n *docNode, pos int) (*docNode, *docNode) {
 
 	if pos <= leftVisible {
 		l, r := d.splitVisible(n.left, pos)
-		n.left = r
-		n.update()
-		return l, n
+		c := *n
+		c.left = r
+		c.update()
+		return l, &c
 	}
 
 	own := 0
@@ -473,22 +637,22 @@ func (d *Document) splitVisible(n *docNode, pos int) (*docNode, *docNode) {
 		own = n.run.runeCount()
 	}
 	if pos < leftVisible+own {
-		// The position falls inside this run: divide it and take the left part.
+		// The position falls inside this run: divide it, and let the right side
+		// keep everything that followed.
 		offset := pos - leftVisible
-		left, right := splitRun(n.run, offset)
-		leftSub, rightSub := n.left, n.right
-		n.run = right
-		n.left = nil
-		n.update()
-		n.right = rightSub
-		n.update()
-		return joinNodes(leftSub, d.newNode(left)), n
+		leftRun, rightRun := splitRun(n.run, offset)
+		c := *n
+		c.run = rightRun
+		c.left = nil
+		c.update()
+		return joinNodes(n.left, d.newNode(leftRun)), &c
 	}
 
 	l, r := d.splitVisible(n.right, pos-leftVisible-own)
-	n.right = l
-	n.update()
-	return n, r
+	c := *n
+	c.right = l
+	c.update()
+	return &c, r
 }
 
 // splitRun divides a run after offset runes.
