@@ -92,7 +92,7 @@ func (l List[T]) At(pos int) (T, bool) {
 // the head; a pos at or past the end appends.
 func (l List[T]) Insert(pos int, value T, clock *hlc.Clock) List[T] {
 	entry := ListEntry[T]{
-		ID:    clock.Now(),
+		ID:    clock.ReserveSequence(1),
 		Prev:  l.idBefore(pos),
 		Value: value,
 	}
