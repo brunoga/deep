@@ -34,16 +34,24 @@ func ApplyOpReflectionValue(v reflect.Value, op Operation, logger *slog.Logger) 
 		}
 	}
 
-	// Per-operation conditions.
+	// Per-operation conditions. A condition that evaluates to false skips the
+	// operation; a condition that cannot be evaluated is an error, matching
+	// how the patch-level Guard behaves.
 	if op.If != nil {
 		ok, err := condition.Evaluate(v, op.If)
-		if err != nil || !ok {
+		if err != nil {
+			return fmt.Errorf("condition evaluation failed at %s: %w", op.Path, err)
+		}
+		if !ok {
 			return nil
 		}
 	}
 	if op.Unless != nil {
 		ok, err := condition.Evaluate(v, op.Unless)
-		if err != nil || ok {
+		if err != nil {
+			return fmt.Errorf("condition evaluation failed at %s: %w", op.Path, err)
+		}
+		if ok {
 			return nil
 		}
 	}

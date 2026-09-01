@@ -106,3 +106,33 @@ func TestBuilderAdvanced(t *testing.T) {
 		t.Error("Guard failed")
 	}
 }
+
+// TestReflectionMapKeyEscaping asserts the reflection engine escapes map keys
+// per RFC 6901 when flattening a diff into operations, so keys containing '/'
+// or '~' survive the diff→apply round-trip. (Generated code is covered by the
+// internal/testmodels/shapes tests.)
+func TestReflectionMapKeyEscaping(t *testing.T) {
+	type holder struct {
+		M map[string]int
+	}
+	a := holder{M: map[string]int{}}
+	b := holder{M: map[string]int{"a/b": 1, "t~e": 2}}
+
+	p, err := deep.Diff(a, b)
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+	for _, op := range p.Operations {
+		if op.Path == "/M/a/b" {
+			t.Errorf("unescaped path emitted: %q", op.Path)
+		}
+	}
+
+	got := deep.Clone(a)
+	if err := deep.Apply(&got, p); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if !deep.Equal(got, b) {
+		t.Errorf("round-trip: got %v, want %v", got.M, b.M)
+	}
+}
