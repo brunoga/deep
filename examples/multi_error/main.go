@@ -1,6 +1,9 @@
+//go:generate go run github.com/brunoga/deep/v5/cmd/deep-gen -type=StrictUser -output strictuser_deep.go .
+
 package main
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/brunoga/deep/v5"
@@ -17,17 +20,34 @@ func main() {
 	fmt.Println("--- INITIAL STATE ---")
 	fmt.Printf("%+v\n", u)
 
-	// A patch with two operations referencing non-existent fields.
-	// Apply collects all errors rather than stopping at the first.
+	// A patch mixing one valid operation with two broken ones: an unknown
+	// path and a value of the wrong type. Apply does not stop at the first
+	// failure — it applies what it can and collects every error.
 	patch := deep.Patch[StrictUser]{
 		Operations: []deep.Operation{
+			{Kind: deep.OpReplace, Path: "/name", New: "Alice Smith"},
 			{Kind: deep.OpReplace, Path: "/nonexistent", New: "fail"},
-			{Kind: deep.OpReplace, Path: "/wrong_type", New: 123.456},
+			{Kind: deep.OpReplace, Path: "/age", New: "not a number"},
 		},
 	}
 
-	fmt.Println("\n--- APPLY (invalid paths) ---")
-	if err := deep.Apply(&u, patch); err != nil {
-		fmt.Printf("ERRORS:\n%v\n", err)
+	fmt.Println("\n--- APPLY (one valid, two broken operations) ---")
+	err := deep.Apply(&u, patch)
+	if err != nil {
+		fmt.Printf("%v\n", err)
 	}
+
+	// The error is an *ApplyError; Unwrap exposes the individual failures so
+	// callers can inspect or filter them.
+	var applyErr *deep.ApplyError
+	if errors.As(err, &applyErr) {
+		fmt.Printf("\n--- INSPECTING %d FAILURES ---\n", len(applyErr.Unwrap()))
+		for i, e := range applyErr.Unwrap() {
+			fmt.Printf("  [%d] %v\n", i, e)
+		}
+	}
+
+	// The valid operation still applied.
+	fmt.Println("\n--- FINAL STATE ---")
+	fmt.Printf("%+v (name updated, age untouched)\n", u)
 }
