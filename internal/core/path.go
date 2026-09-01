@@ -201,7 +201,11 @@ func setAtPath(v reflect.Value, parts []PathPart, val reflect.Value) error {
 			return err
 		}
 		if len(rest) == 0 {
-			v.SetMapIndex(keyVal, ConvertValue(val, v.Type().Elem()))
+			converted, err := ConvertValueChecked(val, v.Type().Elem())
+			if err != nil {
+				return err
+			}
+			v.SetMapIndex(keyVal, converted)
 			return nil
 		}
 		// Deeper path: copy the map element, recurse, put it back.
@@ -224,8 +228,13 @@ func setAtPath(v reflect.Value, parts []PathPart, val reflect.Value) error {
 			if keyStr == "" && part.IsIndex {
 				keyStr = strconv.Itoa(part.Index)
 			}
-			converted := ConvertValue(val, v.Type().Elem())
 			if len(rest) == 0 {
+				// Only a leaf path assigns an element; a deeper path carries a
+				// value for some field inside the element instead.
+				converted, err := ConvertValueChecked(val, v.Type().Elem())
+				if err != nil {
+					return err
+				}
 				for i := 0; i < v.Len(); i++ {
 					if keyFieldStr(v.Index(i), keyIdx) == keyStr {
 						v.Index(i).Set(converted)
@@ -259,13 +268,17 @@ func setAtPath(v reflect.Value, parts []PathPart, val reflect.Value) error {
 			return fmt.Errorf("index out of bounds: %d", idx)
 		}
 		if len(rest) == 0 {
+			converted, err := ConvertValueChecked(val, v.Type().Elem())
+			if err != nil {
+				return err
+			}
 			if idx == v.Len() {
 				if !v.CanSet() {
 					return fmt.Errorf("cannot append to non-settable slice at index %d", idx)
 				}
-				v.Set(reflect.Append(v, ConvertValue(val, v.Type().Elem())))
+				v.Set(reflect.Append(v, converted))
 			} else {
-				v.Index(idx).Set(ConvertValue(val, v.Type().Elem()))
+				v.Index(idx).Set(converted)
 			}
 			return nil
 		}
@@ -290,7 +303,11 @@ func setAtPath(v reflect.Value, parts []PathPart, val reflect.Value) error {
 					if !f.CanSet() {
 						unsafe.DisableRO(&f)
 					}
-					f.Set(ConvertValue(val, f.Type()))
+					converted, err := ConvertValueChecked(val, f.Type())
+					if err != nil {
+						return fmt.Errorf("field %s: %w", key, err)
+					}
+					f.Set(converted)
 					return nil
 				}
 				return setAtPath(f, rest, val)

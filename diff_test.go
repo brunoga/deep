@@ -136,3 +136,86 @@ func TestReflectionMapKeyEscaping(t *testing.T) {
 		t.Errorf("round-trip: got %v, want %v", got.M, b.M)
 	}
 }
+
+// TestSliceRoundTrip asserts that Diff followed by Apply reproduces the target
+// for unkeyed slices. The reflection engine computes an edit script whose
+// indices only mean anything as a batch; flattening it into independent
+// operations used to corrupt the slice ([a b c] -> [a B c] produced [a c B]).
+func TestSliceRoundTrip(t *testing.T) {
+	type holder struct {
+		Items []string
+	}
+	cases := []struct {
+		name     string
+		from, to []string
+	}{
+		{"replace-middle", []string{"a", "b", "c"}, []string{"a", "B", "c"}},
+		{"replace-first", []string{"a", "b", "c"}, []string{"A", "b", "c"}},
+		{"replace-last", []string{"a", "b", "c"}, []string{"a", "b", "C"}},
+		{"insert-middle", []string{"a", "c"}, []string{"a", "b", "c"}},
+		{"append", []string{"a", "b"}, []string{"a", "b", "c"}},
+		{"truncate", []string{"a", "b", "c"}, []string{"a", "b"}},
+		{"reorder", []string{"a", "b", "c"}, []string{"c", "b", "a"}},
+		{"clear", []string{"a", "b"}, nil},
+		{"grow-from-nil", nil, []string{"a"}},
+		{"replace-all", []string{"a", "b"}, []string{"x", "y"}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			a := holder{Items: tc.from}
+			b := holder{Items: tc.to}
+
+			p, err := deep.Diff(a, b)
+			if err != nil {
+				t.Fatalf("Diff: %v", err)
+			}
+			got := deep.Clone(a)
+			if err := deep.Apply(&got, p); err != nil {
+				t.Fatalf("Apply: %v", err)
+			}
+			if !deep.Equal(got, b) {
+				t.Errorf("round-trip: %v -> %v produced %v", tc.from, tc.to, got.Items)
+			}
+
+			// The reverse patch must restore the original just as faithfully.
+			if err := deep.Apply(&got, p.Reverse()); err != nil {
+				t.Fatalf("Apply reverse: %v", err)
+			}
+			if !deep.Equal(got, a) {
+				t.Errorf("reverse: %v -> %v did not restore, got %v", tc.from, tc.to, got.Items)
+			}
+		})
+	}
+}
+
+// TestApplyTypeMismatchErrors asserts that a value of the wrong type produces
+// an error rather than panicking. Patches routinely arrive as untrusted JSON,
+// so a mismatch must not be able to crash the process.
+func TestApplyTypeMismatchErrors(t *testing.T) {
+	type target struct {
+		Age   int            `json:"age"`
+		Tags  []string       `json:"tags"`
+		Score map[string]int `json:"score"`
+	}
+
+	for _, tc := range []struct {
+		name string
+		op   deep.Operation
+	}{
+		{"struct field", deep.Operation{Kind: deep.OpReplace, Path: "/age", New: "not a number"}},
+		{"slice element", deep.Operation{Kind: deep.OpReplace, Path: "/tags/0", New: struct{ X int }{1}}},
+		{"map value", deep.Operation{Kind: deep.OpReplace, Path: "/score/a", New: []string{"nope"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			v := target{Age: 30, Tags: []string{"x"}, Score: map[string]int{"a": 1}}
+			err := deep.Apply(&v, deep.Patch[target]{Operations: []deep.Operation{tc.op}})
+			if err == nil {
+				t.Fatal("expected an error, got nil")
+			}
+			if v.Age != 30 || v.Tags[0] != "x" || v.Score["a"] != 1 {
+				t.Errorf("target was mutated by a failed operation: %+v", v)
+			}
+		})
+	}
+}

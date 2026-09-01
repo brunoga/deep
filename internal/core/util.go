@@ -2,6 +2,7 @@ package core
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 
 	"github.com/brunoga/deep/v5/internal/unsafe"
@@ -59,6 +60,21 @@ func ConvertValue(v reflect.Value, targetType reflect.Type) reflect.Value {
 	}
 
 	return v
+}
+
+// ConvertValueChecked is ConvertValue with a verdict: it reports an error
+// instead of handing back a value the caller would panic on when setting.
+// Patch values routinely come from untrusted input (a JSON document from a
+// peer), so a type mismatch has to be an error, never a panic.
+func ConvertValueChecked(v reflect.Value, targetType reflect.Type) (reflect.Value, error) {
+	converted := ConvertValue(v, targetType)
+	if !converted.IsValid() {
+		return reflect.Zero(targetType), nil
+	}
+	if !converted.Type().AssignableTo(targetType) {
+		return reflect.Value{}, fmt.Errorf("cannot assign %s to %s", converted.Type(), targetType)
+	}
+	return converted, nil
 }
 
 func SetValue(v, newVal reflect.Value) {
