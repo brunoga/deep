@@ -42,10 +42,33 @@ func runeSlice(s string, from, to int) string {
 
 // TextRun represents a contiguous run of characters with a unique starting ID.
 type TextRun struct {
-	ID      hlc.HLC `deep:"key" json:"id"`
-	Value   string  `json:"v"`
-	Prev    hlc.HLC `json:"p,omitempty"`
-	Deleted bool    `json:"d,omitempty"`
+	ID    hlc.HLC `deep:"key" json:"id"`
+	Value string  `json:"v"`
+	Prev  hlc.HLC `json:"p,omitempty"`
+	// N is the number of runes in Value. Positions and identifiers are counted
+	// in runes, so nearly every operation needs this number, and counting it
+	// means walking the string — which for a document held as one long run
+	// means walking the whole document, once per operation. Carrying the count
+	// makes those operations depend on the number of runs instead of the length
+	// of the text. A run without one (an older document, or a literal built by
+	// hand) is counted on demand.
+	N       int32 `json:"n,omitempty"`
+	Deleted bool  `json:"d,omitempty"`
+}
+
+// runeCount returns the number of runes in the run's value.
+func (r TextRun) runeCount() int {
+	if r.N > 0 {
+		return int(r.N)
+	}
+	return runeLen(r.Value)
+}
+
+// withValue returns a copy of the run holding v, with the rune count updated.
+func (r TextRun) withValue(v string) TextRun {
+	r.Value = v
+	r.N = int32(runeLen(v))
+	return r
 }
 
 // Text represents a CRDT-friendly text structure using runs.
@@ -76,7 +99,7 @@ func (t Text) Len() int {
 	n := 0
 	for _, run := range t {
 		if !run.Deleted {
-			n += runeLen(run.Value)
+			n += run.runeCount()
 		}
 	}
 	return n
@@ -94,8 +117,9 @@ func (t Text) Insert(pos int, value string, clock *hlc.Clock) Text {
 	prevID := ordered.findIDAt(pos - 1)
 	result := ordered.splitAt(pos)
 	newRun := TextRun{
-		ID:    clock.Reserve(runeLen(value)),
+		ID:    clock.ReserveSequence(runeLen(value)),
 		Value: value,
+		N:     int32(runeLen(value)),
 		Prev:  prevID,
 	}
 
@@ -110,7 +134,7 @@ func (t Text) Insert(pos int, value string, clock *hlc.Clock) Text {
 	} else {
 		for i, run := range result {
 			last := run.ID
-			last.Logical += int32(runeLen(run.Value) - 1)
+			last.Logical += int32(run.runeCount() - 1)
 			if last == prevID {
 				at = i + 1
 				break
@@ -132,7 +156,7 @@ func (t Text) Delete(pos, length int) Text {
 	ordered := append(Text{}, t.getOrdered().splitAt(pos).splitAt(pos+length)...)
 	currentPos := 0
 	for i := range ordered {
-		runLen := runeLen(ordered[i].Value)
+		runLen := ordered[i].runeCount()
 		if !ordered[i].Deleted {
 			if currentPos >= pos && currentPos+runLen <= pos+length {
 				ordered[i].Deleted = true
@@ -155,7 +179,7 @@ func (t Text) findIDAt(pos int) hlc.HLC {
 		if run.Deleted {
 			continue
 		}
-		runLen := runeLen(run.Value)
+		runLen := run.runeCount()
 		if pos >= currentPos && pos < currentPos+runLen {
 			id := run.ID
 			id.Logical += int32(pos - currentPos)
@@ -178,25 +202,17 @@ func (t Text) splitAt(pos int) Text {
 		if run.Deleted {
 			continue
 		}
-		runLen := runeLen(run.Value)
+		runLen := run.runeCount()
 		if pos > currentPos && pos < currentPos+runLen {
 			offset := pos - currentPos
-			left := TextRun{
-				ID:      run.ID,
-				Value:   runeSlice(run.Value, 0, offset),
-				Prev:    run.Prev,
-				Deleted: run.Deleted,
-			}
+			left := run.withValue(runeSlice(run.Value, 0, offset))
 			rightID := run.ID
 			rightID.Logical += int32(offset)
 			rightPrev := run.ID
 			rightPrev.Logical += int32(offset - 1)
-			right := TextRun{
-				ID:      rightID,
-				Value:   runeSlice(run.Value, offset, runLen),
-				Prev:    rightPrev,
-				Deleted: run.Deleted,
-			}
+			right := run.withValue(runeSlice(run.Value, offset, runLen))
+			right.ID = rightID
+			right.Prev = rightPrev
 			newText := make(Text, 0, len(ordered)+1)
 			newText = append(newText, ordered[:i]...)
 			newText = append(newText, left, right)
@@ -248,7 +264,7 @@ func (t Text) getOrdered() Text {
 		seen[run.ID] = true
 		result = append(result, run)
 
-		n := runeLen(run.Value)
+		n := run.runeCount()
 		for i := n - 1; i >= 0; i-- {
 			charID := run.ID
 			charID.Logical += int32(i)
@@ -326,7 +342,7 @@ func (t Text) inSequence() bool {
 			}
 			stack = stack[:len(stack)-1]
 		}
-		stack = append(stack, anchorFrame{base: run.ID, n: int32(runeLen(run.Value))})
+		stack = append(stack, anchorFrame{base: run.ID, n: int32(run.runeCount())})
 	}
 	return true
 }
@@ -337,6 +353,17 @@ func (t Text) inSequence() bool {
 func (t Text) normalize() Text {
 	return t.getOrdered().mergeAdjacent()
 }
+
+// maxRunRunes bounds how long a single run may grow.
+//
+// Joining two runs concatenates their strings, which copies both. Left
+// unbounded, appending one character to a document held as a single run copies
+// the whole document, so typing it out costs time quadratic in its length even
+// though the run count stays at one. Capping the length caps that copy: a
+// document becomes a handful of runs rather than one, which costs a few bytes
+// per chunk and makes typing linear. The value is a balance — small enough that
+// a copy is cheap, large enough that the per-run overhead stays negligible.
+const maxRunRunes = 4096
 
 // mergeAdjacent joins runs that sit next to each other and hold consecutive
 // character IDs, so a document does not accumulate one run per edit. It assumes
@@ -353,11 +380,16 @@ func (t Text) mergeAdjacent() Text {
 		last := &result[lastIdx]
 		curr := ordered[i]
 		expectedID := last.ID
-		expectedID.Logical += int32(runeLen(last.Value))
+		expectedID.Logical += int32(last.runeCount())
 		prevID := last.ID
-		prevID.Logical += int32(runeLen(last.Value) - 1)
-		if curr.Deleted == last.Deleted && curr.ID == expectedID && curr.Prev == prevID {
+		prevID.Logical += int32(last.runeCount() - 1)
+		joined := int32(last.runeCount() + curr.runeCount())
+		if curr.Deleted == last.Deleted && curr.ID == expectedID && curr.Prev == prevID &&
+			joined <= maxRunRunes {
+			// The counts are taken before the values are joined: afterwards the
+			// cached count on last no longer describes what it holds.
 			last.Value += curr.Value
+			last.N = joined
 		} else {
 			result = append(result, curr)
 		}
@@ -451,14 +483,14 @@ func MergeTextRuns(a, b Text) Text {
 			splits[base] = make(map[int32]bool)
 		}
 		splits[base][run.ID.Logical] = true
-		splits[base][run.ID.Logical+int32(runeLen(run.Value))] = true
+		splits[base][run.ID.Logical+int32(run.runeCount())] = true
 	}
 	combinedMap := make(map[hlc.HLC]TextRun)
 	for _, run := range allRuns {
 		base := baseID{run.ID.WallTime, run.ID.NodeID}
 		relevantSplits := []int32{}
 		for s := range splits[base] {
-			if s > run.ID.Logical && s < run.ID.Logical+int32(runeLen(run.Value)) {
+			if s > run.ID.Logical && s < run.ID.Logical+int32(run.runeCount()) {
 				relevantSplits = append(relevantSplits, s)
 			}
 		}
@@ -470,7 +502,9 @@ func MergeTextRuns(a, b Text) Text {
 			offset := int(s - currentLogical)
 			id := run.ID
 			id.Logical = currentLogical
-			newRun := TextRun{ID: id, Value: runeSlice(currentValue, 0, offset), Prev: currentPrev, Deleted: run.Deleted}
+			newRun := run.withValue(runeSlice(currentValue, 0, offset))
+			newRun.ID = id
+			newRun.Prev = currentPrev
 			if existing, ok := combinedMap[id]; ok {
 				if newRun.Deleted {
 					existing.Deleted = true
@@ -486,7 +520,9 @@ func MergeTextRuns(a, b Text) Text {
 		}
 		id := run.ID
 		id.Logical = currentLogical
-		newRun := TextRun{ID: id, Value: currentValue, Prev: currentPrev, Deleted: run.Deleted}
+		newRun := run.withValue(currentValue)
+		newRun.ID = id
+		newRun.Prev = currentPrev
 		if existing, ok := combinedMap[id]; ok {
 			if newRun.Deleted {
 				existing.Deleted = true

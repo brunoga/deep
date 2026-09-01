@@ -49,3 +49,17 @@ func BenchmarkTextString(b *testing.B) {
 		_ = doc.String()
 	}
 }
+
+// Typing a word into the middle of a document, the way a person does — each
+// character after the last one typed, not repeatedly at a fixed position.
+func BenchmarkTextTypeWordMidDocument(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		clock := hlc.NewClock("a")
+		doc := Text{}.Insert(0, "The quick brown fox jumps over the lazy dog. ", clock)
+		pos := 20
+		for _, r := range "interjected sentence typed one character at a time. " {
+			doc = doc.Insert(pos, string(r), clock)
+			pos++
+		}
+	}
+}

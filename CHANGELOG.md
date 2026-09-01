@@ -6,6 +6,48 @@ All notable changes to this project are documented here, newest first.
 > version's entry before tagging, so the tag, the GitHub release notes, and this
 > file always agree.
 
+## Unreleased
+
+### Performance
+
+- **A `crdt.Text` no longer stores one run per keystroke**, which is what made a
+  document cost about a hundred bytes per character and made every edit walk the
+  whole thing. Two changes together:
+
+  Identifiers for sequence elements now come from `Clock.ReserveSequence`, which
+  counts on from where it left off instead of following the wall clock. The
+  existing `Clock.Reserve` begins a new logical range whenever physical time has
+  moved on — which it always has by the next keystroke — so no two identifiers
+  it handed out were ever adjacent and consecutive characters could never be
+  recognized as belonging together.
+
+  Each run also carries its rune count, and runs are capped in length. Positions
+  are counted in runes, so nearly every operation needed that count, and
+  counting it meant walking the string — for a document held as one long run,
+  walking the whole document. Capping the length bounds the copy that joining
+  two runs performs, which is what turns typing from quadratic into linear.
+
+  | Workload | v5.6.1 | v5.7.0 | Now |
+  | :--- | ---: | ---: | ---: |
+  | Type 2,000 characters | 3.07 s | 239 ms | 2 ms |
+  | Type 100,000 characters | — | 8.1 s | 142 ms |
+  | Read a 1,000-character document | 587 µs | 25 µs | 0.2 µs |
+  | Size of a 100,000-character document | ~9.9 MB | ~9.9 MB | 103 KB |
+
+  A document now costs about 1.03 bytes per character on the wire, and typing
+  scales roughly linearly with its length.
+
+### Added
+
+- **`hlc.Clock.ReserveSequence`** allocates identifiers for the elements of a
+  sequence. Unlike `Reserve` it does not follow the wall clock, so consecutive
+  calls return adjacent blocks that a sequence can hold as one run. The
+  identifiers are unique and totally ordered but carry no causality; use `Now`
+  for a timestamp.
+- **`crdt.TextRun.N`** carries the run's rune count. A run without one — an
+  older document, or a literal built by hand — is counted on demand, so existing
+  documents keep working.
+
 ## v5.7.0
 
 ### Performance

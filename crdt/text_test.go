@@ -492,3 +492,127 @@ func TestTextRandomizedConvergence(t *testing.T) {
 		}
 	}
 }
+
+// TestTextRunsMerge asserts that consecutive typing collapses into runs instead
+// of leaving one run per keystroke. A run per character is what made a document
+// cost about a hundred bytes per character to store and made every edit walk
+// the whole document.
+func TestTextRunsMerge(t *testing.T) {
+	clock := hlc.NewClock("a")
+
+	doc := Text{}
+	for _, r := range "hello world" {
+		doc = doc.Insert(doc.Len(), string(r), clock)
+	}
+	if doc.String() != "hello world" {
+		t.Fatalf("content = %q", doc.String())
+	}
+	if len(doc) != 1 {
+		t.Errorf("appending 11 characters left %d runs, want 1", len(doc))
+	}
+
+	// Typing forward from a point inside the document merges too.
+	doc = Text{}.Insert(0, "start end", clock)
+	pos := 6
+	for _, r := range "middle " {
+		doc = doc.Insert(pos, string(r), clock)
+		pos++
+	}
+	if got := doc.String(); got != "start middle end" {
+		t.Fatalf("content = %q, want %q", got, "start middle end")
+	}
+	if len(doc) > 3 {
+		t.Errorf("typing a word mid-document left %d runs, want the split plus one", len(doc))
+	}
+}
+
+// TestSequenceIDsAreUnique guards the identifier allocator: a repeated
+// identifier would make two different characters indistinguishable, so a merge
+// would silently drop one of them.
+func TestSequenceIDsAreUnique(t *testing.T) {
+	clock := hlc.NewClock("a")
+	seen := make(map[hlc.HLC]bool)
+
+	// Interleave the two allocators: timestamps and element identifiers come
+	// from the same clock and must not collide.
+	for i := 0; i < 500; i++ {
+		clock.Now()
+		start := clock.ReserveSequence(3)
+		for k := 0; k < 3; k++ {
+			id := start
+			id.Logical += int32(k)
+			if seen[id] {
+				t.Fatalf("identifier %v issued twice", id)
+			}
+			seen[id] = true
+		}
+	}
+
+	// Every character of a typed document must have a distinct identifier.
+	doc := Text{}
+	for i := 0; i < 200; i++ {
+		doc = doc.Insert(doc.Len(), "abc", clock)
+	}
+	chars := make(map[hlc.HLC]bool)
+	for _, run := range doc {
+		for i := 0; i < runeLen(run.Value); i++ {
+			id := run.ID
+			id.Logical += int32(i)
+			if chars[id] {
+				t.Fatalf("character identifier %v appears twice", id)
+			}
+			chars[id] = true
+		}
+	}
+	if len(chars) != 600 {
+		t.Errorf("got %d distinct character identifiers, want 600", len(chars))
+	}
+}
+
+// TestTextRuneCountStaysAccurate guards the cached rune count. It is redundant
+// state, so a run whose count disagrees with its value would misplace every
+// position after it — silently, since nothing else checks.
+func TestTextRuneCountStaysAccurate(t *testing.T) {
+	check := func(label string, doc Text) {
+		t.Helper()
+		for i, run := range doc {
+			if run.N != 0 && int(run.N) != runeLen(run.Value) {
+				t.Errorf("%s: run %d claims %d runes but holds %d (%q)",
+					label, i, run.N, runeLen(run.Value), run.Value)
+			}
+		}
+	}
+
+	clock := hlc.NewClock("a")
+
+	doc := Text{}
+	for _, word := range []string{"hello ", "wörld ", "日本語", "😀"} {
+		doc = doc.Insert(doc.Len(), word, clock)
+		check("append", doc)
+	}
+	doc = doc.Insert(3, "XYZ", clock)
+	check("insert mid-run", doc)
+	doc = doc.Delete(1, 4)
+	check("delete", doc)
+
+	// A run built by hand carries no count; everything must still work off the
+	// value itself.
+	handMade := Text{{ID: clock.ReserveSequence(5), Value: "héllo"}}
+	if handMade.Len() != 5 {
+		t.Errorf("Len on a run with no cached count = %d, want 5", handMade.Len())
+	}
+	handMade = handMade.Insert(2, "-", clock)
+	if got := handMade.String(); got != "hé-llo" {
+		t.Errorf("insert into a run with no cached count = %q, want %q", got, "hé-llo")
+	}
+	check("hand-made", handMade)
+
+	// Merging splits and rejoins runs; counts must survive that too.
+	ca, cb := hlc.NewClock("a"), hlc.NewClock("b")
+	base := Text{}.Insert(0, "日本語テキスト", ca)
+	merged := MergeTextRuns(base.Insert(2, "A", ca), base.Insert(5, "B", cb))
+	check("merged", merged)
+	if !utf8.ValidString(merged.String()) {
+		t.Errorf("merge produced invalid UTF-8: %q", merged.String())
+	}
+}

@@ -69,6 +69,10 @@ type Clock struct {
 	mu     sync.Mutex
 	Latest HLC
 	NodeID string
+
+	// seq allocates identifiers for sequence elements. It is deliberately
+	// independent of Latest: see ReserveSequence.
+	seq HLC
 }
 
 // NewClock creates a new clock for the given node ID.
@@ -124,6 +128,46 @@ func (c *Clock) Reserve(n int) HLC {
 
 	start := c.Latest
 	c.Latest.Logical += int32(n)
+	return start
+}
+
+// ReserveSequence reserves n consecutive identifiers for the elements of a
+// sequence — the characters of a Text, the entries of a List.
+//
+// Unlike [Clock.Reserve] it does not follow the wall clock. Reserve begins a
+// new logical range whenever physical time has moved on, which it always has by
+// the next keystroke, so no two identifiers it hands out are ever adjacent and
+// a sequence cannot tell that consecutive elements belong together — it stores
+// one run per call. ReserveSequence counts on from where it left off, so
+// consecutive calls return adjacent blocks and a sequence can hold them as a
+// single run. That is the difference between a document costing a hundred bytes
+// per character and one costing a handful, and between an edit that walks every
+// character and one that walks a few runs.
+//
+// A sequence asks only that its identifiers be unique and totally ordered, and
+// these are both: an element's position comes from the element it follows, and
+// the identifier serves only to break ties between insertions made concurrently
+// at the same place. These identifiers carry no causal information — use
+// [Clock.Now] for a timestamp.
+func (c *Clock) ReserveSequence(n int) HLC {
+	if n < 0 {
+		panic("hlc: ReserveSequence called with negative n")
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.seq.WallTime == 0 {
+		// Anchor the range at the current time on first use, so that
+		// identifiers issued before a restart cannot be issued again after one.
+		c.seq = HLC{WallTime: time.Now().UnixNano(), NodeID: c.NodeID}
+	}
+	if int64(c.seq.Logical)+int64(n) > int64(math.MaxInt32) {
+		panic("hlc: ReserveSequence would overflow Logical (int32)")
+	}
+
+	start := c.seq
+	c.seq.Logical += int32(n)
 	return start
 }
 
