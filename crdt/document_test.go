@@ -7,6 +7,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/brunoga/deep/v5/crdt/hlc"
+	"strings"
 )
 
 func TestDocumentBasicEditing(t *testing.T) {
@@ -260,5 +261,89 @@ func TestDocumentInsideCRDT(t *testing.T) {
 	}
 	if a.View().Body.Len() != len([]rune(a.View().Body.String())) {
 		t.Error("Len disagrees with the text it reports")
+	}
+}
+
+// A document inside a CRDT must produce a delta the size of the edit, not the
+// size of the document. The engine used to compare two indexes structurally to
+// work out what changed, which was both slow and put the whole document into
+// every delta.
+func TestDocumentDeltaIsIncremental(t *testing.T) {
+	type article struct {
+		Body *Document `json:"body"`
+	}
+
+	a := NewCRDT(article{Body: NewDocument(hlc.NewClock("a"))}, "a")
+	a.Edit(func(v *article) {
+		for i := 0; i < 2000; i++ {
+			v.Body.Insert(v.Body.Len(), "x")
+		}
+	})
+
+	delta := a.Edit(func(v *article) { v.Body.Insert(v.Body.Len(), "y") })
+
+	wire, err := json.Marshal(delta)
+	if err != nil {
+		t.Fatalf("marshal delta: %v", err)
+	}
+	whole, err := json.Marshal(a.View().Body)
+	if err != nil {
+		t.Fatalf("marshal document: %v", err)
+	}
+	if len(wire) >= len(whole)/10 {
+		t.Errorf("a one-character edit produced a %d byte delta for a %d byte document",
+			len(wire), len(whole))
+	}
+
+	// And it must still apply, including after a round-trip through JSON.
+	b := NewCRDT(article{Body: NewDocument(hlc.NewClock("b"))}, "b")
+	b.Edit(func(v *article) {
+		for i := 0; i < 2000; i++ {
+			v.Body.Insert(v.Body.Len(), "x")
+		}
+	})
+	// Bring b up to date the honest way first.
+	b.View()
+
+	var received Delta[article]
+	if err := json.Unmarshal(wire, &received); err != nil {
+		t.Fatalf("unmarshal delta: %v", err)
+	}
+	c := NewCRDT(article{Body: NewDocument(hlc.NewClock("c"))}, "c")
+	c.ApplyDelta(received)
+	if got := c.View().Body.String(); got != "y" {
+		t.Errorf("applying a decoded delta gave %q, want the inserted text", got)
+	}
+}
+
+// Concurrent edits to a document inside a CRDT must both survive: the value
+// settles concurrency itself, so its operations must not be filtered by the
+// clock the way an ordinary field's are.
+func TestDocumentInCRDTKeepsConcurrentEdits(t *testing.T) {
+	type article struct {
+		Body *Document `json:"body"`
+	}
+
+	a := NewCRDT(article{Body: NewDocument(hlc.NewClock("a"))}, "a")
+	b := NewCRDT(article{Body: NewDocument(hlc.NewClock("b"))}, "b")
+
+	seed := a.Edit(func(v *article) { v.Body.Insert(0, "base") })
+	b.ApplyDelta(seed)
+
+	// Both edit, a first, so a's delta is the older one when b receives it.
+	da := a.Edit(func(v *article) { v.Body.Insert(4, "-A") })
+	db := b.Edit(func(v *article) { v.Body.Insert(4, "-B") })
+
+	a.ApplyDelta(db)
+	b.ApplyDelta(da)
+
+	if a.View().Body.String() != b.View().Body.String() {
+		t.Fatalf("diverged:\n  a %q\n  b %q", a.View().Body.String(), b.View().Body.String())
+	}
+	got := a.View().Body.String()
+	for _, want := range []string{"base", "-A", "-B"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("lost %q from %q", want, got)
+		}
 	}
 }

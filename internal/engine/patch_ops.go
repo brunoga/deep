@@ -1655,7 +1655,20 @@ func (p *customDiffPatch) dependencies(path string) (reads []string, writes []st
 	return nil, nil
 }
 
+// flatOperationer is a custom patch that can say what to put in the flat
+// operation form. Without it the flat form has to carry the whole new value,
+// which for something like a large document means sending all of it to describe
+// a small change; a patch that knows how to describe itself compactly says so
+// here.
+type flatOperationer interface {
+	FlatOperation() (old, new any)
+}
+
 func (p *customDiffPatch) walk(path string, fn func(path string, op OpKind, old, new any) error) error {
+	if flat, ok := p.patch.(flatOperationer); ok {
+		old, new := flat.FlatOperation()
+		return fn(path, OpReplace, old, new)
+	}
 	if p.oldValue == nil && p.newValue == nil {
 		return nil
 	}

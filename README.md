@@ -350,7 +350,7 @@ doc.MergeFrom(peer.Text()) // converges with a peer, Text or Document
 | 2,000 runs | 4.8 ms | 5.9 µs |
 | 8,000 runs | 22.3 ms | 7.4 µs |
 
-Both serialize identically, so a replica running one converges with a replica running the other.
+Both serialize identically, so a replica running one converges with a replica running the other. A `Document` inside a `CRDT[T]` produces deltas the size of the edit rather than the size of the document.
 
 **Syncing only what is missing** — a state vector says how much of each writer's output a replica holds, one number per writer rather than per character, so a peer sends only the difference:
 
