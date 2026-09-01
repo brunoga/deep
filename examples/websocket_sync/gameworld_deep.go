@@ -145,7 +145,7 @@ func (t *GameWorld) Diff(other *GameWorld) deep.Patch[GameWorld] {
 				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: fmt.Sprintf("/players/%v", k), New: v})
 				continue
 			}
-			if oldV, ok := t.Players[k]; !ok || v != oldV {
+			if oldV, ok := t.Players[k]; !ok || !oldV.Equal(&v) {
 				kind := deep.OpReplace
 				if !ok {
 					kind = deep.OpAdd
@@ -269,7 +269,7 @@ func (t *GameWorld) Equal(other *GameWorld) bool {
 		if !ok {
 			return false
 		}
-		if v != vOther {
+		if !v.Equal(&vOther) {
 			return false
 		}
 	}
@@ -287,7 +287,7 @@ func (t *GameWorld) Clone() *GameWorld {
 	if t.Players != nil {
 		res.Players = make(map[string]Player)
 		for k, v := range t.Players {
-			res.Players[k] = v
+			res.Players[k] = *v.Clone()
 		}
 	}
 	return res

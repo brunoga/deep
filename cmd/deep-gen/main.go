@@ -1,3 +1,25 @@
+// Command deep-gen generates reflection-free Patch, Diff, Equal and Clone
+// methods for the types named by -type.
+//
+// Field types are classified into four groups, which decide the code emitted
+// for them:
+//
+//   - Structs declared in the generated package (and pointers to them) have the
+//     generated methods, so field code calls Equal/Clone/applyOperation on them
+//     directly and patches can address sub-paths inside them.
+//   - Builtin comparable types, and named types over one, are compared with ==
+//     and copied by assignment.
+//   - Anything else the generator can name — types from other packages such as
+//     time.Time, generic instantiations, arrays, interfaces — is opaque: it is
+//     named in type assertions but compared with deep.Equal, which dispatches to
+//     the type's own Equal method when it has one.
+//   - Types the generator cannot name (channels, funcs, qualifiers that resolve
+//     to no import) get no case at all, so applyOperation reports the operation
+//     as unhandled and the caller falls back to the reflection engine.
+//
+// Imports are derived from the generated code itself, so a field type that
+// refers to another package pulls that package in, and no import is emitted for
+// code that ended up not being generated.
 package main
 
 import (
@@ -8,10 +30,14 @@ import (
 	"go/format"
 	"go/parser"
 	"go/token"
+	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"text/template"
 )
@@ -23,34 +49,85 @@ var (
 
 // FieldInfo describes one struct field for code generation.
 type FieldInfo struct {
-	Name         string
-	JSONName     string
-	Type         string
+	Name     string
+	JSONName string
+	// Type is the field type rendered as Go source ("*time.Time",
+	// "map[string]Detail", ...). It is empty when the generator cannot name the
+	// type (channels, funcs, unresolvable package qualifiers); those fields are
+	// left to the reflection fallback instead of being named in generated code.
+	Type string
+	// IsStruct is true for a struct (or pointer to a struct) declared in the
+	// package being generated: it has the generated Equal/Clone/applyOperation
+	// methods, so field code can delegate to them. Types from other packages
+	// never set it — they are handled through Equal/Clone instead.
 	IsStruct     bool
 	IsCollection bool
 	IsText       bool
-	Ignore       bool
-	ReadOnly     bool
-	Atomic       bool
+	// ElemGenerated is true when a slice element or map value is a struct
+	// declared in this package, or a pointer to one.
+	ElemGenerated bool
+	// Comparable is true when == compares the field by value: a builtin
+	// comparable type, or a named type over one.
+	Comparable bool
+	// ElemComparable is Comparable for a collection's element or value type.
+	ElemComparable bool
+	// Quals holds the package qualifiers Type refers to (e.g. "time").
+	Quals    []string
+	Ignore   bool
+	ReadOnly bool
+	Atomic   bool
 }
+
+// HasApplyCase reports whether f gets its own case in applyOperation. A field
+// whose type cannot be named has no case, so applyOperation reports it as
+// unhandled and the caller falls back to the reflection path.
+func (f FieldInfo) HasApplyCase() bool { return !f.Ignore && (f.Type != "" || f.ReadOnly) }
+
+// HasCondCase reports whether f gets its own case in evaluateCondition.
+func (f FieldInfo) HasCondCase() bool {
+	return !f.Ignore && f.Type != "" && !f.IsStruct && !f.IsCollection && !f.IsText
+}
+
+// Opaque reports whether f holds a value the generator can name but has no
+// generated methods for: a type from another package, a named local non-struct
+// type, an interface or an array. Such fields are compared with Equal (which
+// dispatches to the type's own Equal method when it has one) rather than ==.
+func (f FieldInfo) Opaque() bool {
+	return f.Type != "" && !f.IsStruct && !f.IsCollection && !f.IsText && !f.Comparable
+}
+
+// Generic reports whether f needs the generic Equal/Clone treatment: either an
+// unnameable type or an opaque one.
+func (f FieldInfo) Generic() bool { return f.Type == "" || f.Opaque() }
 
 // Generator accumulates generated source for all requested types.
 type Generator struct {
 	pkgName   string
 	pkgPrefix string // "deep." for non-deep packages, "" when generating inside the deep package
 	buf       bytes.Buffer
+	body      bytes.Buffer      // everything below the import block
 	typeKeys  map[string]string // typeName -> keyFieldName (from deep:"key" tag)
+	idx       pkgIndex          // types declared in this package
+	imports   map[string]string // package qualifier -> import path, from the parsed sources
 }
 
 // ── template data structs ────────────────────────────────────────────────────
 
 type headerData struct {
-	PkgName      string
-	NeedsRegexp  bool
-	NeedsStrings bool
+	PkgName        string
+	NeedsRegexp    bool
+	NeedsStrings   bool
 	NeedsCondition bool
-	NeedsDeep    bool
-	NeedsCrdt    bool
+	NeedsDeep      bool
+	NeedsCrdt      bool
+	Extra          []importSpec
+}
+
+// importSpec is an import the generated file needs because a field type refers
+// to another package.
+type importSpec struct {
+	Alias string // empty when the package name matches the path's base
+	Path  string
 }
 
 type typeData struct {
@@ -77,6 +154,31 @@ func isNumericType(t string) bool {
 	return false
 }
 
+// isReferenceType reports whether t is a slice or map: a value an assignment
+// would share rather than copy.
+func isReferenceType(t string) bool {
+	return strings.HasPrefix(t, "[]") || strings.HasPrefix(t, "map[")
+}
+
+// elemNeedsCopy reports whether a collection element of type t needs copying of
+// its own, rather than the plain assignment a value type is content with.
+func elemNeedsCopy(f FieldInfo, t string) bool {
+	return isPtr(t) || f.ElemGenerated || isReferenceType(t)
+}
+
+// isBuiltinComparable reports whether == is the right comparison for t: a
+// builtin type where == is both valid and means value equality. Pointers,
+// named types from other packages and composite types are deliberately
+// excluded — they go through Equal, so a type's own Equal method (or a deep
+// comparison) is used instead.
+func isBuiltinComparable(t string) bool {
+	switch t {
+	case "string", "bool", "byte", "rune", "uintptr", "complex64", "complex128":
+		return true
+	}
+	return isNumericType(t)
+}
+
 // ── FuncMap functions that return code fragments ─────────────────────────────
 
 // fieldApplyCase returns the full `case "/name":` block for ApplyOperation.
@@ -97,7 +199,7 @@ func fieldApplyCase(f FieldInfo, p string) string {
 	b.WriteString("\t\t\treturn true, nil\n\t\t}\n")
 	// Strict check
 	fmt.Fprintf(&b, "\t\tif op.Kind == %sOpReplace && op.Strict {\n", p)
-	if f.IsStruct || f.IsText || f.IsCollection {
+	if f.IsStruct || f.IsText || f.IsCollection || f.Opaque() {
 		fmt.Fprintf(&b, "\t\t\tif old, ok := op.Old.(%s); !ok || !%sEqual(t.%s, old) {\n", f.Type, p, f.Name)
 		fmt.Fprintf(&b, "\t\t\t\treturn true, fmt.Errorf(\"strict check failed at %%s: expected %%v, got %%v\", op.Path, op.Old, t.%s)\n", f.Name)
 		b.WriteString("\t\t\t}\n")
@@ -159,7 +261,7 @@ func delegateCase(f FieldInfo, p string) string {
 		fmt.Fprintf(&b, "\t\tif strings.HasPrefix(op.Path, \"/%s/\") {\n", f.JSONName)
 		if f.ReadOnly {
 			b.WriteString("\t\t\treturn true, fmt.Errorf(\"field %s is read-only\", op.Path)\n")
-		} else if isPtr(vt) {
+		} else if isPtr(vt) && f.ElemGenerated {
 			fmt.Fprintf(&b, "\t\t\tparts := strings.Split(op.Path[len(\"/%s/\"):], \"/\")\n", f.JSONName)
 			b.WriteString("\t\t\tkey := parts[0]\n")
 			fmt.Fprintf(&b, "\t\t\tif val, ok := t.%s[key]; ok && val != nil {\n", f.Name)
@@ -216,10 +318,15 @@ func diffFieldCode(f FieldInfo, p string, typeKeys map[string]string) string {
 			fmt.Fprintf(&b, "\t\t\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpReplace, Path: fmt.Sprintf(\"/%s/%%v\", k), New: v})\n", p, p, f.JSONName)
 			b.WriteString("\t\t\t\tcontinue\n\t\t\t}\n")
 			fmt.Fprintf(&b, "\t\t\tif oldV, ok := t.%s[k]; !ok || ", f.Name)
-			if ptrVal {
+			switch {
+			case ptrVal && f.ElemGenerated:
 				b.WriteString("!oldV.Equal(v) {\n")
-			} else {
+			case f.ElemGenerated:
+				b.WriteString("!oldV.Equal(&v) {\n")
+			case f.ElemComparable:
 				b.WriteString("v != oldV {\n")
+			default:
+				fmt.Fprintf(&b, "!%sEqual(oldV, v) {\n", p)
 			}
 			fmt.Fprintf(&b, "\t\t\t\tkind := %sOpReplace\n\t\t\t\tif !ok { kind = %sOpAdd }\n", p, p)
 			fmt.Fprintf(&b, "\t\t\t\tp.Operations = append(p.Operations, %sOperation{Kind: kind, Path: fmt.Sprintf(\"/%s/%%v\", k), Old: oldV, New: v})\n", p, f.JSONName)
@@ -252,11 +359,25 @@ func diffFieldCode(f FieldInfo, p string, typeKeys map[string]string) string {
 				fmt.Fprintf(&b, "\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpReplace, Path: \"/%s\", Old: t.%s, New: other.%s})\n", p, p, f.JSONName, f.Name, f.Name)
 				b.WriteString("\t} else {\n")
 				fmt.Fprintf(&b, "\t\tfor i := range t.%s {\n", f.Name)
-				fmt.Fprintf(&b, "\t\t\tif t.%s[i] != other.%s[i] {\n", f.Name, f.Name)
+				switch {
+				case f.ElemGenerated && isPtr(elemType):
+					fmt.Fprintf(&b, "\t\t\tif (t.%s[i] == nil) != (other.%s[i] == nil) || (t.%s[i] != nil && !t.%s[i].Equal(other.%s[i])) {\n",
+						f.Name, f.Name, f.Name, f.Name, f.Name)
+				case f.ElemGenerated:
+					fmt.Fprintf(&b, "\t\t\tif !t.%s[i].Equal(&other.%s[i]) {\n", f.Name, f.Name)
+				case f.ElemComparable:
+					fmt.Fprintf(&b, "\t\t\tif t.%s[i] != other.%s[i] {\n", f.Name, f.Name)
+				default:
+					fmt.Fprintf(&b, "\t\t\tif !%sEqual(t.%s[i], other.%s[i]) {\n", p, f.Name, f.Name)
+				}
 				fmt.Fprintf(&b, "\t\t\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpReplace, Path: fmt.Sprintf(\"/%s/%%d\", i), Old: t.%s[i], New: other.%s[i]})\n", p, p, f.JSONName, f.Name, f.Name)
 				b.WriteString("\t\t\t}\n\t\t}\n\t}\n")
 			}
 		}
+	} else if f.Generic() {
+		fmt.Fprintf(&b, "\tif !%sEqual(t.%s, other.%s) {\n", p, f.Name, f.Name)
+		fmt.Fprintf(&b, "\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpReplace, Path: \"/%s\", Old: t.%s, New: other.%s})\n", p, p, f.JSONName, f.Name, f.Name)
+		b.WriteString("\t}\n")
 	} else {
 		fmt.Fprintf(&b, "\tif t.%s != other.%s {\n", f.Name, f.Name)
 		fmt.Fprintf(&b, "\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpReplace, Path: \"/%s\", Old: t.%s, New: other.%s})\n", p, p, f.JSONName, f.Name, f.Name)
@@ -340,7 +461,7 @@ func evalCondCase(f FieldInfo, pkgPrefix string) string {
 }
 
 // equalFieldCode returns the equality check fragment for one field.
-func equalFieldCode(f FieldInfo) string {
+func equalFieldCode(f FieldInfo, p string) string {
 	var b strings.Builder
 	self := "(&t." + f.Name + ")"
 	other := "(&other." + f.Name + ")"
@@ -365,13 +486,16 @@ func equalFieldCode(f FieldInfo) string {
 			et := sliceElem(f.Type)
 			ptrElem := isPtr(et)
 			fmt.Fprintf(&b, "\tfor i := range t.%s {\n", f.Name)
-			if ptrElem {
+			switch {
+			case ptrElem && f.ElemGenerated:
 				fmt.Fprintf(&b, "\t\tif (t.%s[i] == nil) != (other.%s[i] == nil) { return false }\n", f.Name, f.Name)
 				fmt.Fprintf(&b, "\t\tif t.%s[i] != nil && !t.%s[i].Equal(other.%s[i]) { return false }\n", f.Name, f.Name, f.Name)
-			} else if f.IsStruct {
+			case f.ElemGenerated:
 				fmt.Fprintf(&b, "\t\tif !t.%s[i].Equal(&other.%s[i]) { return false }\n", f.Name, f.Name)
-			} else {
+			case f.ElemComparable:
 				fmt.Fprintf(&b, "\t\tif t.%s[i] != other.%s[i] { return false }\n", f.Name, f.Name)
+			default:
+				fmt.Fprintf(&b, "\t\tif !%sEqual(t.%s[i], other.%s[i]) { return false }\n", p, f.Name, f.Name)
 			}
 			b.WriteString("\t}\n")
 		} else if strings.HasPrefix(f.Type, "map[") {
@@ -380,16 +504,21 @@ func equalFieldCode(f FieldInfo) string {
 			fmt.Fprintf(&b, "\tfor k, v := range t.%s {\n", f.Name)
 			fmt.Fprintf(&b, "\t\tvOther, ok := other.%s[k]\n", f.Name)
 			b.WriteString("\t\tif !ok { return false }\n")
-			if ptrVal {
+			switch {
+			case ptrVal && f.ElemGenerated:
 				b.WriteString("\t\tif (v == nil) != (vOther == nil) { return false }\n")
 				b.WriteString("\t\tif v != nil && !v.Equal(vOther) { return false }\n")
-			} else if f.IsStruct {
+			case f.ElemGenerated:
 				b.WriteString("\t\tif !v.Equal(&vOther) { return false }\n")
-			} else {
+			case f.ElemComparable:
 				b.WriteString("\t\tif v != vOther { return false }\n")
+			default:
+				fmt.Fprintf(&b, "\t\tif !%sEqual(v, vOther) { return false }\n", p)
 			}
 			b.WriteString("\t}\n")
 		}
+	case f.Generic():
+		fmt.Fprintf(&b, "\tif !%sEqual(t.%s, other.%s) { return false }\n", p, f.Name, f.Name)
 	default:
 		fmt.Fprintf(&b, "\tif t.%s != other.%s { return false }\n", f.Name, f.Name)
 	}
@@ -401,26 +530,40 @@ func copyFieldInit(f FieldInfo) string {
 	switch {
 	case f.IsStruct:
 		return "" // handled in post-init phase
+	case f.Type == "":
+		return "" // unnameable type — deep-copied in the post-init phase
 	case f.IsText:
 		return fmt.Sprintf("\t\t%s: append(%s(nil), t.%s...),\n", f.Name, f.Type, f.Name)
 	case f.IsCollection && strings.HasPrefix(f.Type, "[]"):
-		et := sliceElem(f.Type)
-		if isPtr(et) || f.IsStruct {
+		if elemNeedsCopy(f, sliceElem(f.Type)) {
 			return fmt.Sprintf("\t\t%s: make(%s, len(t.%s)),\n", f.Name, f.Type, f.Name)
 		}
 		return fmt.Sprintf("\t\t%s: append(%s(nil), t.%s...),\n", f.Name, f.Type, f.Name)
 	case f.IsCollection:
 		return "" // map — handled in post-init phase
+	case f.Opaque() && isPtr(f.Type):
+		return "" // pointer to another package's type — copied in the post-init phase
 	default:
 		return fmt.Sprintf("\t\t%s: t.%s,\n", f.Name, f.Name)
 	}
 }
 
 // copyFieldPost returns post-init deep-copy code for one field.
-func copyFieldPost(f FieldInfo) string {
+func copyFieldPost(f FieldInfo, p string) string {
 	var b strings.Builder
 	if f.Ignore {
 		return ""
+	}
+	if f.Type == "" {
+		// The generator cannot name the type, so it cannot copy it structurally.
+		fmt.Fprintf(&b, "\tres.%s = %sClone(t.%s)\n", f.Name, p, f.Name)
+		return b.String()
+	}
+	if f.Opaque() && isPtr(f.Type) {
+		// Another package's type: copy the pointee so the clone does not share
+		// state with the original.
+		fmt.Fprintf(&b, "\tif t.%s != nil { _v := *t.%s; res.%s = &_v }\n", f.Name, f.Name, f.Name)
+		return b.String()
 	}
 	if f.IsStruct {
 		self := "(&t." + f.Name + ")"
@@ -434,20 +577,32 @@ func copyFieldPost(f FieldInfo) string {
 	if f.IsCollection {
 		if strings.HasPrefix(f.Type, "[]") {
 			et := sliceElem(f.Type)
-			if isPtr(et) {
+			switch {
+			case isPtr(et) && f.ElemGenerated:
 				fmt.Fprintf(&b, "\tfor i, v := range t.%s { if v != nil { res.%s[i] = v.Clone() } }\n", f.Name, f.Name)
-			} else if f.IsStruct {
+			case isPtr(et):
+				fmt.Fprintf(&b, "\tfor i, v := range t.%s { if v != nil { _v := *v; res.%s[i] = &_v } }\n", f.Name, f.Name)
+			case f.ElemGenerated:
 				fmt.Fprintf(&b, "\tfor i := range t.%s { res.%s[i] = *t.%s[i].Clone() }\n", f.Name, f.Name, f.Name)
+			case isReferenceType(et):
+				// A nested slice or map would be shared, not copied.
+				fmt.Fprintf(&b, "\tfor i, v := range t.%s { res.%s[i] = %sClone(v) }\n", f.Name, f.Name, p)
 			}
 		} else if strings.HasPrefix(f.Type, "map[") {
 			vt := mapVal(f.Type)
 			fmt.Fprintf(&b, "\tif t.%s != nil {\n\t\tres.%s = make(%s)\n", f.Name, f.Name, f.Type)
 			fmt.Fprintf(&b, "\t\tfor k, v := range t.%s {\n", f.Name)
-			if isPtr(vt) {
+			switch {
+			case isPtr(vt) && f.ElemGenerated:
 				fmt.Fprintf(&b, "\t\t\tif v != nil { res.%s[k] = v.Clone() }\n", f.Name)
-			} else if f.IsStruct {
+			case isPtr(vt):
+				fmt.Fprintf(&b, "\t\t\tif v != nil { _v := *v; res.%s[k] = &_v }\n", f.Name)
+			case f.ElemGenerated:
 				fmt.Fprintf(&b, "\t\t\tres.%s[k] = *v.Clone()\n", f.Name)
-			} else {
+			case isReferenceType(vt):
+				// A nested slice or map would be shared, not copied.
+				fmt.Fprintf(&b, "\t\t\tres.%s[k] = %sClone(v)\n", f.Name, p)
+			default:
 				fmt.Fprintf(&b, "\t\t\tres.%s[k] = v\n", f.Name)
 			}
 			b.WriteString("\t\t}\n\t}\n")
@@ -490,6 +645,9 @@ import (
 {{- end}}
 {{- if .NeedsCrdt}}
 	crdt "github.com/brunoga/deep/v5/crdt"
+{{- end}}
+{{- range .Extra}}
+	{{if .Alias}}{{.Alias}} {{end}}"{{.Path}}"
 {{- end}}
 )
 `))
@@ -557,7 +715,7 @@ var applyOpTmpl = template.Must(template.New("applyOp").Funcs(tmplFuncs).Parse(
 			}
 		}
 		return true, fmt.Errorf("unsupported root operation: %s", op.Kind)
-{{range .Fields}}{{if not .Ignore}}{{fieldApplyCase . $.P}}{{end}}{{end -}}
+{{range .Fields}}{{if .HasApplyCase}}{{fieldApplyCase . $.P}}{{end}}{{end -}}
 	default:
 {{range .Fields}}{{delegateCase . $.P}}{{end -}}
 	}
@@ -601,7 +759,7 @@ var evalCondTmpl = template.Must(template.New("evalCond").Funcs(tmplFuncs).Parse
 	}
 
 	switch c.Path {
-{{range .Fields}}{{if and (not .Ignore) (not .IsStruct) (not .IsCollection) (not .IsText) -}}
+{{range .Fields}}{{if .HasCondCase -}}
 	{{if ne .JSONName .Name}}case "/{{.JSONName}}", "/{{.Name}}":{{else}}case "/{{.Name}}":{{end}}
 {{evalCondCase . $.P}}{{end}}{{end -}}
 	}
@@ -613,7 +771,7 @@ var evalCondTmpl = template.Must(template.New("evalCond").Funcs(tmplFuncs).Parse
 var equalTmpl = template.Must(template.New("equal").Funcs(tmplFuncs).Parse(
 	`// Equal returns true if t and other are deeply equal.
 func (t *{{.TypeName}}) Equal(other *{{.TypeName}}) bool {
-{{range .Fields}}{{if not .Ignore}}{{equalFieldCode .}}{{end}}{{end -}}
+{{range .Fields}}{{if not .Ignore}}{{equalFieldCode . $.P}}{{end}}{{end -}}
 	return true
 }
 
@@ -625,7 +783,7 @@ func (t *{{.TypeName}}) Clone() *{{.TypeName}} {
 	res := &{{.TypeName}}{
 {{range .Fields}}{{if not .Ignore}}{{copyFieldInit .}}{{end}}{{end -}}
 	}
-{{range .Fields}}{{if not .Ignore}}{{copyFieldPost .}}{{end}}{{end -}}
+{{range .Fields}}{{if not .Ignore}}{{copyFieldPost . $.P}}{{end}}{{end -}}
 	return res
 }
 `))
@@ -640,30 +798,79 @@ func contains[M ~map[K]V, K comparable, V any](m M, k K) bool {
 
 // ── generator ────────────────────────────────────────────────────────────────
 
-func (g *Generator) writeHeader(allFields []FieldInfo) {
-	needsStrings, needsRegexp, needsCrdt := false, false, false
-	for _, f := range allFields {
-		if f.Ignore {
+// writeHeader emits the package clause and import block for body. Which
+// imports are needed is read back off the generated code itself, so a field
+// that ends up handled by some other path can never leave an unused import
+// behind.
+func (g *Generator) writeHeader(body string) {
+	must(headerTmpl.Execute(&g.buf, headerData{
+		PkgName:        g.pkgName,
+		NeedsRegexp:    usesQualifier(body, "regexp"),
+		NeedsStrings:   usesQualifier(body, "strings"),
+		NeedsCondition: usesQualifier(body, "condition"),
+		NeedsDeep:      g.pkgName != "deep" && usesQualifier(body, "deep"),
+		NeedsCrdt:      g.pkgName != "deep" && usesQualifier(body, "crdt"),
+		Extra:          g.extraImports(body),
+	}))
+}
+
+// extraImports returns the imports body needs for field types that refer to
+// other packages.
+func (g *Generator) extraImports(body string) []importSpec {
+	quals := make([]string, 0, len(g.imports))
+	for qual := range g.imports {
+		quals = append(quals, qual)
+	}
+	sort.Strings(quals)
+
+	var extra []importSpec
+	for _, qual := range quals {
+		path := g.imports[qual]
+		if _, ok := fixedImports[qual]; ok {
+			// The header template binds this qualifier itself. Qualifiers that
+			// clash with it never reach here: renderType refuses to name those
+			// types at all.
 			continue
 		}
-		if (f.IsStruct && !f.Atomic) || (f.IsCollection && isMapStringKey(f.Type)) {
-			needsStrings = true
+		if !usesQualifier(body, qual) {
+			continue
 		}
-		if !f.IsStruct && !f.IsCollection && !f.IsText {
-			needsRegexp = true
+		spec := importSpec{Path: path}
+		if importBase(path) != qual {
+			spec.Alias = qual
 		}
-		if f.IsText {
-			needsCrdt = true
-		}
+		extra = append(extra, spec)
 	}
-	must(headerTmpl.Execute(&g.buf, headerData{
-		PkgName:      g.pkgName,
-		NeedsRegexp:  needsRegexp,
-		NeedsStrings: needsStrings,
-		NeedsCondition: true,
-		NeedsDeep:    g.pkgName != "deep",
-		NeedsCrdt:    needsCrdt && g.pkgName != "deep",
-	}))
+	return extra
+}
+
+// fixedImports are the imports the header template emits on its own, keyed by
+// the qualifier they bind.
+var fixedImports = map[string]string{
+	"fmt":       "fmt",
+	"slog":      "log/slog",
+	"regexp":    "regexp",
+	"strings":   "strings",
+	"condition": "github.com/brunoga/deep/v5/condition",
+	"deep":      deepPkgPath,
+	"crdt":      crdtPkgPath,
+}
+
+const (
+	deepPkgPath = "github.com/brunoga/deep/v5"
+	crdtPkgPath = "github.com/brunoga/deep/v5/crdt"
+)
+
+var qualifierRes = map[string]*regexp.Regexp{}
+
+// usesQualifier reports whether src refers to package qual.
+func usesQualifier(src, qual string) bool {
+	re, ok := qualifierRes[qual]
+	if !ok {
+		re = regexp.MustCompile(`(^|[^\w.])` + regexp.QuoteMeta(qual) + `\.`)
+		qualifierRes[qual] = re
+	}
+	return re.MatchString(src)
 }
 
 func (g *Generator) writeType(typeName string, fields []FieldInfo) {
@@ -671,19 +878,19 @@ func (g *Generator) writeType(typeName string, fields []FieldInfo) {
 		g.pkgPrefix = "deep."
 	}
 	d := typeData{TypeName: typeName, P: g.pkgPrefix, Fields: fields, TypeKeys: g.typeKeys}
-	must(patchTmpl.Execute(&g.buf, d))
-	must(applyOpTmpl.Execute(&g.buf, d))
-	must(diffTmpl.Execute(&g.buf, d))
-	must(evalCondTmpl.Execute(&g.buf, d))
-	must(equalTmpl.Execute(&g.buf, d))
-	must(copyTmpl.Execute(&g.buf, d))
+	must(patchTmpl.Execute(&g.body, d))
+	must(applyOpTmpl.Execute(&g.body, d))
+	must(diffTmpl.Execute(&g.body, d))
+	must(evalCondTmpl.Execute(&g.body, d))
+	must(equalTmpl.Execute(&g.body, d))
+	must(copyTmpl.Execute(&g.body, d))
 }
 
 func (g *Generator) writeHelpers() {
 	if g.pkgName == "deep" {
 		return
 	}
-	must(helpersTmpl.Execute(&g.buf, nil))
+	must(helpersTmpl.Execute(&g.body, nil))
 }
 
 func must(err error) {
@@ -705,8 +912,26 @@ func main() {
 		dir = flag.Args()[0]
 	}
 
+	// Determine output file: explicit -output flag, or default to
+	// "{first_type_lowercase}_deep.go" in the target directory (like stringer).
+	outFile := *outputFile
+	if outFile == "" {
+		firstName := strings.ToLower(strings.SplitN(*typeNames, ",", 2)[0])
+		outFile = filepath.Join(dir, firstName+"_deep.go")
+	}
+
+	// Never read back the file this run is about to write: a stale copy has
+	// nothing to contribute, and one left behind by an older version of the
+	// generator could fail to parse and block regeneration entirely.
+	var skip string
+	if filepath.Clean(filepath.Dir(outFile)) == filepath.Clean(dir) {
+		skip = filepath.Base(outFile)
+	}
+
 	fset := token.NewFileSet()
-	pkgs, err := parser.ParseDir(fset, dir, nil, 0)
+	pkgs, err := parser.ParseDir(fset, dir, func(fi fs.FileInfo) bool {
+		return skip == "" || fi.Name() != skip
+	}, 0)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -718,7 +943,15 @@ func main() {
 			continue
 		}
 		if g == nil {
-			g = &Generator{pkgName: pkgName, typeKeys: make(map[string]string)}
+			g = &Generator{
+				pkgName:  pkgName,
+				typeKeys: make(map[string]string),
+				idx: pkgIndex{
+					structs: make(map[string]bool),
+					scalars: make(map[string]bool),
+				},
+				imports: make(map[string]string),
+			}
 		}
 
 		requested := make(map[string]bool)
@@ -726,7 +959,8 @@ func main() {
 			requested[strings.TrimSpace(t)] = true
 		}
 
-		// Pass 1: collect deep:"key" field names.
+		// Pass 1: index the package's own types and collect deep:"key" field
+		// names.
 		for _, file := range pkg.Files {
 			ast.Inspect(file, func(n ast.Node) bool {
 				ts, ok := n.(*ast.TypeSpec)
@@ -735,8 +969,12 @@ func main() {
 				}
 				st, ok := ts.Type.(*ast.StructType)
 				if !ok {
+					if ident, ok := ts.Type.(*ast.Ident); ok && isBuiltinComparable(ident.Name) {
+						g.idx.scalars[ts.Name.Name] = true
+					}
 					return true
 				}
+				g.idx.structs[ts.Name.Name] = true
 				for _, field := range st.Fields.List {
 					if field.Tag == nil || len(field.Names) == 0 {
 						continue
@@ -755,6 +993,7 @@ func main() {
 		var allFields [][]FieldInfo
 
 		for _, file := range pkg.Files {
+			imports := fileImports(file)
 			ast.Inspect(file, func(n ast.Node) bool {
 				ts, ok := n.(*ast.TypeSpec)
 				if !ok || !requested[ts.Name.Name] {
@@ -764,7 +1003,17 @@ func main() {
 				if !ok {
 					return true
 				}
-				fields := parseFields(st)
+				fields := parseFields(st, imports, g.idx)
+				for _, f := range fields {
+					for _, qual := range f.Quals {
+						if prev, ok := g.imports[qual]; ok && prev != imports[qual] {
+							log.Printf("deep-gen: package qualifier %q means both %q and %q in this package; using %q",
+								qual, prev, imports[qual], prev)
+							continue
+						}
+						g.imports[qual] = imports[qual]
+					}
+				}
 				allTypes = append(allTypes, ts.Name.Name)
 				allFields = append(allFields, fields)
 				return false
@@ -775,15 +1024,15 @@ func main() {
 			continue
 		}
 
-		var combined []FieldInfo
-		for _, fs := range allFields {
-			combined = append(combined, fs...)
-		}
-		g.writeHeader(combined)
 		for i := range allTypes {
 			g.writeType(allTypes[i], allFields[i])
 		}
 		g.writeHelpers()
+
+		// The header comes last: it is derived from the generated body.
+		g.writeHeader(g.body.String())
+		g.buf.Write(g.body.Bytes())
+		g.body.Reset()
 	}
 
 	if g == nil {
@@ -796,20 +1045,13 @@ func main() {
 		src = g.buf.Bytes()
 	}
 
-	// Determine output file: explicit -output flag, or default to
-	// "{first_type_lowercase}_deep.go" in the target directory (like stringer).
-	outFile := *outputFile
-	if outFile == "" {
-		firstName := strings.ToLower(strings.SplitN(*typeNames, ",", 2)[0])
-		outFile = filepath.Join(dir, firstName+"_deep.go")
-	}
 	if err := os.WriteFile(outFile, src, 0644); err != nil {
 		log.Fatalf("writing output: %v", err)
 	}
 	log.Printf("deep-gen: wrote %s", outFile)
 }
 
-func parseFields(st *ast.StructType) []FieldInfo {
+func parseFields(st *ast.StructType, imports map[string]string, idx pkgIndex) []FieldInfo {
 	var fields []FieldInfo
 	for _, field := range st.Fields.List {
 		if len(field.Names) == 0 {
@@ -837,7 +1079,7 @@ func parseFields(st *ast.StructType) []FieldInfo {
 			}
 		}
 
-		typeName, isStruct, isCollection, isText := resolveType(field.Type)
+		ti := resolveType(field.Type, imports, idx)
 		for _, nameIdent := range field.Names {
 			name := nameIdent.Name
 			jsonName := name
@@ -850,79 +1092,276 @@ func parseFields(st *ast.StructType) []FieldInfo {
 					}
 				}
 			}
+			if ti.name == "" && !ignore {
+				log.Printf("deep-gen: field %s has an unsupported type; it will be handled by the reflection fallback", name)
+			}
 			fields = append(fields, FieldInfo{
-				Name:         name,
-				JSONName:     jsonName,
-				Type:         typeName,
-				IsStruct:     isStruct,
-				IsCollection: isCollection,
-				IsText:       isText,
-				Ignore:       ignore,
-				ReadOnly:     readOnly,
-				Atomic:       atomic,
+				Name:           name,
+				JSONName:       jsonName,
+				Type:           ti.name,
+				IsStruct:       ti.isStruct,
+				IsCollection:   ti.isCollection,
+				IsText:         ti.isText,
+				ElemGenerated:  ti.elemGenerated,
+				Comparable:     ti.comparable,
+				ElemComparable: ti.elemComparable,
+				Quals:          ti.quals,
+				Ignore:         ignore,
+				ReadOnly:       readOnly,
+				Atomic:         atomic,
 			})
 		}
 	}
 	return fields
 }
 
-func resolveType(expr ast.Expr) (typeName string, isStruct, isCollection, isText bool) {
+// pkgIndex records what the generator knows about the types declared in the
+// package it is generating for.
+type pkgIndex struct {
+	// structs are the struct types: they have the generated methods, so field
+	// code can call Equal/Clone/applyOperation on them.
+	structs map[string]bool
+	// scalars are named types over a comparable builtin (type Priority int),
+	// for which == is value equality.
+	scalars map[string]bool
+}
+
+// typeInfo is what the generator managed to work out about a field's type.
+type typeInfo struct {
+	name           string
+	isStruct       bool
+	isCollection   bool
+	isText         bool
+	elemGenerated  bool
+	comparable     bool
+	elemComparable bool
+	quals          []string
+}
+
+// resolveType classifies a field type. imports maps the package qualifiers
+// visible in the file to their import paths.
+func resolveType(expr ast.Expr, imports map[string]string, idx pkgIndex) typeInfo {
+	expr = unparen(expr)
+
+	quals := make(map[string]bool)
+	name, ok := renderType(expr, imports, quals)
+	if !ok {
+		// Nothing else can be trusted about a type we cannot even name.
+		return typeInfo{}
+	}
+	ti := typeInfo{name: name}
+
+	if isTextType(expr, imports) {
+		// Text is a CRDT value with its own merge semantics; it is always
+		// referred to as crdt.Text in generated code, whatever the source file
+		// called the package.
+		return typeInfo{name: "crdt.Text", isText: true}
+	}
+	for q := range quals {
+		ti.quals = append(ti.quals, q)
+	}
+	sort.Strings(ti.quals)
+
 	switch typ := expr.(type) {
 	case *ast.Ident:
-		typeName = typ.Name
-		if typeName == "Text" {
-			isText = true
-			typeName = "crdt.Text"
-		} else if len(typeName) > 0 && typeName[0] >= 'A' && typeName[0] <= 'Z' {
-			switch typeName {
-			case "String", "Int", "Bool", "Float64":
-			default:
-				isStruct = true
-			}
-		}
+		ti.isStruct = isGeneratedStruct(typ, idx)
+		ti.comparable = idx.isComparable(typ)
 	case *ast.StarExpr:
-		if ident, ok := typ.X.(*ast.Ident); ok {
-			typeName = "*" + ident.Name
-			isStruct = true
-		}
-	case *ast.SelectorExpr:
-		if ident, ok := typ.X.(*ast.Ident); ok {
-			if typ.Sel.Name == "Text" {
-				isText = true
-				typeName = "crdt.Text"
-			} else if ident.Name == "deep" {
-				typeName = "deep." + typ.Sel.Name
-			} else {
-				typeName = ident.Name + "." + typ.Sel.Name
-			}
-		}
+		ti.isStruct = isGeneratedStruct(unparen(typ.X), idx)
 	case *ast.ArrayType:
-		isCollection = true
-		switch elt := typ.Elt.(type) {
-		case *ast.Ident:
-			typeName = "[]" + elt.Name
-		case *ast.StarExpr:
-			if ident, ok := elt.X.(*ast.Ident); ok {
-				typeName = "[]*" + ident.Name
-			}
-		default:
-			typeName = "[]any"
+		// Fixed-size arrays are values, not collections: patching into them is
+		// left to the reflection fallback.
+		if typ.Len == nil {
+			ti.isCollection = true
+			ti.elemGenerated = isGeneratedStructRef(typ.Elt, idx)
+			ti.elemComparable = idx.isComparable(unparen(typ.Elt))
 		}
 	case *ast.MapType:
-		isCollection = true
-		keyName, valName := "any", "any"
-		if ident, ok := typ.Key.(*ast.Ident); ok {
-			keyName = ident.Name
-		}
-		switch vtyp := typ.Value.(type) {
-		case *ast.Ident:
-			valName = vtyp.Name
-		case *ast.StarExpr:
-			if ident, ok := vtyp.X.(*ast.Ident); ok {
-				valName = "*" + ident.Name
-			}
-		}
-		typeName = fmt.Sprintf("map[%s]%s", keyName, valName)
+		ti.isCollection = true
+		ti.elemGenerated = isGeneratedStructRef(typ.Value, idx)
+		ti.elemComparable = idx.isComparable(unparen(typ.Value))
 	}
-	return
+	return ti
+}
+
+// renderType renders expr as Go source and records every package qualifier it
+// uses in quals. It reports false for types the generator cannot name, either
+// because the syntax is not supported (funcs, channels, non-empty interfaces)
+// or because a qualifier cannot be resolved to an import.
+func renderType(expr ast.Expr, imports map[string]string, quals map[string]bool) (string, bool) {
+	switch typ := unparen(expr).(type) {
+	case *ast.Ident:
+		return typ.Name, true
+	case *ast.SelectorExpr:
+		pkg, ok := typ.X.(*ast.Ident)
+		if !ok {
+			return "", false
+		}
+		path, known := imports[pkg.Name]
+		if !known {
+			return "", false
+		}
+		if fixed, ok := fixedImports[pkg.Name]; ok && fixed != path {
+			// The generated file binds this qualifier to its own import, so
+			// naming the type here would resolve to the wrong package. Leave
+			// the field to the reflection fallback instead.
+			return "", false
+		}
+		quals[pkg.Name] = true
+		return pkg.Name + "." + typ.Sel.Name, true
+	case *ast.StarExpr:
+		inner, ok := renderType(typ.X, imports, quals)
+		if !ok {
+			return "", false
+		}
+		return "*" + inner, true
+	case *ast.ArrayType:
+		elem, ok := renderType(typ.Elt, imports, quals)
+		if !ok {
+			return "", false
+		}
+		if typ.Len == nil {
+			return "[]" + elem, true
+		}
+		lit, ok := typ.Len.(*ast.BasicLit)
+		if !ok {
+			return "", false // array length is a constant expression we cannot render
+		}
+		return "[" + lit.Value + "]" + elem, true
+	case *ast.MapType:
+		key, ok := renderType(typ.Key, imports, quals)
+		if !ok {
+			return "", false
+		}
+		val, ok := renderType(typ.Value, imports, quals)
+		if !ok {
+			return "", false
+		}
+		return "map[" + key + "]" + val, true
+	case *ast.InterfaceType:
+		if typ.Methods == nil || len(typ.Methods.List) == 0 {
+			return "any", true
+		}
+		return "", false
+	case *ast.IndexExpr: // generic instantiation with one type argument
+		return renderIndex(typ.X, []ast.Expr{typ.Index}, imports, quals)
+	case *ast.IndexListExpr: // generic instantiation with several type arguments
+		return renderIndex(typ.X, typ.Indices, imports, quals)
+	}
+	return "", false
+}
+
+func renderIndex(x ast.Expr, indices []ast.Expr, imports map[string]string, quals map[string]bool) (string, bool) {
+	base, ok := renderType(x, imports, quals)
+	if !ok {
+		return "", false
+	}
+	args := make([]string, 0, len(indices))
+	for _, idx := range indices {
+		arg, ok := renderType(idx, imports, quals)
+		if !ok {
+			return "", false
+		}
+		args = append(args, arg)
+	}
+	return base + "[" + strings.Join(args, ", ") + "]", true
+}
+
+func unparen(expr ast.Expr) ast.Expr {
+	for {
+		paren, ok := expr.(*ast.ParenExpr)
+		if !ok {
+			return expr
+		}
+		expr = paren.X
+	}
+}
+
+// isTextType reports whether expr refers to crdt.Text.
+func isTextType(expr ast.Expr, imports map[string]string) bool {
+	switch typ := expr.(type) {
+	case *ast.Ident:
+		return typ.Name == "Text"
+	case *ast.SelectorExpr:
+		pkg, ok := typ.X.(*ast.Ident)
+		return ok && typ.Sel.Name == "Text" && imports[pkg.Name] == crdtPkgPath
+	}
+	return false
+}
+
+// isGeneratedStruct reports whether expr names an exported struct declared in
+// the package being generated, and therefore has the generated methods.
+func isGeneratedStruct(expr ast.Expr, idx pkgIndex) bool {
+	ident, ok := expr.(*ast.Ident)
+	if !ok || !idx.structs[ident.Name] {
+		return false
+	}
+	return ident.Name[0] >= 'A' && ident.Name[0] <= 'Z'
+}
+
+// isGeneratedStructRef is isGeneratedStruct, looking through one pointer.
+func isGeneratedStructRef(expr ast.Expr, idx pkgIndex) bool {
+	expr = unparen(expr)
+	if star, ok := expr.(*ast.StarExpr); ok {
+		expr = unparen(star.X)
+	}
+	return isGeneratedStruct(expr, idx)
+}
+
+// isComparable reports whether == compares values of expr's type by value.
+func (idx pkgIndex) isComparable(expr ast.Expr) bool {
+	ident, ok := expr.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	return isBuiltinComparable(ident.Name) || idx.scalars[ident.Name]
+}
+
+// fileImports maps the package qualifiers usable in file to their import paths.
+// Blank and dot imports are skipped: neither introduces a usable qualifier.
+func fileImports(file *ast.File) map[string]string {
+	m := make(map[string]string, len(file.Imports))
+	for _, imp := range file.Imports {
+		path, err := strconv.Unquote(imp.Path.Value)
+		if err != nil {
+			continue
+		}
+		name := importBase(path)
+		if imp.Name != nil {
+			if imp.Name.Name == "_" || imp.Name.Name == "." {
+				continue
+			}
+			name = imp.Name.Name
+		}
+		m[name] = path
+	}
+	return m
+}
+
+// importBase guesses the package name of an import path. Go tooling proper
+// reads it from the package clause; without type information the last path
+// element (ignoring a major-version suffix) is the standard approximation.
+func importBase(path string) string {
+	elems := strings.Split(path, "/")
+	base := elems[len(elems)-1]
+	if len(elems) > 1 && isVersionElem(base) {
+		base = elems[len(elems)-2]
+	}
+	// gopkg.in/yaml.v3 -> yaml
+	if i := strings.LastIndex(base, "."); i > 0 && isVersionElem(base[i+1:]) {
+		base = base[:i]
+	}
+	return base
+}
+
+func isVersionElem(s string) bool {
+	if len(s) < 2 || s[0] != 'v' {
+		return false
+	}
+	for _, r := range s[1:] {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
