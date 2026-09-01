@@ -190,26 +190,20 @@ func TestPatch_Walk_Slice(t *testing.T) {
 		ops = append(ops, fmt.Sprintf("%s:%s:%v:%v", path, op, old, new))
 		return nil
 	})
-
 	if err != nil {
 		t.Fatalf("Walk failed: %v", err)
 	}
 
-	found4 := false
-	found5 := false
-	for _, op := range ops {
-		if strings.Contains(op, ":2:4") || (strings.Contains(op, ":remove:2:<nil>") || strings.Contains(op, ":add:<nil>:4")) {
-			if strings.Contains(op, "4") {
-				found4 = true
-			}
-		}
-		if strings.Contains(op, ":add:<nil>:5") {
-			found5 = true
-		}
+	// A structural change to an unkeyed slice flattens to a single whole-slice
+	// replace: the per-index edit script only means anything as a batch, so
+	// splitting it into independent operations would corrupt the slice.
+	if len(ops) != 1 {
+		t.Fatalf("expected one whole-slice operation, got %v", ops)
 	}
-
-	if !found4 || !found5 {
-		t.Errorf("Missing expected ops in %v", ops)
+	if !strings.Contains(ops[0], "replace") ||
+		!strings.Contains(ops[0], "[1 2 3]") ||
+		!strings.Contains(ops[0], "[1 4 3 5]") {
+		t.Errorf("unexpected operation: %v", ops[0])
 	}
 }
 

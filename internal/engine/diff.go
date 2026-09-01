@@ -890,7 +890,7 @@ func (d *Differ) diffSlice(a, b reflect.Value, ctx *diffContext) (diffPatch, err
 			}
 			ops = append(ops, op)
 		}
-		return &slicePatch{ops: ops}, nil
+		return &slicePatch{ops: ops, oldSlice: a, newSlice: b}, nil
 	}
 
 	if midBStart == midBEnd && midAStart < midAEnd {
@@ -910,7 +910,7 @@ func (d *Differ) diffSlice(a, b reflect.Value, ctx *diffContext) (diffPatch, err
 			}
 			ops = append(ops, op)
 		}
-		return &slicePatch{ops: ops}, nil
+		return &slicePatch{ops: ops, oldSlice: a, newSlice: b}, nil
 	}
 
 	if midAStart >= midAEnd && midBStart >= midBEnd {
@@ -922,7 +922,7 @@ func (d *Differ) diffSlice(a, b reflect.Value, ctx *diffContext) (diffPatch, err
 		return nil, err
 	}
 
-	return &slicePatch{ops: ops}, nil
+	return &slicePatch{ops: ops, oldSlice: a, newSlice: b}, nil
 }
 
 func (d *Differ) computeSliceEdits(a, b reflect.Value, aStart, aEnd, bStart, bEnd, keyField int, hasKey bool, ctx *diffContext) ([]sliceOp, error) {

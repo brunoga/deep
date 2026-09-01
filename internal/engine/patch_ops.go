@@ -1074,6 +1074,30 @@ type ConflictResolver interface {
 // slicePatch handles complex edits (insertions, deletions, modifications) in a slice.
 type slicePatch struct {
 	ops []sliceOp
+	// oldSlice and newSlice are the whole slices this patch was computed from.
+	// They are what walk emits when the edit script cannot be expressed as
+	// independent flat operations — see indexStable.
+	oldSlice reflect.Value
+	newSlice reflect.Value
+}
+
+// indexStable reports whether ops can be flattened into independent operations.
+// The ops of a slicePatch form an edit script: indices refer to positions in
+// the original slice and apply interprets them with a moving cursor. Flattened
+// operations, in contrast, are applied one at a time against a slice that has
+// already been mutated by the previous ones, so any structural change to an
+// unkeyed slice invalidates every index after it. Keyed elements address by
+// key rather than position, so they stay stable.
+func (p *slicePatch) indexStable() bool {
+	for _, op := range p.ops {
+		if op.Key != nil {
+			continue
+		}
+		if op.Kind == OpAdd || op.Kind == OpRemove || op.Kind == OpMove {
+			return false
+		}
+	}
+	return true
 }
 
 func (p *slicePatch) apply(root, v reflect.Value, path string) {
@@ -1398,11 +1422,18 @@ func (p *slicePatch) reverse() diffPatch {
 		}
 	}
 	return &slicePatch{
-		ops: revOps,
+		ops:      revOps,
+		oldSlice: p.newSlice,
+		newSlice: p.oldSlice,
 	}
 }
 
 func (p *slicePatch) walk(path string, fn func(path string, op OpKind, old, new any) error) error {
+	if !p.indexStable() && (p.oldSlice.IsValid() || p.newSlice.IsValid()) {
+		// Structural changes to an unkeyed slice cannot survive being split
+		// into independent operations; emit the whole slice instead.
+		return fn(path, OpReplace, icore.ValueToInterface(p.oldSlice), icore.ValueToInterface(p.newSlice))
+	}
 	for _, op := range p.ops {
 		fullPath := fmt.Sprintf("%s/%d", path, op.Index)
 		if op.Key != nil {
