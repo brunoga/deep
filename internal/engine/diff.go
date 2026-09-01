@@ -136,7 +136,11 @@ func RegisterCustomDiff[T any](fn func(a, b T) (Patch[T], error)) {
 		if unwrapper, ok := p.(patchUnwrapper); ok {
 			return unwrapper.unwrap(), nil
 		}
-		return &customDiffPatch{patch: p}, nil
+		return &customDiffPatch{
+			patch:    p,
+			oldValue: icore.ValueToInterface(a),
+			newValue: icore.ValueToInterface(b),
+		}, nil
 	}
 }
 
@@ -471,7 +475,11 @@ func (d *Differ) diffRecursive(a, b reflect.Value, atomic bool, ctx *diffContext
 					if unwrapper, ok := res[0].Interface().(patchUnwrapper); ok {
 						return unwrapper.unwrap(), nil
 					}
-					return &customDiffPatch{patch: res[0].Interface()}, nil
+					return &customDiffPatch{
+						patch:    res[0].Interface(),
+						oldValue: icore.ValueToInterface(a),
+						newValue: icore.ValueToInterface(b),
+					}, nil
 				}
 			}
 		}

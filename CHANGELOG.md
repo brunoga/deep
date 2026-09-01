@@ -6,6 +6,42 @@ All notable changes to this project are documented here, newest first.
 > version's entry before tagging, so the tag, the GitHub release notes, and this
 > file always agree.
 
+## Unreleased
+
+### Added
+
+- **Incremental sync for `crdt.Document`.** Replicas exchanged whole documents,
+  which costs the size of the document however little changed.
+  `Document.StateVector` reports how much of each writer's output a replica
+  holds — one number per writer, not per character — and `Document.Since`
+  returns only what a peer holding that state vector is missing, trimming a run
+  the peer holds part of to the part it does not. `Document.Apply` integrates
+  the result.
+
+  A 23-character edit to a 5,000-character document now sends 151 bytes instead
+  of 5,239, and the state vector asking for it is 35. Applying an update twice
+  changes nothing, deletions travel even though the peer already holds the
+  characters, and syncing in both directions reaches what a full merge would.
+
+### Fixed
+
+- **Merging could order a document differently on two replicas.** A run
+  anchored partway into another was placed after the whole of it rather than
+  after the character it follows, because runs were divided only where a run
+  began or ended, never where something anchored to one. Replicas exchanging
+  whole documents hid this, since each carried the other's boundaries; it
+  appeared as soon as they exchanged only what was missing. Merging now divides
+  a run at any character something anchors to.
+- **A type supplying its own `Diff` method produced no operations at all.** The
+  engine used the custom differ and then flattened the result to nothing — the
+  change vanished from the patch without an error, so `Diff` followed by `Apply`
+  silently lost it. A custom patch describes a change in terms only its own type
+  understands, which the flat operation form cannot carry, so it now falls back
+  to recording what the value became.
+- `deep.Clone` of a `crdt.Document` no longer walks the index node by node; a
+  `Copy` method rebuilds from the runs instead, which is what a `CRDT` snapshot
+  of its value goes through.
+
 ## v5.9.0
 
 ### Added

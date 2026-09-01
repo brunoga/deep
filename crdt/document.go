@@ -264,6 +264,33 @@ func (d *Document) reset(runs Text) {
 	}
 }
 
+// Copy returns an independent document holding the same text.
+//
+// Copying a document by walking its structure would visit every node of the
+// tree and rebuild it one field at a time, which is what a general deep copy
+// does with no knowledge of what the tree is for. Rebuilding from the runs
+// instead skips all of that: the runs are already in order, so the copy is one
+// pass. This is the method [deep.Clone] looks for, so it applies wherever a
+// document is copied, including a [CRDT] taking a snapshot of its value.
+func (d *Document) Copy() (*Document, error) {
+	if d == nil {
+		return nil, nil
+	}
+	out := &Document{clock: d.clock, rng: d.rng}
+	var build func(*docNode) *docNode
+	build = func(n *docNode) *docNode {
+		if n == nil {
+			return nil
+		}
+		c := &docNode{run: n.run, priority: n.priority, size: n.size, visible: n.visible}
+		c.left = build(n.left)
+		c.right = build(n.right)
+		return c
+	}
+	out.root = build(d.root)
+	return out, nil
+}
+
 // MarshalJSON writes the document as its runs, the same shape a [Text] takes.
 func (d *Document) MarshalJSON() ([]byte, error) { return json.Marshal(d.Text()) }
 

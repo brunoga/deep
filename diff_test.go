@@ -219,3 +219,60 @@ func TestApplyTypeMismatchErrors(t *testing.T) {
 		})
 	}
 }
+
+// A type can supply its own diff, which the engine uses instead of comparing
+// the value structurally. Such a patch describes the change in terms only that
+// type understands, and the flat operation form has no way to carry that — so
+// it fell out entirely: Diff returned no operations and the change was lost
+// without a word. The flat form now falls back to saying what the value
+// became, which any consumer can apply.
+type diffCounter struct{ N int }
+
+type diffCounterPatch struct{ Delta int }
+
+func (p *diffCounterPatch) Apply(c *diffCounter) { c.N += p.Delta }
+
+func (c *diffCounter) Diff(other *diffCounter) (*diffCounterPatch, error) {
+	if c.N == other.N {
+		return nil, nil
+	}
+	return &diffCounterPatch{Delta: other.N - c.N}, nil
+}
+
+func TestCustomDifferSurvivesFlattening(t *testing.T) {
+	type holder struct {
+		Name    string
+		Counter *diffCounter
+	}
+
+	a := holder{Name: "x", Counter: &diffCounter{N: 1}}
+	b := holder{Name: "y", Counter: &diffCounter{N: 5}}
+
+	p, err := deep.Diff(a, b)
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+	if p.IsEmpty() {
+		t.Fatal("a custom differ produced no operations at all")
+	}
+
+	got := deep.Clone(a)
+	if err := deep.Apply(&got, p); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if got.Counter.N != 5 {
+		t.Errorf("the custom-differ change did not survive: N = %d, want 5", got.Counter.N)
+	}
+	if got.Name != "y" {
+		t.Errorf("the ordinary field did not survive: Name = %q, want %q", got.Name, "y")
+	}
+
+	// Unchanged values must still produce nothing.
+	same, err := deep.Diff(a, a)
+	if err != nil {
+		t.Fatalf("Diff of equal values: %v", err)
+	}
+	if !same.IsEmpty() {
+		t.Errorf("diffing a value with itself produced %v", same.Operations)
+	}
+}

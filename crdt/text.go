@@ -547,13 +547,28 @@ func MergeTextRuns(a, b Text) Text {
 		NodeID   string
 	}
 	splits := make(map[baseID]map[int32]bool)
-	for _, run := range allRuns {
-		base := baseID{run.ID.WallTime, run.ID.NodeID}
+	addSplit := func(base baseID, at int32) {
 		if splits[base] == nil {
 			splits[base] = make(map[int32]bool)
 		}
-		splits[base][run.ID.Logical] = true
-		splits[base][run.ID.Logical+int32(run.runeCount())] = true
+		splits[base][at] = true
+	}
+	for _, run := range allRuns {
+		base := baseID{run.ID.WallTime, run.ID.NodeID}
+		addSplit(base, run.ID.Logical)
+		addSplit(base, run.ID.Logical+int32(run.runeCount()))
+
+		// A run anchored partway into another must leave that run divided at
+		// the character it follows, so that it can be placed directly after it.
+		// Without the division the character sits inside a run, the run is
+		// emitted whole, and everything anchored to a character in its middle
+		// lands after its end instead — the two sides then order the document
+		// differently. A boundary only shows up on its own when some run
+		// happens to end there, which is why this went unnoticed while replicas
+		// exchanged whole documents and each supplied the other's boundaries.
+		if run.Prev != (hlc.HLC{}) {
+			addSplit(baseID{run.Prev.WallTime, run.Prev.NodeID}, run.Prev.Logical+1)
+		}
 	}
 	combinedMap := make(map[hlc.HLC]TextRun)
 	for _, run := range allRuns {
