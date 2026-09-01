@@ -407,6 +407,62 @@ func (t Text) MergeFrom(other any) any {
 	return MergeTextRuns(t, o)
 }
 
+// Compact drops deleted runs that were removed at or before before, returning
+// the remaining text.
+//
+// Deleting text does not reclaim it: the run stays as a tombstone, because a
+// replica that has not heard about the deletion may still insert next to what
+// was deleted, and the tombstone is what that insertion attaches to. A document
+// edited for long enough is mostly tombstones — two hundred typed-then-deleted
+// phrases leave two hundred runs behind nine visible characters.
+//
+// Dropping one is only safe once every replica has seen the deletion, so before
+// must be a timestamp older than anything still in flight anywhere in the
+// system; see [CRDT.Compact], which takes the same watermark for a replica's
+// own bookkeeping.
+//
+// A tombstone that something is still anchored to is kept regardless of its
+// age. Removing it would leave the runs anchored to it without a place, and
+// re-anchoring them would change how this replica orders the document without
+// changing how any other replica orders it — the two would then disagree.
+// Keeping it costs a run and preserves the order exactly, and it becomes
+// collectable once whatever anchored to it is itself deleted and compacted.
+func (t Text) Compact(before hlc.HLC) Text {
+	anchored := make(map[hlc.HLC]bool, len(t))
+	for _, run := range t {
+		anchored[run.Prev] = true
+	}
+
+	result := make(Text, 0, len(t))
+	for _, run := range t {
+		if run.Deleted && !run.ID.After(before) && !runAnchorsAnything(run, anchored) {
+			continue
+		}
+		result = append(result, run)
+	}
+	if len(result) == len(t) {
+		return t
+	}
+	return result.mergeAdjacent()
+}
+
+// CompactBefore implements [Compactable].
+func (t Text) CompactBefore(before hlc.HLC) any { return t.Compact(before) }
+
+// runAnchorsAnything reports whether any of the run's characters is something
+// else's anchor.
+func runAnchorsAnything(run TextRun, anchored map[hlc.HLC]bool) bool {
+	n := run.runeCount()
+	for i := 0; i < n; i++ {
+		id := run.ID
+		id.Logical += int32(i)
+		if anchored[id] {
+			return true
+		}
+	}
+	return false
+}
+
 // Diff compares t with other and returns a Patch.
 func (t Text) Diff(other Text) deep.Patch[Text] {
 	if len(t) == len(other) {

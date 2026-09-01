@@ -205,6 +205,39 @@ func (l List[T]) ordered() List[T] {
 	return result
 }
 
+// Compact drops entries deleted at or before before, returning the rest.
+//
+// A deletion leaves the entry behind as a tombstone, because a replica that has
+// not heard about it may still insert next to what was deleted and needs
+// something to anchor to. Dropping one is only safe once every replica has seen
+// the deletion, so before must be older than anything still in flight; see
+// [CRDT.Compact], which takes the same watermark.
+//
+// An entry that something is still anchored to is kept whatever its age:
+// removing it would leave whatever follows it without a place, and re-anchoring
+// would change this replica's order without changing anyone else's.
+func (l List[T]) Compact(before hlc.HLC) List[T] {
+	anchored := make(map[hlc.HLC]bool, len(l))
+	for _, e := range l {
+		anchored[e.Prev] = true
+	}
+
+	result := make(List[T], 0, len(l))
+	for _, e := range l {
+		if e.Deleted && !e.ID.After(before) && !anchored[e.ID] {
+			continue
+		}
+		result = append(result, e)
+	}
+	if len(result) == len(l) {
+		return l
+	}
+	return result
+}
+
+// CompactBefore implements [Compactable].
+func (l List[T]) CompactBefore(before hlc.HLC) any { return l.Compact(before) }
+
 // MergeLists combines two Lists into one containing every element either side
 // has seen, in the order both sides agree on. A deletion on either side wins,
 // since a tombstone records an element that was removed rather than never seen.
