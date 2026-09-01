@@ -17,6 +17,14 @@
 //     to no import) get no case at all, so applyOperation reports the operation
 //     as unhandled and the caller falls back to the reflection engine.
 //
+// Embedded fields are addressed by their type name, the same way the language
+// (and the reflection engine) names them.
+//
+// Generated code calls Equal, Clone and applyOperation on every struct declared
+// in the package that a requested type references — directly, embedded, or as a
+// collection element. Those structs must therefore also have generated code:
+// list them in -type, or generate them in a separate run over the same package.
+//
 // Imports are derived from the generated code itself, so a field type that
 // refers to another package pulls that package in, and no import is emitted for
 // code that ended up not being generated.
@@ -71,6 +79,15 @@ type FieldInfo struct {
 	Comparable bool
 	// ElemComparable is Comparable for a collection's element or value type.
 	ElemComparable bool
+	// KnownValue is true for a small set of stdlib types known to have value
+	// semantics (time.Time and friends): safe to copy by assignment, but still
+	// compared with Equal.
+	KnownValue bool
+	// ElemKnownValue is KnownValue for a collection's element or value type,
+	// looking through one pointer ([]*time.Time counts).
+	ElemKnownValue bool
+	// PointeeKnown is KnownValue for the pointee of a pointer field.
+	PointeeKnown bool
 	// Quals holds the package qualifiers Type refers to (e.g. "time").
 	Quals    []string
 	Ignore   bool
@@ -115,6 +132,7 @@ type Generator struct {
 
 type headerData struct {
 	PkgName        string
+	NeedsReflect   bool
 	NeedsRegexp    bool
 	NeedsStrings   bool
 	NeedsCondition bool
@@ -163,7 +181,12 @@ func isReferenceType(t string) bool {
 // elemNeedsCopy reports whether a collection element of type t needs copying of
 // its own, rather than the plain assignment a value type is content with.
 func elemNeedsCopy(f FieldInfo, t string) bool {
-	return isPtr(t) || f.ElemGenerated || isReferenceType(t)
+	if isPtr(t) || f.ElemGenerated || isReferenceType(t) {
+		return true
+	}
+	// Opaque elements may hold references; only assignment-safe ones are
+	// bulk-copied.
+	return !f.ElemComparable && !f.ElemKnownValue && !isComparableArray(t)
 }
 
 // isBuiltinComparable reports whether == is the right comparison for t: a
@@ -193,10 +216,8 @@ func fieldApplyCase(f FieldInfo, p string) string {
 		b.WriteString("\t\treturn true, fmt.Errorf(\"field %s is read-only\", op.Path)\n")
 		return b.String()
 	}
-	// OpLog
-	fmt.Fprintf(&b, "\t\tif op.Kind == %sOpLog {\n", p)
-	fmt.Fprintf(&b, "\t\t\tlogger.Info(\"deep log\", \"message\", op.New, \"path\", op.Path, \"field\", t.%s)\n", f.Name)
-	b.WriteString("\t\t\treturn true, nil\n\t\t}\n")
+	// OpLog is handled once at the top of applyOperation, before the path
+	// switch, so cases never see it.
 	// Strict check
 	fmt.Fprintf(&b, "\t\tif op.Kind == %sOpReplace && op.Strict {\n", p)
 	if f.IsStruct || f.IsText || f.IsCollection || f.Opaque() {
@@ -224,11 +245,15 @@ func fieldApplyCase(f FieldInfo, p string) string {
 		fmt.Fprintf(&b, "\t\treturn true, t.%s.Patch(%sPatch[crdt.Text]{Operations: []%sOperation{op}}, logger)\n", f.Name, p, p)
 		return b.String()
 	}
-	fmt.Fprintf(&b, "\t\tif v, ok := op.New.(%s); ok {\n\t\t\tt.%s = v\n\t\t\treturn true, nil\n\t\t}\n", f.Type, f.Name)
+	// Only add and replace assign; remove, move and copy fall through to the
+	// reflection path, which owns their semantics.
+	fmt.Fprintf(&b, "\t\tif op.Kind == %sOpAdd || op.Kind == %sOpReplace {\n", p, p)
+	fmt.Fprintf(&b, "\t\t\tif v, ok := op.New.(%s); ok {\n\t\t\t\tt.%s = v\n\t\t\t\treturn true, nil\n\t\t\t}\n", f.Type, f.Name)
 	// Numeric float64 fallback (JSON deserialises numbers as float64)
 	if f.Type == "int" || f.Type == "int64" || f.Type == "float64" {
-		fmt.Fprintf(&b, "\t\tif f, ok := op.New.(float64); ok {\n\t\t\tt.%s = %s(f)\n\t\t\treturn true, nil\n\t\t}\n", f.Name, f.Type)
+		fmt.Fprintf(&b, "\t\t\tif f, ok := op.New.(float64); ok {\n\t\t\t\tt.%s = %s(f)\n\t\t\t\treturn true, nil\n\t\t\t}\n", f.Name, f.Type)
 	}
+	b.WriteString("\t\t}\n")
 	return b.String()
 }
 
@@ -263,18 +288,36 @@ func delegateCase(f FieldInfo, p string) string {
 			b.WriteString("\t\t\treturn true, fmt.Errorf(\"field %s is read-only\", op.Path)\n")
 		} else if isPtr(vt) && f.ElemGenerated {
 			fmt.Fprintf(&b, "\t\t\tparts := strings.Split(op.Path[len(\"/%s/\"):], \"/\")\n", f.JSONName)
-			b.WriteString("\t\t\tkey := parts[0]\n")
-			fmt.Fprintf(&b, "\t\t\tif val, ok := t.%s[key]; ok && val != nil {\n", f.Name)
-			b.WriteString("\t\t\t\top.Path = \"/\"\n")
-			b.WriteString("\t\t\t\tif len(parts) > 1 { op.Path = \"/\" + strings.Join(parts[1:], \"/\") }\n")
+			fmt.Fprintf(&b, "\t\t\tkey := %sUnescapePathKey(parts[0])\n", p)
+			// Entry-level operations are handled here; deeper paths delegate to
+			// the element's own applyOperation. Anything else (e.g. a
+			// JSON-decoded New value) falls through to the reflection path.
+			// Strict entry-level ops take the reflection path, which verifies
+			// the Old value with full deep-equality semantics.
+			b.WriteString("\t\t\tif len(parts) == 1 && !op.Strict {\n")
+			fmt.Fprintf(&b, "\t\t\t\tif op.Kind == %sOpRemove {\n", p)
+			fmt.Fprintf(&b, "\t\t\t\t\tdelete(t.%s, key)\n\t\t\t\t\treturn true, nil\n\t\t\t\t}\n", f.Name)
+			fmt.Fprintf(&b, "\t\t\t\tif v, ok := op.New.(%s); ok && (op.Kind == %sOpAdd || op.Kind == %sOpReplace) {\n", vt, p, p)
+			fmt.Fprintf(&b, "\t\t\t\t\tif t.%s == nil { t.%s = make(%s) }\n", f.Name, f.Name, f.Type)
+			fmt.Fprintf(&b, "\t\t\t\t\tt.%s[key] = v\n\t\t\t\t\treturn true, nil\n\t\t\t\t}\n", f.Name)
+			fmt.Fprintf(&b, "\t\t\t} else if val, ok := t.%s[key]; ok && val != nil {\n", f.Name)
+			b.WriteString("\t\t\t\top.Path = \"/\" + strings.Join(parts[1:], \"/\")\n")
 			b.WriteString("\t\t\t\treturn val.applyOperation(op, logger)\n\t\t\t}\n")
 		} else {
 			fmt.Fprintf(&b, "\t\t\tparts := strings.Split(op.Path[len(\"/%s/\"):], \"/\")\n", f.JSONName)
-			b.WriteString("\t\t\tkey := parts[0]\n")
-			fmt.Fprintf(&b, "\t\t\tif op.Kind == %sOpRemove {\n", p)
-			fmt.Fprintf(&b, "\t\t\t\tdelete(t.%s, key)\n\t\t\t\treturn true, nil\n\t\t\t}\n", f.Name)
-			fmt.Fprintf(&b, "\t\t\tif t.%s == nil { t.%s = make(%s) }\n", f.Name, f.Name, f.Type)
-			fmt.Fprintf(&b, "\t\t\tif v, ok := op.New.(%s); ok {\n\t\t\t\tt.%s[key] = v\n\t\t\t\treturn true, nil\n\t\t\t}\n", vt, f.Name)
+			fmt.Fprintf(&b, "\t\t\tkey := %sUnescapePathKey(parts[0])\n", p)
+			// Only entry-level operations are handled here: a deeper path
+			// (e.g. removing one key inside a map-valued entry) must not
+			// delete or replace the whole entry — leave it to reflection.
+			// Strict entry-level ops take the reflection path, which verifies
+			// the Old value with full deep-equality semantics.
+			b.WriteString("\t\t\tif len(parts) == 1 && !op.Strict {\n")
+			fmt.Fprintf(&b, "\t\t\t\tif op.Kind == %sOpRemove {\n", p)
+			fmt.Fprintf(&b, "\t\t\t\t\tdelete(t.%s, key)\n\t\t\t\t\treturn true, nil\n\t\t\t\t}\n", f.Name)
+			fmt.Fprintf(&b, "\t\t\t\tif v, ok := op.New.(%s); ok && (op.Kind == %sOpAdd || op.Kind == %sOpReplace) {\n", vt, p, p)
+			fmt.Fprintf(&b, "\t\t\t\t\tif t.%s == nil { t.%s = make(%s) }\n", f.Name, f.Name, f.Type)
+			fmt.Fprintf(&b, "\t\t\t\t\tt.%s[key] = v\n\t\t\t\t\treturn true, nil\n\t\t\t\t}\n", f.Name)
+			b.WriteString("\t\t\t}\n")
 		}
 		b.WriteString("\t\t}\n")
 	}
@@ -296,10 +339,16 @@ func diffFieldCode(f FieldInfo, p string, typeKeys map[string]string) string {
 			other = "other." + f.Name
 		}
 		// Text is a slice value — &t.Field is never nil and Text.Diff handles empty slices.
-		// Only pointer fields need a nil guard.
+		// Only pointer fields need nil handling: a pointer appearing emits an
+		// add, a pointer disappearing emits a remove, and both-non-nil
+		// delegates to the element's Diff.
 		needsGuard := isPtr(f.Type)
 		if needsGuard {
-			fmt.Fprintf(&b, "\tif %s != nil && %s != nil {\n", self, other)
+			fmt.Fprintf(&b, "\tif %s == nil && %s != nil {\n", self, other)
+			fmt.Fprintf(&b, "\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpAdd, Path: \"/%s\", New: %s})\n", p, p, f.JSONName, other)
+			fmt.Fprintf(&b, "\t} else if %s != nil && %s == nil {\n", self, other)
+			fmt.Fprintf(&b, "\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpRemove, Path: \"/%s\", Old: %s})\n", p, p, f.JSONName, self)
+			fmt.Fprintf(&b, "\t} else if %s != nil && %s != nil {\n", self, other)
 		}
 		fmt.Fprintf(&b, "\t\tsub%s := %s.Diff(%s)\n", f.Name, self, other)
 		fmt.Fprintf(&b, "\t\tfor _, op := range sub%s.Operations {\n", f.Name)
@@ -315,7 +364,7 @@ func diffFieldCode(f FieldInfo, p string, typeKeys map[string]string) string {
 			fmt.Fprintf(&b, "\tif other.%s != nil {\n", f.Name)
 			fmt.Fprintf(&b, "\t\tfor k, v := range other.%s {\n", f.Name)
 			fmt.Fprintf(&b, "\t\t\tif t.%s == nil {\n", f.Name)
-			fmt.Fprintf(&b, "\t\t\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpReplace, Path: fmt.Sprintf(\"/%s/%%v\", k), New: v})\n", p, p, f.JSONName)
+			fmt.Fprintf(&b, "\t\t\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpReplace, Path: \"/%s/\" + %sEscapePathKey(fmt.Sprintf(\"%%v\", k)), New: v})\n", p, p, f.JSONName, p)
 			b.WriteString("\t\t\t\tcontinue\n\t\t\t}\n")
 			fmt.Fprintf(&b, "\t\t\tif oldV, ok := t.%s[k]; !ok || ", f.Name)
 			switch {
@@ -329,31 +378,48 @@ func diffFieldCode(f FieldInfo, p string, typeKeys map[string]string) string {
 				fmt.Fprintf(&b, "!%sEqual(oldV, v) {\n", p)
 			}
 			fmt.Fprintf(&b, "\t\t\t\tkind := %sOpReplace\n\t\t\t\tif !ok { kind = %sOpAdd }\n", p, p)
-			fmt.Fprintf(&b, "\t\t\t\tp.Operations = append(p.Operations, %sOperation{Kind: kind, Path: fmt.Sprintf(\"/%s/%%v\", k), Old: oldV, New: v})\n", p, f.JSONName)
+			fmt.Fprintf(&b, "\t\t\t\tp.Operations = append(p.Operations, %sOperation{Kind: kind, Path: \"/%s/\" + %sEscapePathKey(fmt.Sprintf(\"%%v\", k)), Old: oldV, New: v})\n", p, f.JSONName, p)
 			b.WriteString("\t\t\t}\n\t\t}\n\t}\n")
 			fmt.Fprintf(&b, "\tif t.%s != nil {\n", f.Name)
 			fmt.Fprintf(&b, "\t\tfor k, v := range t.%s {\n", f.Name)
-			fmt.Fprintf(&b, "\t\t\tif other.%s == nil || !contains(other.%s, k) {\n", f.Name, f.Name)
-			fmt.Fprintf(&b, "\t\t\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpRemove, Path: fmt.Sprintf(\"/%s/%%v\", k), Old: v})\n", p, p, f.JSONName)
+			fmt.Fprintf(&b, "\t\t\tif _, ok := other.%s[k]; !ok {\n", f.Name)
+			fmt.Fprintf(&b, "\t\t\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpRemove, Path: \"/%s/\" + %sEscapePathKey(fmt.Sprintf(\"%%v\", k)), Old: v})\n", p, p, f.JSONName, p)
 			b.WriteString("\t\t\t}\n\t\t}\n\t}\n")
 		} else {
 			// Slice
 			elemType := sliceElem(f.Type)
 			keyField := typeKeys[elemType]
 			if keyField != "" {
-				// Keyed slice diff
+				// Keyed slice diff. Braces scope the per-field index maps so
+				// several keyed slices in one struct do not collide.
+				b.WriteString("\t{\n")
 				fmt.Fprintf(&b, "\totherByKey := make(map[any]int)\n")
 				fmt.Fprintf(&b, "\tfor i, v := range other.%s { otherByKey[v.%s] = i }\n", f.Name, keyField)
 				fmt.Fprintf(&b, "\tfor _, v := range t.%s {\n", f.Name)
 				fmt.Fprintf(&b, "\t\tif _, ok := otherByKey[v.%s]; !ok {\n", keyField)
-				fmt.Fprintf(&b, "\t\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpRemove, Path: fmt.Sprintf(\"/%s/%%v\", v.%s), Old: v})\n", p, p, f.JSONName, keyField)
+				fmt.Fprintf(&b, "\t\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpRemove, Path: \"/%s/\" + %sEscapePathKey(fmt.Sprintf(\"%%v\", v.%s)), Old: v})\n", p, p, f.JSONName, p, keyField)
 				b.WriteString("\t\t}\n\t}\n")
 				fmt.Fprintf(&b, "\ttByKey := make(map[any]int)\n")
 				fmt.Fprintf(&b, "\tfor i, v := range t.%s { tByKey[v.%s] = i }\n", f.Name, keyField)
-				fmt.Fprintf(&b, "\tfor _, v := range other.%s {\n", f.Name)
-				fmt.Fprintf(&b, "\t\tif _, ok := tByKey[v.%s]; !ok {\n", keyField)
-				fmt.Fprintf(&b, "\t\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpAdd, Path: fmt.Sprintf(\"/%s/%%v\", v.%s), New: v})\n", p, p, f.JSONName, keyField)
-				b.WriteString("\t\t}\n\t}\n")
+				fmt.Fprintf(&b, "\tfor j := range other.%s {\n", f.Name)
+				fmt.Fprintf(&b, "\t\ti, ok := tByKey[other.%s[j].%s]\n", f.Name, keyField)
+				b.WriteString("\t\tif !ok {\n")
+				fmt.Fprintf(&b, "\t\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpAdd, Path: \"/%s/\" + %sEscapePathKey(fmt.Sprintf(\"%%v\", other.%s[j].%s)), New: other.%s[j]})\n", p, p, f.JSONName, p, f.Name, keyField, f.Name)
+				b.WriteString("\t\t\tcontinue\n\t\t}\n")
+				// A key present on both sides may still have changed content.
+				fmt.Fprintf(&b, "\t\tprefix := \"/%s/\" + %sEscapePathKey(fmt.Sprintf(\"%%v\", other.%s[j].%s))\n", f.JSONName, p, f.Name, keyField)
+				if f.ElemGenerated {
+					fmt.Fprintf(&b, "\t\tsub := t.%s[i].Diff(&other.%s[j])\n", f.Name, f.Name)
+					b.WriteString("\t\tfor _, op := range sub.Operations {\n")
+					b.WriteString("\t\t\tif op.Path == \"\" || op.Path == \"/\" { op.Path = prefix } else { op.Path = prefix + op.Path }\n")
+					b.WriteString("\t\t\tp.Operations = append(p.Operations, op)\n\t\t}\n")
+				} else {
+					fmt.Fprintf(&b, "\t\tif !%sEqual(t.%s[i], other.%s[j]) {\n", p, f.Name, f.Name)
+					fmt.Fprintf(&b, "\t\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpReplace, Path: prefix, Old: t.%s[i], New: other.%s[j]})\n", p, p, f.Name, f.Name)
+					b.WriteString("\t\t}\n")
+				}
+				b.WriteString("\t}\n")
+				b.WriteString("\t}\n")
 			} else {
 				fmt.Fprintf(&b, "\tif len(t.%s) != len(other.%s) {\n", f.Name, f.Name)
 				fmt.Fprintf(&b, "\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpReplace, Path: \"/%s\", Old: t.%s, New: other.%s})\n", p, p, f.JSONName, f.Name, f.Name)
@@ -374,7 +440,9 @@ func diffFieldCode(f FieldInfo, p string, typeKeys map[string]string) string {
 				b.WriteString("\t\t\t}\n\t\t}\n\t}\n")
 			}
 		}
-	} else if f.Generic() {
+	} else if f.Generic() || f.Atomic && (f.IsStruct || f.IsCollection || f.IsText) {
+		// Atomic composite fields diff as a single whole-value replace; == is
+		// not even defined for most of them.
 		fmt.Fprintf(&b, "\tif !%sEqual(t.%s, other.%s) {\n", p, f.Name, f.Name)
 		fmt.Fprintf(&b, "\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpReplace, Path: \"/%s\", Old: t.%s, New: other.%s})\n", p, p, f.JSONName, f.Name, f.Name)
 		b.WriteString("\t}\n")
@@ -392,8 +460,14 @@ func evalCondCase(f FieldInfo, pkgPrefix string) string {
 	n, typ := f.Name, f.Type
 
 	b.WriteString("\t\tif c.Op == \"exists\" { return true, nil }\n")
-	fmt.Fprintf(&b, "\t\tif c.Op == \"type\" { return condition.CheckType(t.%s, c.Value.(string)), nil }\n", n)
-	fmt.Fprintf(&b, "\t\tif c.Op == \"matches\" { return regexp.MatchString(c.Value.(string), fmt.Sprintf(\"%%v\", t.%s)) }\n", n)
+	fmt.Fprintf(&b, "\t\tif c.Op == \"type\" {\n")
+	b.WriteString("\t\t\ttn, ok := c.Value.(string)\n")
+	b.WriteString("\t\t\tif !ok { return false, fmt.Errorf(\"type requires string value\") }\n")
+	fmt.Fprintf(&b, "\t\t\treturn condition.CheckType(t.%s, tn), nil\n\t\t}\n", n)
+	fmt.Fprintf(&b, "\t\tif c.Op == \"matches\" {\n")
+	b.WriteString("\t\t\tpat, ok := c.Value.(string)\n")
+	b.WriteString("\t\t\tif !ok { return false, fmt.Errorf(\"matches requires string pattern\") }\n")
+	fmt.Fprintf(&b, "\t\t\treturn regexp.MatchString(pat, fmt.Sprintf(\"%%v\", t.%s))\n\t\t}\n", n)
 
 	switch {
 	case isNumericType(typ):
@@ -541,11 +615,26 @@ func copyFieldInit(f FieldInfo) string {
 		return fmt.Sprintf("\t\t%s: append(%s(nil), t.%s...),\n", f.Name, f.Type, f.Name)
 	case f.IsCollection:
 		return "" // map — handled in post-init phase
-	case f.Opaque() && isPtr(f.Type):
-		return "" // pointer to another package's type — copied in the post-init phase
+	case f.Opaque() && !f.KnownValue && !isComparableArray(f.Type):
+		// A type the generator cannot see inside may hold references; it is
+		// deep-copied in the post-init phase.
+		return ""
 	default:
 		return fmt.Sprintf("\t\t%s: t.%s,\n", f.Name, f.Name)
 	}
+}
+
+// isComparableArray reports whether t is a fixed-size array of a builtin
+// comparable element ("[3]int"), which an assignment copies fully.
+func isComparableArray(t string) bool {
+	if !strings.HasPrefix(t, "[") || strings.HasPrefix(t, "[]") {
+		return false
+	}
+	i := strings.Index(t, "]")
+	if i < 0 {
+		return false
+	}
+	return isBuiltinComparable(t[i+1:])
 }
 
 // copyFieldPost returns post-init deep-copy code for one field.
@@ -560,9 +649,21 @@ func copyFieldPost(f FieldInfo, p string) string {
 		return b.String()
 	}
 	if f.Opaque() && isPtr(f.Type) {
-		// Another package's type: copy the pointee so the clone does not share
-		// state with the original.
-		fmt.Fprintf(&b, "\tif t.%s != nil { _v := *t.%s; res.%s = &_v }\n", f.Name, f.Name, f.Name)
+		if f.PointeeKnown {
+			// Pointer to a value-semantics stdlib type: copying the pointee is
+			// a full copy.
+			fmt.Fprintf(&b, "\tif t.%s != nil { _v := *t.%s; res.%s = &_v }\n", f.Name, f.Name, f.Name)
+		} else {
+			// The pointee may hold references of its own.
+			fmt.Fprintf(&b, "\tres.%s = %sClone(t.%s)\n", f.Name, p, f.Name)
+		}
+		return b.String()
+	}
+	if f.Opaque() && !f.KnownValue && !isComparableArray(f.Type) {
+		// A type the generator cannot see inside (another package's struct, a
+		// generic instantiation, an interface): deep-copy it so the clone does
+		// not share references with the original.
+		fmt.Fprintf(&b, "\tres.%s = %sClone(t.%s)\n", f.Name, p, f.Name)
 		return b.String()
 	}
 	if f.IsStruct {
@@ -580,12 +681,14 @@ func copyFieldPost(f FieldInfo, p string) string {
 			switch {
 			case isPtr(et) && f.ElemGenerated:
 				fmt.Fprintf(&b, "\tfor i, v := range t.%s { if v != nil { res.%s[i] = v.Clone() } }\n", f.Name, f.Name)
-			case isPtr(et):
+			case isPtr(et) && f.ElemKnownValue:
 				fmt.Fprintf(&b, "\tfor i, v := range t.%s { if v != nil { _v := *v; res.%s[i] = &_v } }\n", f.Name, f.Name)
+			case isPtr(et):
+				fmt.Fprintf(&b, "\tfor i, v := range t.%s { res.%s[i] = %sClone(v) }\n", f.Name, f.Name, p)
 			case f.ElemGenerated:
 				fmt.Fprintf(&b, "\tfor i := range t.%s { res.%s[i] = *t.%s[i].Clone() }\n", f.Name, f.Name, f.Name)
-			case isReferenceType(et):
-				// A nested slice or map would be shared, not copied.
+			case elemNeedsCopy(f, et):
+				// Reference-typed or opaque elements are deep-copied one by one.
 				fmt.Fprintf(&b, "\tfor i, v := range t.%s { res.%s[i] = %sClone(v) }\n", f.Name, f.Name, p)
 			}
 		} else if strings.HasPrefix(f.Type, "map[") {
@@ -595,12 +698,14 @@ func copyFieldPost(f FieldInfo, p string) string {
 			switch {
 			case isPtr(vt) && f.ElemGenerated:
 				fmt.Fprintf(&b, "\t\t\tif v != nil { res.%s[k] = v.Clone() }\n", f.Name)
-			case isPtr(vt):
+			case isPtr(vt) && f.ElemKnownValue:
 				fmt.Fprintf(&b, "\t\t\tif v != nil { _v := *v; res.%s[k] = &_v }\n", f.Name)
+			case isPtr(vt):
+				fmt.Fprintf(&b, "\t\t\tres.%s[k] = %sClone(v)\n", f.Name, p)
 			case f.ElemGenerated:
 				fmt.Fprintf(&b, "\t\t\tres.%s[k] = *v.Clone()\n", f.Name)
-			case isReferenceType(vt):
-				// A nested slice or map would be shared, not copied.
+			case elemNeedsCopy(f, vt):
+				// Reference-typed or opaque values are deep-copied one by one.
 				fmt.Fprintf(&b, "\t\t\tres.%s[k] = %sClone(v)\n", f.Name, p)
 			default:
 				fmt.Fprintf(&b, "\t\t\tres.%s[k] = v\n", f.Name)
@@ -631,6 +736,9 @@ package {{.PkgName}}
 import (
 	"fmt"
 	"log/slog"
+{{- if .NeedsReflect}}
+	"reflect"
+{{- end}}
 {{- if .NeedsRegexp}}
 	"regexp"
 {{- end}}
@@ -689,11 +797,13 @@ var applyOpTmpl = template.Must(template.New("applyOp").Funcs(tmplFuncs).Parse(
 	`func (t *{{.TypeName}}) applyOperation(op {{.P}}Operation, logger *slog.Logger) (bool, error) {
 	if op.If != nil {
 		ok, err := t.evaluateCondition(*op.If)
-		if err != nil || !ok { return true, nil }
+		if err != nil { return true, fmt.Errorf("condition evaluation failed at %s: %w", op.Path, err) }
+		if !ok { return true, nil }
 	}
 	if op.Unless != nil {
 		ok, err := t.evaluateCondition(*op.Unless)
-		if err != nil || ok { return true, nil }
+		if err != nil { return true, fmt.Errorf("condition evaluation failed at %s: %w", op.Path, err) }
+		if ok { return true, nil }
 	}
 	if op.Kind == {{.P}}OpLog {
 		logger.Info("deep log", "message", op.New, "path", op.Path)
@@ -763,7 +873,10 @@ var evalCondTmpl = template.Must(template.New("evalCond").Funcs(tmplFuncs).Parse
 	{{if ne .JSONName .Name}}case "/{{.JSONName}}", "/{{.Name}}":{{else}}case "/{{.Name}}":{{end}}
 {{evalCondCase . $.P}}{{end}}{{end -}}
 	}
-	return false, fmt.Errorf("unsupported condition path or op: %s", c.Path)
+	// Anything the fast path does not model — nested paths, collection
+	// lookups, unusual ops — is evaluated by the reflection engine, which
+	// handles the full condition language.
+	return condition.Evaluate(reflect.ValueOf(t).Elem(), &c)
 }
 
 `))
@@ -788,14 +901,6 @@ func (t *{{.TypeName}}) Clone() *{{.TypeName}} {
 }
 `))
 
-var helpersTmpl = template.Must(template.New("helpers").Funcs(tmplFuncs).Parse(
-	`
-func contains[M ~map[K]V, K comparable, V any](m M, k K) bool {
-	_, ok := m[k]
-	return ok
-}
-`))
-
 // ── generator ────────────────────────────────────────────────────────────────
 
 // writeHeader emits the package clause and import block for body. Which
@@ -805,6 +910,7 @@ func contains[M ~map[K]V, K comparable, V any](m M, k K) bool {
 func (g *Generator) writeHeader(body string) {
 	must(headerTmpl.Execute(&g.buf, headerData{
 		PkgName:        g.pkgName,
+		NeedsReflect:   usesQualifier(body, "reflect"),
 		NeedsRegexp:    usesQualifier(body, "regexp"),
 		NeedsStrings:   usesQualifier(body, "strings"),
 		NeedsCondition: usesQualifier(body, "condition"),
@@ -849,6 +955,7 @@ func (g *Generator) extraImports(body string) []importSpec {
 var fixedImports = map[string]string{
 	"fmt":       "fmt",
 	"slog":      "log/slog",
+	"reflect":   "reflect",
 	"regexp":    "regexp",
 	"strings":   "strings",
 	"condition": "github.com/brunoga/deep/v5/condition",
@@ -884,13 +991,6 @@ func (g *Generator) writeType(typeName string, fields []FieldInfo) {
 	must(evalCondTmpl.Execute(&g.body, d))
 	must(equalTmpl.Execute(&g.body, d))
 	must(copyTmpl.Execute(&g.body, d))
-}
-
-func (g *Generator) writeHelpers() {
-	if g.pkgName == "deep" {
-		return
-	}
-	must(helpersTmpl.Execute(&g.body, nil))
 }
 
 func must(err error) {
@@ -1027,8 +1127,6 @@ func main() {
 		for i := range allTypes {
 			g.writeType(allTypes[i], allFields[i])
 		}
-		g.writeHelpers()
-
 		// The header comes last: it is derived from the generated body.
 		g.writeHeader(g.body.String())
 		g.buf.Write(g.body.Bytes())
@@ -1054,8 +1152,19 @@ func main() {
 func parseFields(st *ast.StructType, imports map[string]string, idx pkgIndex) []FieldInfo {
 	var fields []FieldInfo
 	for _, field := range st.Fields.List {
-		if len(field.Names) == 0 {
-			continue // embedded field
+		// An embedded field is addressed by its type name, the same way the
+		// reflection engine (and the language) names it.
+		names := make([]string, 0, len(field.Names))
+		for _, ident := range field.Names {
+			names = append(names, ident.Name)
+		}
+		if len(names) == 0 {
+			name := embeddedFieldName(field.Type)
+			if name == "" {
+				log.Printf("deep-gen: embedded field with an unsupported type; it will be handled by the reflection fallback")
+				continue
+			}
+			names = []string{name}
 		}
 		var ignore, readOnly, atomic bool
 		// Tags apply to all names in the declaration (e.g. `X, Y int \`json:"x"\``
@@ -1080,8 +1189,7 @@ func parseFields(st *ast.StructType, imports map[string]string, idx pkgIndex) []
 		}
 
 		ti := resolveType(field.Type, imports, idx)
-		for _, nameIdent := range field.Names {
-			name := nameIdent.Name
+		for _, name := range names {
 			jsonName := name
 			if field.Tag != nil {
 				tagVal := strings.Trim(field.Tag.Value, "`")
@@ -1105,6 +1213,9 @@ func parseFields(st *ast.StructType, imports map[string]string, idx pkgIndex) []
 				ElemGenerated:  ti.elemGenerated,
 				Comparable:     ti.comparable,
 				ElemComparable: ti.elemComparable,
+				KnownValue:     ti.knownValue,
+				ElemKnownValue: ti.elemKnownValue,
+				PointeeKnown:   ti.pointeeKnown,
 				Quals:          ti.quals,
 				Ignore:         ignore,
 				ReadOnly:       readOnly,
@@ -1135,6 +1246,9 @@ type typeInfo struct {
 	elemGenerated  bool
 	comparable     bool
 	elemComparable bool
+	knownValue     bool
+	elemKnownValue bool
+	pointeeKnown   bool
 	quals          []string
 }
 
@@ -1166,8 +1280,11 @@ func resolveType(expr ast.Expr, imports map[string]string, idx pkgIndex) typeInf
 	case *ast.Ident:
 		ti.isStruct = isGeneratedStruct(typ, idx)
 		ti.comparable = idx.isComparable(typ)
+	case *ast.SelectorExpr:
+		ti.knownValue = isKnownValueExpr(typ, imports)
 	case *ast.StarExpr:
 		ti.isStruct = isGeneratedStruct(unparen(typ.X), idx)
+		ti.pointeeKnown = isKnownValueExpr(unparen(typ.X), imports)
 	case *ast.ArrayType:
 		// Fixed-size arrays are values, not collections: patching into them is
 		// left to the reflection fallback.
@@ -1175,11 +1292,13 @@ func resolveType(expr ast.Expr, imports map[string]string, idx pkgIndex) typeInf
 			ti.isCollection = true
 			ti.elemGenerated = isGeneratedStructRef(typ.Elt, idx)
 			ti.elemComparable = idx.isComparable(unparen(typ.Elt))
+			ti.elemKnownValue = isKnownValueRef(typ.Elt, imports)
 		}
 	case *ast.MapType:
 		ti.isCollection = true
 		ti.elemGenerated = isGeneratedStructRef(typ.Value, idx)
 		ti.elemComparable = idx.isComparable(unparen(typ.Value))
+		ti.elemKnownValue = isKnownValueRef(typ.Value, imports)
 	}
 	return ti
 }
@@ -1277,6 +1396,37 @@ func unparen(expr ast.Expr) ast.Expr {
 	}
 }
 
+// isKnownValueExpr reports whether expr names a stdlib type known to have
+// value semantics: copying it by assignment is a full copy. The list is
+// deliberately tiny — only types this can be stated about with certainty.
+// Resolution goes through the file's imports, so an aliased stdlib time
+// package still qualifies and a user package that happens to be called "time"
+// does not.
+func isKnownValueExpr(expr ast.Expr, imports map[string]string) bool {
+	sel, ok := unparen(expr).(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	pkg, ok := sel.X.(*ast.Ident)
+	if !ok || imports[pkg.Name] != "time" {
+		return false
+	}
+	switch sel.Sel.Name {
+	case "Time", "Duration", "Month", "Weekday":
+		return true
+	}
+	return false
+}
+
+// isKnownValueRef is isKnownValueExpr, looking through one pointer.
+func isKnownValueRef(expr ast.Expr, imports map[string]string) bool {
+	expr = unparen(expr)
+	if star, ok := expr.(*ast.StarExpr); ok {
+		expr = unparen(star.X)
+	}
+	return isKnownValueExpr(expr, imports)
+}
+
 // isTextType reports whether expr refers to crdt.Text.
 func isTextType(expr ast.Expr, imports map[string]string) bool {
 	switch typ := expr.(type) {
@@ -1315,6 +1465,24 @@ func (idx pkgIndex) isComparable(expr ast.Expr) bool {
 		return false
 	}
 	return isBuiltinComparable(ident.Name) || idx.scalars[ident.Name]
+}
+
+// embeddedFieldName returns the implicit field name of an embedded field: the
+// bare type name, looking through pointers, qualifiers and type arguments.
+func embeddedFieldName(expr ast.Expr) string {
+	switch typ := unparen(expr).(type) {
+	case *ast.Ident:
+		return typ.Name
+	case *ast.SelectorExpr:
+		return typ.Sel.Name
+	case *ast.StarExpr:
+		return embeddedFieldName(typ.X)
+	case *ast.IndexExpr:
+		return embeddedFieldName(typ.X)
+	case *ast.IndexListExpr:
+		return embeddedFieldName(typ.X)
+	}
+	return ""
 }
 
 // fileImports maps the package qualifiers usable in file to their import paths.

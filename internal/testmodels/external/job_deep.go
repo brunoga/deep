@@ -7,6 +7,7 @@ import (
 	"github.com/brunoga/deep/v5/condition"
 	crdt "github.com/brunoga/deep/v5/crdt"
 	"log/slog"
+	"reflect"
 	"regexp"
 	"strings"
 	"time"
@@ -48,13 +49,19 @@ func (t *Stage) Patch(p deep.Patch[Stage], logger *slog.Logger) error {
 func (t *Stage) applyOperation(op deep.Operation, logger *slog.Logger) (bool, error) {
 	if op.If != nil {
 		ok, err := t.evaluateCondition(*op.If)
-		if err != nil || !ok {
+		if err != nil {
+			return true, fmt.Errorf("condition evaluation failed at %s: %w", op.Path, err)
+		}
+		if !ok {
 			return true, nil
 		}
 	}
 	if op.Unless != nil {
 		ok, err := t.evaluateCondition(*op.Unless)
-		if err != nil || ok {
+		if err != nil {
+			return true, fmt.Errorf("condition evaluation failed at %s: %w", op.Path, err)
+		}
+		if ok {
 			return true, nil
 		}
 	}
@@ -79,32 +86,28 @@ func (t *Stage) applyOperation(op deep.Operation, logger *slog.Logger) (bool, er
 		}
 		return true, fmt.Errorf("unsupported root operation: %s", op.Kind)
 	case "/name", "/Name":
-		if op.Kind == deep.OpLog {
-			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Name)
-			return true, nil
-		}
 		if op.Kind == deep.OpReplace && op.Strict {
 			if _oldV, ok := op.Old.(string); !ok || t.Name != _oldV {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Name)
 			}
 		}
-		if v, ok := op.New.(string); ok {
-			t.Name = v
-			return true, nil
+		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
+			if v, ok := op.New.(string); ok {
+				t.Name = v
+				return true, nil
+			}
 		}
 	case "/at", "/At":
-		if op.Kind == deep.OpLog {
-			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.At)
-			return true, nil
-		}
 		if op.Kind == deep.OpReplace && op.Strict {
 			if old, ok := op.Old.(time.Time); !ok || !deep.Equal(t.At, old) {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.At)
 			}
 		}
-		if v, ok := op.New.(time.Time); ok {
-			t.At = v
-			return true, nil
+		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
+			if v, ok := op.New.(time.Time); ok {
+				t.At = v
+				return true, nil
+			}
 		}
 	default:
 	}
@@ -159,10 +162,18 @@ func (t *Stage) evaluateCondition(c condition.Condition) (bool, error) {
 			return true, nil
 		}
 		if c.Op == "type" {
-			return condition.CheckType(t.Name, c.Value.(string)), nil
+			tn, ok := c.Value.(string)
+			if !ok {
+				return false, fmt.Errorf("type requires string value")
+			}
+			return condition.CheckType(t.Name, tn), nil
 		}
 		if c.Op == "matches" {
-			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Name))
+			pat, ok := c.Value.(string)
+			if !ok {
+				return false, fmt.Errorf("matches requires string pattern")
+			}
+			return regexp.MatchString(pat, fmt.Sprintf("%v", t.Name))
 		}
 		_sv, _ok := c.Value.(string)
 		if !_ok {
@@ -203,10 +214,18 @@ func (t *Stage) evaluateCondition(c condition.Condition) (bool, error) {
 			return true, nil
 		}
 		if c.Op == "type" {
-			return condition.CheckType(t.At, c.Value.(string)), nil
+			tn, ok := c.Value.(string)
+			if !ok {
+				return false, fmt.Errorf("type requires string value")
+			}
+			return condition.CheckType(t.At, tn), nil
 		}
 		if c.Op == "matches" {
-			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.At))
+			pat, ok := c.Value.(string)
+			if !ok {
+				return false, fmt.Errorf("matches requires string pattern")
+			}
+			return regexp.MatchString(pat, fmt.Sprintf("%v", t.At))
 		}
 		switch c.Op {
 		case "==":
@@ -215,7 +234,10 @@ func (t *Stage) evaluateCondition(c condition.Condition) (bool, error) {
 			return fmt.Sprintf("%v", t.At) != fmt.Sprintf("%v", c.Value), nil
 		}
 	}
-	return false, fmt.Errorf("unsupported condition path or op: %s", c.Path)
+	// Anything the fast path does not model — nested paths, collection
+	// lookups, unusual ops — is evaluated by the reflection engine, which
+	// handles the full condition language.
+	return condition.Evaluate(reflect.ValueOf(t).Elem(), &c)
 }
 
 // Equal returns true if t and other are deeply equal.
@@ -273,13 +295,19 @@ func (t *Job) Patch(p deep.Patch[Job], logger *slog.Logger) error {
 func (t *Job) applyOperation(op deep.Operation, logger *slog.Logger) (bool, error) {
 	if op.If != nil {
 		ok, err := t.evaluateCondition(*op.If)
-		if err != nil || !ok {
+		if err != nil {
+			return true, fmt.Errorf("condition evaluation failed at %s: %w", op.Path, err)
+		}
+		if !ok {
 			return true, nil
 		}
 	}
 	if op.Unless != nil {
 		ok, err := t.evaluateCondition(*op.Unless)
-		if err != nil || ok {
+		if err != nil {
+			return true, fmt.Errorf("condition evaluation failed at %s: %w", op.Path, err)
+		}
+		if ok {
 			return true, nil
 		}
 	}
@@ -304,122 +332,102 @@ func (t *Job) applyOperation(op deep.Operation, logger *slog.Logger) (bool, erro
 		}
 		return true, fmt.Errorf("unsupported root operation: %s", op.Kind)
 	case "/startAt", "/StartAt":
-		if op.Kind == deep.OpLog {
-			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.StartAt)
-			return true, nil
-		}
 		if op.Kind == deep.OpReplace && op.Strict {
 			if old, ok := op.Old.(*time.Time); !ok || !deep.Equal(t.StartAt, old) {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.StartAt)
 			}
 		}
-		if v, ok := op.New.(*time.Time); ok {
-			t.StartAt = v
-			return true, nil
+		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
+			if v, ok := op.New.(*time.Time); ok {
+				t.StartAt = v
+				return true, nil
+			}
 		}
 	case "/deadline", "/Deadline":
-		if op.Kind == deep.OpLog {
-			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Deadline)
-			return true, nil
-		}
 		if op.Kind == deep.OpReplace && op.Strict {
 			if old, ok := op.Old.(time.Time); !ok || !deep.Equal(t.Deadline, old) {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Deadline)
 			}
 		}
-		if v, ok := op.New.(time.Time); ok {
-			t.Deadline = v
-			return true, nil
+		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
+			if v, ok := op.New.(time.Time); ok {
+				t.Deadline = v
+				return true, nil
+			}
 		}
 	case "/timeout", "/Timeout":
-		if op.Kind == deep.OpLog {
-			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Timeout)
-			return true, nil
-		}
 		if op.Kind == deep.OpReplace && op.Strict {
 			if old, ok := op.Old.(time.Duration); !ok || !deep.Equal(t.Timeout, old) {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Timeout)
 			}
 		}
-		if v, ok := op.New.(time.Duration); ok {
-			t.Timeout = v
-			return true, nil
+		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
+			if v, ok := op.New.(time.Duration); ok {
+				t.Timeout = v
+				return true, nil
+			}
 		}
 	case "/window", "/Window":
-		if op.Kind == deep.OpLog {
-			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Window)
-			return true, nil
-		}
 		if op.Kind == deep.OpReplace && op.Strict {
 			if old, ok := op.Old.([]time.Time); !ok || !deep.Equal(t.Window, old) {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Window)
 			}
 		}
-		if v, ok := op.New.([]time.Time); ok {
-			t.Window = v
-			return true, nil
+		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
+			if v, ok := op.New.([]time.Time); ok {
+				t.Window = v
+				return true, nil
+			}
 		}
 	case "/retries", "/Retries":
-		if op.Kind == deep.OpLog {
-			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Retries)
-			return true, nil
-		}
 		if op.Kind == deep.OpReplace && op.Strict {
 			if old, ok := op.Old.(map[string]*time.Time); !ok || !deep.Equal(t.Retries, old) {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Retries)
 			}
 		}
-		if v, ok := op.New.(map[string]*time.Time); ok {
-			t.Retries = v
-			return true, nil
+		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
+			if v, ok := op.New.(map[string]*time.Time); ok {
+				t.Retries = v
+				return true, nil
+			}
 		}
 	case "/stages", "/Stages":
-		if op.Kind == deep.OpLog {
-			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Stages)
-			return true, nil
-		}
 		if op.Kind == deep.OpReplace && op.Strict {
 			if old, ok := op.Old.([]Stage); !ok || !deep.Equal(t.Stages, old) {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Stages)
 			}
 		}
-		if v, ok := op.New.([]Stage); ok {
-			t.Stages = v
-			return true, nil
+		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
+			if v, ok := op.New.([]Stage); ok {
+				t.Stages = v
+				return true, nil
+			}
 		}
 	case "/owners", "/Owners":
-		if op.Kind == deep.OpLog {
-			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Owners)
-			return true, nil
-		}
 		if op.Kind == deep.OpReplace && op.Strict {
 			if old, ok := op.Old.(map[string]*Stage); !ok || !deep.Equal(t.Owners, old) {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Owners)
 			}
 		}
-		if v, ok := op.New.(map[string]*Stage); ok {
-			t.Owners = v
-			return true, nil
+		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
+			if v, ok := op.New.(map[string]*Stage); ok {
+				t.Owners = v
+				return true, nil
+			}
 		}
 	case "/priority", "/Priority":
-		if op.Kind == deep.OpLog {
-			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Priority)
-			return true, nil
-		}
 		if op.Kind == deep.OpReplace && op.Strict {
 			if _oldV, ok := op.Old.(Priority); !ok || t.Priority != _oldV {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Priority)
 			}
 		}
-		if v, ok := op.New.(Priority); ok {
-			t.Priority = v
-			return true, nil
+		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
+			if v, ok := op.New.(Priority); ok {
+				t.Priority = v
+				return true, nil
+			}
 		}
 	case "/notes", "/Notes":
-		if op.Kind == deep.OpLog {
-			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Notes)
-			return true, nil
-		}
 		if op.Kind == deep.OpReplace && op.Strict {
 			if old, ok := op.Old.(crdt.Text); !ok || !deep.Equal(t.Notes, old) {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Notes)
@@ -428,71 +436,88 @@ func (t *Job) applyOperation(op deep.Operation, logger *slog.Logger) (bool, erro
 		op.Path = "/"
 		return true, t.Notes.Patch(deep.Patch[crdt.Text]{Operations: []deep.Operation{op}}, logger)
 	case "/title", "/Title":
-		if op.Kind == deep.OpLog {
-			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Title)
-			return true, nil
-		}
 		if op.Kind == deep.OpReplace && op.Strict {
 			if old, ok := op.Old.(crdt.LWW[string]); !ok || !deep.Equal(t.Title, old) {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Title)
 			}
 		}
-		if v, ok := op.New.(crdt.LWW[string]); ok {
-			t.Title = v
-			return true, nil
+		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
+			if v, ok := op.New.(crdt.LWW[string]); ok {
+				t.Title = v
+				return true, nil
+			}
+		}
+	case "/history", "/History":
+		if op.Kind == deep.OpReplace && op.Strict {
+			if old, ok := op.Old.(crdt.LWW[[]int]); !ok || !deep.Equal(t.History, old) {
+				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.History)
+			}
+		}
+		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
+			if v, ok := op.New.(crdt.LWW[[]int]); ok {
+				t.History = v
+				return true, nil
+			}
 		}
 	case "/checked", "/Checked":
-		if op.Kind == deep.OpLog {
-			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Checked)
-			return true, nil
-		}
 		if op.Kind == deep.OpReplace && op.Strict {
 			if old, ok := op.Old.(clock.Time); !ok || !deep.Equal(t.Checked, old) {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Checked)
 			}
 		}
-		if v, ok := op.New.(clock.Time); ok {
-			t.Checked = v
-			return true, nil
+		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
+			if v, ok := op.New.(clock.Time); ok {
+				t.Checked = v
+				return true, nil
+			}
 		}
 	case "/grid", "/Grid":
-		if op.Kind == deep.OpLog {
-			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Grid)
-			return true, nil
-		}
 		if op.Kind == deep.OpReplace && op.Strict {
 			if old, ok := op.Old.([2]int); !ok || !deep.Equal(t.Grid, old) {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Grid)
 			}
 		}
-		if v, ok := op.New.([2]int); ok {
-			t.Grid = v
-			return true, nil
+		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
+			if v, ok := op.New.([2]int); ok {
+				t.Grid = v
+				return true, nil
+			}
 		}
 	default:
 		if strings.HasPrefix(op.Path, "/retries/") {
 			parts := strings.Split(op.Path[len("/retries/"):], "/")
-			key := parts[0]
-			if op.Kind == deep.OpRemove {
-				delete(t.Retries, key)
-				return true, nil
-			}
-			if t.Retries == nil {
-				t.Retries = make(map[string]*time.Time)
-			}
-			if v, ok := op.New.(*time.Time); ok {
-				t.Retries[key] = v
-				return true, nil
+			key := deep.UnescapePathKey(parts[0])
+			if len(parts) == 1 && !op.Strict {
+				if op.Kind == deep.OpRemove {
+					delete(t.Retries, key)
+					return true, nil
+				}
+				if v, ok := op.New.(*time.Time); ok && (op.Kind == deep.OpAdd || op.Kind == deep.OpReplace) {
+					if t.Retries == nil {
+						t.Retries = make(map[string]*time.Time)
+					}
+					t.Retries[key] = v
+					return true, nil
+				}
 			}
 		}
 		if strings.HasPrefix(op.Path, "/owners/") {
 			parts := strings.Split(op.Path[len("/owners/"):], "/")
-			key := parts[0]
-			if val, ok := t.Owners[key]; ok && val != nil {
-				op.Path = "/"
-				if len(parts) > 1 {
-					op.Path = "/" + strings.Join(parts[1:], "/")
+			key := deep.UnescapePathKey(parts[0])
+			if len(parts) == 1 && !op.Strict {
+				if op.Kind == deep.OpRemove {
+					delete(t.Owners, key)
+					return true, nil
 				}
+				if v, ok := op.New.(*Stage); ok && (op.Kind == deep.OpAdd || op.Kind == deep.OpReplace) {
+					if t.Owners == nil {
+						t.Owners = make(map[string]*Stage)
+					}
+					t.Owners[key] = v
+					return true, nil
+				}
+			} else if val, ok := t.Owners[key]; ok && val != nil {
+				op.Path = "/" + strings.Join(parts[1:], "/")
 				return val.applyOperation(op, logger)
 			}
 		}
@@ -524,7 +549,7 @@ func (t *Job) Diff(other *Job) deep.Patch[Job] {
 	if other.Retries != nil {
 		for k, v := range other.Retries {
 			if t.Retries == nil {
-				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: fmt.Sprintf("/retries/%v", k), New: v})
+				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/retries/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
 				continue
 			}
 			if oldV, ok := t.Retries[k]; !ok || !deep.Equal(oldV, v) {
@@ -532,14 +557,14 @@ func (t *Job) Diff(other *Job) deep.Patch[Job] {
 				if !ok {
 					kind = deep.OpAdd
 				}
-				p.Operations = append(p.Operations, deep.Operation{Kind: kind, Path: fmt.Sprintf("/retries/%v", k), Old: oldV, New: v})
+				p.Operations = append(p.Operations, deep.Operation{Kind: kind, Path: "/retries/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: oldV, New: v})
 			}
 		}
 	}
 	if t.Retries != nil {
 		for k, v := range t.Retries {
-			if other.Retries == nil || !contains(other.Retries, k) {
-				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: fmt.Sprintf("/retries/%v", k), Old: v})
+			if _, ok := other.Retries[k]; !ok {
+				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: "/retries/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: v})
 			}
 		}
 	}
@@ -555,7 +580,7 @@ func (t *Job) Diff(other *Job) deep.Patch[Job] {
 	if other.Owners != nil {
 		for k, v := range other.Owners {
 			if t.Owners == nil {
-				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: fmt.Sprintf("/owners/%v", k), New: v})
+				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/owners/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
 				continue
 			}
 			if oldV, ok := t.Owners[k]; !ok || !oldV.Equal(v) {
@@ -563,14 +588,14 @@ func (t *Job) Diff(other *Job) deep.Patch[Job] {
 				if !ok {
 					kind = deep.OpAdd
 				}
-				p.Operations = append(p.Operations, deep.Operation{Kind: kind, Path: fmt.Sprintf("/owners/%v", k), Old: oldV, New: v})
+				p.Operations = append(p.Operations, deep.Operation{Kind: kind, Path: "/owners/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: oldV, New: v})
 			}
 		}
 	}
 	if t.Owners != nil {
 		for k, v := range t.Owners {
-			if other.Owners == nil || !contains(other.Owners, k) {
-				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: fmt.Sprintf("/owners/%v", k), Old: v})
+			if _, ok := other.Owners[k]; !ok {
+				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: "/owners/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: v})
 			}
 		}
 	}
@@ -588,6 +613,9 @@ func (t *Job) Diff(other *Job) deep.Patch[Job] {
 	}
 	if !deep.Equal(t.Title, other.Title) {
 		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/title", Old: t.Title, New: other.Title})
+	}
+	if !deep.Equal(t.History, other.History) {
+		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/history", Old: t.History, New: other.History})
 	}
 	if !deep.Equal(t.Checked, other.Checked) {
 		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/checked", Old: t.Checked, New: other.Checked})
@@ -637,10 +665,18 @@ func (t *Job) evaluateCondition(c condition.Condition) (bool, error) {
 			return true, nil
 		}
 		if c.Op == "type" {
-			return condition.CheckType(t.StartAt, c.Value.(string)), nil
+			tn, ok := c.Value.(string)
+			if !ok {
+				return false, fmt.Errorf("type requires string value")
+			}
+			return condition.CheckType(t.StartAt, tn), nil
 		}
 		if c.Op == "matches" {
-			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.StartAt))
+			pat, ok := c.Value.(string)
+			if !ok {
+				return false, fmt.Errorf("matches requires string pattern")
+			}
+			return regexp.MatchString(pat, fmt.Sprintf("%v", t.StartAt))
 		}
 		switch c.Op {
 		case "==":
@@ -653,10 +689,18 @@ func (t *Job) evaluateCondition(c condition.Condition) (bool, error) {
 			return true, nil
 		}
 		if c.Op == "type" {
-			return condition.CheckType(t.Deadline, c.Value.(string)), nil
+			tn, ok := c.Value.(string)
+			if !ok {
+				return false, fmt.Errorf("type requires string value")
+			}
+			return condition.CheckType(t.Deadline, tn), nil
 		}
 		if c.Op == "matches" {
-			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Deadline))
+			pat, ok := c.Value.(string)
+			if !ok {
+				return false, fmt.Errorf("matches requires string pattern")
+			}
+			return regexp.MatchString(pat, fmt.Sprintf("%v", t.Deadline))
 		}
 		switch c.Op {
 		case "==":
@@ -669,10 +713,18 @@ func (t *Job) evaluateCondition(c condition.Condition) (bool, error) {
 			return true, nil
 		}
 		if c.Op == "type" {
-			return condition.CheckType(t.Timeout, c.Value.(string)), nil
+			tn, ok := c.Value.(string)
+			if !ok {
+				return false, fmt.Errorf("type requires string value")
+			}
+			return condition.CheckType(t.Timeout, tn), nil
 		}
 		if c.Op == "matches" {
-			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Timeout))
+			pat, ok := c.Value.(string)
+			if !ok {
+				return false, fmt.Errorf("matches requires string pattern")
+			}
+			return regexp.MatchString(pat, fmt.Sprintf("%v", t.Timeout))
 		}
 		switch c.Op {
 		case "==":
@@ -685,10 +737,18 @@ func (t *Job) evaluateCondition(c condition.Condition) (bool, error) {
 			return true, nil
 		}
 		if c.Op == "type" {
-			return condition.CheckType(t.Priority, c.Value.(string)), nil
+			tn, ok := c.Value.(string)
+			if !ok {
+				return false, fmt.Errorf("type requires string value")
+			}
+			return condition.CheckType(t.Priority, tn), nil
 		}
 		if c.Op == "matches" {
-			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Priority))
+			pat, ok := c.Value.(string)
+			if !ok {
+				return false, fmt.Errorf("matches requires string pattern")
+			}
+			return regexp.MatchString(pat, fmt.Sprintf("%v", t.Priority))
 		}
 		switch c.Op {
 		case "==":
@@ -701,10 +761,18 @@ func (t *Job) evaluateCondition(c condition.Condition) (bool, error) {
 			return true, nil
 		}
 		if c.Op == "type" {
-			return condition.CheckType(t.Title, c.Value.(string)), nil
+			tn, ok := c.Value.(string)
+			if !ok {
+				return false, fmt.Errorf("type requires string value")
+			}
+			return condition.CheckType(t.Title, tn), nil
 		}
 		if c.Op == "matches" {
-			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Title))
+			pat, ok := c.Value.(string)
+			if !ok {
+				return false, fmt.Errorf("matches requires string pattern")
+			}
+			return regexp.MatchString(pat, fmt.Sprintf("%v", t.Title))
 		}
 		switch c.Op {
 		case "==":
@@ -712,15 +780,47 @@ func (t *Job) evaluateCondition(c condition.Condition) (bool, error) {
 		case "!=":
 			return fmt.Sprintf("%v", t.Title) != fmt.Sprintf("%v", c.Value), nil
 		}
+	case "/history", "/History":
+		if c.Op == "exists" {
+			return true, nil
+		}
+		if c.Op == "type" {
+			tn, ok := c.Value.(string)
+			if !ok {
+				return false, fmt.Errorf("type requires string value")
+			}
+			return condition.CheckType(t.History, tn), nil
+		}
+		if c.Op == "matches" {
+			pat, ok := c.Value.(string)
+			if !ok {
+				return false, fmt.Errorf("matches requires string pattern")
+			}
+			return regexp.MatchString(pat, fmt.Sprintf("%v", t.History))
+		}
+		switch c.Op {
+		case "==":
+			return fmt.Sprintf("%v", t.History) == fmt.Sprintf("%v", c.Value), nil
+		case "!=":
+			return fmt.Sprintf("%v", t.History) != fmt.Sprintf("%v", c.Value), nil
+		}
 	case "/checked", "/Checked":
 		if c.Op == "exists" {
 			return true, nil
 		}
 		if c.Op == "type" {
-			return condition.CheckType(t.Checked, c.Value.(string)), nil
+			tn, ok := c.Value.(string)
+			if !ok {
+				return false, fmt.Errorf("type requires string value")
+			}
+			return condition.CheckType(t.Checked, tn), nil
 		}
 		if c.Op == "matches" {
-			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Checked))
+			pat, ok := c.Value.(string)
+			if !ok {
+				return false, fmt.Errorf("matches requires string pattern")
+			}
+			return regexp.MatchString(pat, fmt.Sprintf("%v", t.Checked))
 		}
 		switch c.Op {
 		case "==":
@@ -733,10 +833,18 @@ func (t *Job) evaluateCondition(c condition.Condition) (bool, error) {
 			return true, nil
 		}
 		if c.Op == "type" {
-			return condition.CheckType(t.Grid, c.Value.(string)), nil
+			tn, ok := c.Value.(string)
+			if !ok {
+				return false, fmt.Errorf("type requires string value")
+			}
+			return condition.CheckType(t.Grid, tn), nil
 		}
 		if c.Op == "matches" {
-			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Grid))
+			pat, ok := c.Value.(string)
+			if !ok {
+				return false, fmt.Errorf("matches requires string pattern")
+			}
+			return regexp.MatchString(pat, fmt.Sprintf("%v", t.Grid))
 		}
 		switch c.Op {
 		case "==":
@@ -745,7 +853,10 @@ func (t *Job) evaluateCondition(c condition.Condition) (bool, error) {
 			return fmt.Sprintf("%v", t.Grid) != fmt.Sprintf("%v", c.Value), nil
 		}
 	}
-	return false, fmt.Errorf("unsupported condition path or op: %s", c.Path)
+	// Anything the fast path does not model — nested paths, collection
+	// lookups, unusual ops — is evaluated by the reflection engine, which
+	// handles the full condition language.
+	return condition.Evaluate(reflect.ValueOf(t).Elem(), &c)
 }
 
 // Equal returns true if t and other are deeply equal.
@@ -816,6 +927,9 @@ func (t *Job) Equal(other *Job) bool {
 	if !deep.Equal(t.Title, other.Title) {
 		return false
 	}
+	if !deep.Equal(t.History, other.History) {
+		return false
+	}
 	if !deep.Equal(t.Checked, other.Checked) {
 		return false
 	}
@@ -837,7 +951,6 @@ func (t *Job) Clone() *Job {
 		Stages:   make([]Stage, len(t.Stages)),
 		Priority: t.Priority,
 		Notes:    append(crdt.Text(nil), t.Notes...),
-		Title:    t.Title,
 		Checked:  t.Checked,
 		Grid:     t.Grid,
 	}
@@ -865,11 +978,8 @@ func (t *Job) Clone() *Job {
 			}
 		}
 	}
+	res.Title = deep.Clone(t.Title)
+	res.History = deep.Clone(t.History)
 	res.Done = deep.Clone(t.Done)
 	return res
-}
-
-func contains[M ~map[K]V, K comparable, V any](m M, k K) bool {
-	_, ok := m[k]
-	return ok
 }

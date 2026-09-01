@@ -5,6 +5,7 @@ import (
 	"time"
 
 	deep "github.com/brunoga/deep/v5"
+	"github.com/brunoga/deep/v5/crdt"
 	"github.com/brunoga/deep/v5/internal/testmodels/external"
 )
 
@@ -151,5 +152,21 @@ func TestSubPathIntoGeneratedStruct(t *testing.T) {
 	}
 	if got := job.Owners["qa"].Name; got != "release" {
 		t.Fatalf("Owners[qa].Name = %q, want %q", got, "release")
+	}
+}
+
+// TestCloneOpaqueWithReferences asserts that Clone deep-copies opaque types
+// whose internals the generator cannot see: a crdt.LWW[[]int] carries a slice,
+// and a cloned Job must not share it with the original.
+func TestCloneOpaqueWithReferences(t *testing.T) {
+	job := external.Job{History: crdt.LWW[[]int]{Value: []int{1, 2, 3}}}
+	clone := deep.Clone(job)
+
+	if !deep.Equal(job, clone) {
+		t.Fatal("clone is not equal to the original")
+	}
+	clone.History.Value[0] = 99
+	if job.History.Value[0] != 1 {
+		t.Fatalf("mutating the clone changed the original: %v", job.History.Value)
 	}
 }

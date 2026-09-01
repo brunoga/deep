@@ -24,6 +24,9 @@ var models = []struct {
 	{"testmodels", "../../internal/testmodels", "User,Detail", "../../internal/testmodels/user_deep.go"},
 	// Fields whose types come from other packages: *time.Time and friends.
 	{"external", "../../internal/testmodels/external", "Job,Stage", "../../internal/testmodels/external/job_deep.go"},
+	// Structural shapes: embedded fields, keyed slices, nested and
+	// pointer-valued maps.
+	{"shapes", "../../internal/testmodels/shapes", "Doc,Meta,Entry,Payload", "../../internal/testmodels/shapes/doc_deep.go"},
 }
 
 // buildGenerator builds deep-gen and returns the path to the binary.
@@ -154,10 +157,10 @@ type T struct {
 	}
 
 	want := map[string]typeInfo{
-		"Ptr":     {name: "*time.Time", quals: []string{"time"}},
-		"Val":     {name: "time.Time", quals: []string{"time"}},
-		"Aliased": {name: "clock.Time", quals: []string{"clock"}},
-		"Times":   {name: "[]time.Time", isCollection: true, quals: []string{"time"}},
+		"Ptr":     {name: "*time.Time", pointeeKnown: true, quals: []string{"time"}},
+		"Val":     {name: "time.Time", knownValue: true, quals: []string{"time"}},
+		"Aliased": {name: "clock.Time", knownValue: true, quals: []string{"clock"}},
+		"Times":   {name: "[]time.Time", isCollection: true, elemKnownValue: true, quals: []string{"time"}},
 		"PtrTime": {name: "*[]*time.Time", quals: []string{"time"}},
 		"Details": {name: "[]Detail", isCollection: true, elemGenerated: true},
 		"DetailP": {name: "*Detail", isStruct: true},

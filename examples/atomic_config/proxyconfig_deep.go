@@ -6,6 +6,7 @@ import (
 	deep "github.com/brunoga/deep/v5"
 	"github.com/brunoga/deep/v5/condition"
 	"log/slog"
+	"reflect"
 	"regexp"
 )
 
@@ -44,13 +45,19 @@ func (t *ProxyConfig) Patch(p deep.Patch[ProxyConfig], logger *slog.Logger) erro
 func (t *ProxyConfig) applyOperation(op deep.Operation, logger *slog.Logger) (bool, error) {
 	if op.If != nil {
 		ok, err := t.evaluateCondition(*op.If)
-		if err != nil || !ok {
+		if err != nil {
+			return true, fmt.Errorf("condition evaluation failed at %s: %w", op.Path, err)
+		}
+		if !ok {
 			return true, nil
 		}
 	}
 	if op.Unless != nil {
 		ok, err := t.evaluateCondition(*op.Unless)
-		if err != nil || ok {
+		if err != nil {
+			return true, fmt.Errorf("condition evaluation failed at %s: %w", op.Path, err)
+		}
+		if ok {
 			return true, nil
 		}
 	}
@@ -75,24 +82,18 @@ func (t *ProxyConfig) applyOperation(op deep.Operation, logger *slog.Logger) (bo
 		}
 		return true, fmt.Errorf("unsupported root operation: %s", op.Kind)
 	case "/host", "/Host":
-		if op.Kind == deep.OpLog {
-			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Host)
-			return true, nil
-		}
 		if op.Kind == deep.OpReplace && op.Strict {
 			if _oldV, ok := op.Old.(string); !ok || t.Host != _oldV {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Host)
 			}
 		}
-		if v, ok := op.New.(string); ok {
-			t.Host = v
-			return true, nil
+		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
+			if v, ok := op.New.(string); ok {
+				t.Host = v
+				return true, nil
+			}
 		}
 	case "/port", "/Port":
-		if op.Kind == deep.OpLog {
-			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Port)
-			return true, nil
-		}
 		if op.Kind == deep.OpReplace && op.Strict {
 			_oldOK := false
 			if _oldV, ok := op.Old.(int); ok {
@@ -107,13 +108,15 @@ func (t *ProxyConfig) applyOperation(op deep.Operation, logger *slog.Logger) (bo
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Port)
 			}
 		}
-		if v, ok := op.New.(int); ok {
-			t.Port = v
-			return true, nil
-		}
-		if f, ok := op.New.(float64); ok {
-			t.Port = int(f)
-			return true, nil
+		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
+			if v, ok := op.New.(int); ok {
+				t.Port = v
+				return true, nil
+			}
+			if f, ok := op.New.(float64); ok {
+				t.Port = int(f)
+				return true, nil
+			}
 		}
 	default:
 	}
@@ -168,10 +171,18 @@ func (t *ProxyConfig) evaluateCondition(c condition.Condition) (bool, error) {
 			return true, nil
 		}
 		if c.Op == "type" {
-			return condition.CheckType(t.Host, c.Value.(string)), nil
+			tn, ok := c.Value.(string)
+			if !ok {
+				return false, fmt.Errorf("type requires string value")
+			}
+			return condition.CheckType(t.Host, tn), nil
 		}
 		if c.Op == "matches" {
-			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Host))
+			pat, ok := c.Value.(string)
+			if !ok {
+				return false, fmt.Errorf("matches requires string pattern")
+			}
+			return regexp.MatchString(pat, fmt.Sprintf("%v", t.Host))
 		}
 		_sv, _ok := c.Value.(string)
 		if !_ok {
@@ -212,10 +223,18 @@ func (t *ProxyConfig) evaluateCondition(c condition.Condition) (bool, error) {
 			return true, nil
 		}
 		if c.Op == "type" {
-			return condition.CheckType(t.Port, c.Value.(string)), nil
+			tn, ok := c.Value.(string)
+			if !ok {
+				return false, fmt.Errorf("type requires string value")
+			}
+			return condition.CheckType(t.Port, tn), nil
 		}
 		if c.Op == "matches" {
-			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.Port))
+			pat, ok := c.Value.(string)
+			if !ok {
+				return false, fmt.Errorf("matches requires string pattern")
+			}
+			return regexp.MatchString(pat, fmt.Sprintf("%v", t.Port))
 		}
 		var _cv float64
 		switch v := c.Value.(type) {
@@ -265,7 +284,10 @@ func (t *ProxyConfig) evaluateCondition(c condition.Condition) (bool, error) {
 			return false, nil
 		}
 	}
-	return false, fmt.Errorf("unsupported condition path or op: %s", c.Path)
+	// Anything the fast path does not model — nested paths, collection
+	// lookups, unusual ops — is evaluated by the reflection engine, which
+	// handles the full condition language.
+	return condition.Evaluate(reflect.ValueOf(t).Elem(), &c)
 }
 
 // Equal returns true if t and other are deeply equal.
@@ -323,13 +345,19 @@ func (t *SystemMeta) Patch(p deep.Patch[SystemMeta], logger *slog.Logger) error 
 func (t *SystemMeta) applyOperation(op deep.Operation, logger *slog.Logger) (bool, error) {
 	if op.If != nil {
 		ok, err := t.evaluateCondition(*op.If)
-		if err != nil || !ok {
+		if err != nil {
+			return true, fmt.Errorf("condition evaluation failed at %s: %w", op.Path, err)
+		}
+		if !ok {
 			return true, nil
 		}
 	}
 	if op.Unless != nil {
 		ok, err := t.evaluateCondition(*op.Unless)
-		if err != nil || ok {
+		if err != nil {
+			return true, fmt.Errorf("condition evaluation failed at %s: %w", op.Path, err)
+		}
+		if ok {
 			return true, nil
 		}
 	}
@@ -356,18 +384,16 @@ func (t *SystemMeta) applyOperation(op deep.Operation, logger *slog.Logger) (boo
 	case "/cid", "/ClusterID":
 		return true, fmt.Errorf("field %s is read-only", op.Path)
 	case "/proxy", "/Settings":
-		if op.Kind == deep.OpLog {
-			logger.Info("deep log", "message", op.New, "path", op.Path, "field", t.Settings)
-			return true, nil
-		}
 		if op.Kind == deep.OpReplace && op.Strict {
 			if old, ok := op.Old.(ProxyConfig); !ok || !deep.Equal(t.Settings, old) {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Settings)
 			}
 		}
-		if v, ok := op.New.(ProxyConfig); ok {
-			t.Settings = v
-			return true, nil
+		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
+			if v, ok := op.New.(ProxyConfig); ok {
+				t.Settings = v
+				return true, nil
+			}
 		}
 	default:
 	}
@@ -380,7 +406,7 @@ func (t *SystemMeta) Diff(other *SystemMeta) deep.Patch[SystemMeta] {
 	if t.ClusterID != other.ClusterID {
 		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/cid", Old: t.ClusterID, New: other.ClusterID})
 	}
-	if t.Settings != other.Settings {
+	if !deep.Equal(t.Settings, other.Settings) {
 		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/proxy", Old: t.Settings, New: other.Settings})
 	}
 
@@ -422,10 +448,18 @@ func (t *SystemMeta) evaluateCondition(c condition.Condition) (bool, error) {
 			return true, nil
 		}
 		if c.Op == "type" {
-			return condition.CheckType(t.ClusterID, c.Value.(string)), nil
+			tn, ok := c.Value.(string)
+			if !ok {
+				return false, fmt.Errorf("type requires string value")
+			}
+			return condition.CheckType(t.ClusterID, tn), nil
 		}
 		if c.Op == "matches" {
-			return regexp.MatchString(c.Value.(string), fmt.Sprintf("%v", t.ClusterID))
+			pat, ok := c.Value.(string)
+			if !ok {
+				return false, fmt.Errorf("matches requires string pattern")
+			}
+			return regexp.MatchString(pat, fmt.Sprintf("%v", t.ClusterID))
 		}
 		_sv, _ok := c.Value.(string)
 		if !_ok {
@@ -462,7 +496,10 @@ func (t *SystemMeta) evaluateCondition(c condition.Condition) (bool, error) {
 			return false, nil
 		}
 	}
-	return false, fmt.Errorf("unsupported condition path or op: %s", c.Path)
+	// Anything the fast path does not model — nested paths, collection
+	// lookups, unusual ops — is evaluated by the reflection engine, which
+	// handles the full condition language.
+	return condition.Evaluate(reflect.ValueOf(t).Elem(), &c)
 }
 
 // Equal returns true if t and other are deeply equal.
@@ -483,9 +520,4 @@ func (t *SystemMeta) Clone() *SystemMeta {
 	}
 	res.Settings = *(&t.Settings).Clone()
 	return res
-}
-
-func contains[M ~map[K]V, K comparable, V any](m M, k K) bool {
-	_, ok := m[k]
-	return ok
 }
