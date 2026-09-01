@@ -89,6 +89,101 @@ type CRDT[T any] struct {
 	tombstones map[string]hlc.HLC
 	nodeID     string
 	clock      *hlc.Clock
+
+	observerMu   sync.Mutex
+	observers    map[int]func(Change[T])
+	nextObserver int
+}
+
+// ChangeSource says where a change came from.
+type ChangeSource int
+
+const (
+	// ChangeLocal is an edit made on this replica through [CRDT.Edit].
+	ChangeLocal ChangeSource = iota
+	// ChangeRemote is a delta from a peer, applied through [CRDT.ApplyDelta].
+	ChangeRemote
+	// ChangeMerge is the result of [CRDT.Merge] with another replica.
+	ChangeMerge
+)
+
+func (s ChangeSource) String() string {
+	switch s {
+	case ChangeLocal:
+		return "local"
+	case ChangeRemote:
+		return "remote"
+	case ChangeMerge:
+		return "merge"
+	}
+	return "unknown"
+}
+
+// Change describes what actually happened to a replica's value.
+//
+// Patch holds the operations that were applied, which for a remote delta is
+// only the part that survived conflict resolution — an operation another
+// replica made but this one rejected as stale does not appear. Reading it is
+// how a consumer learns what changed without diffing snapshots: a user
+// interface can redraw just the affected paths.
+type Change[T any] struct {
+	Patch  deep.Patch[T]
+	Source ChangeSource
+}
+
+// OnChange registers fn to be called after every change to this replica, and
+// returns a function that unregisters it.
+//
+// Callbacks run synchronously on the goroutine that made the change, after the
+// replica's lock has been released. A callback may therefore read the replica,
+// and may edit it — an edit from inside a callback announces itself in turn, so
+// guard against recursing forever. A slow callback holds up whoever made the
+// change.
+//
+// Nothing is serialized on your behalf: changes made from several goroutines
+// deliver on those goroutines, so a callback can run concurrently with itself.
+// Take a lock inside the callback, or hand changes to a single goroutine, if
+// that matters. The Patch in each Change describes that change on its own, so
+// they can be processed independently.
+func (c *CRDT[T]) OnChange(fn func(Change[T])) (cancel func()) {
+	c.observerMu.Lock()
+	defer c.observerMu.Unlock()
+
+	if c.observers == nil {
+		c.observers = make(map[int]func(Change[T]))
+	}
+	id := c.nextObserver
+	c.nextObserver++
+	c.observers[id] = fn
+
+	return func() {
+		c.observerMu.Lock()
+		defer c.observerMu.Unlock()
+		delete(c.observers, id)
+	}
+}
+
+// notify delivers a change to the registered observers. It must be called with
+// no lock held: a callback is free to call back into the replica.
+func (c *CRDT[T]) notify(change Change[T]) {
+	if change.Patch.IsEmpty() {
+		return
+	}
+
+	c.observerMu.Lock()
+	if len(c.observers) == 0 {
+		c.observerMu.Unlock()
+		return
+	}
+	fns := make([]func(Change[T]), 0, len(c.observers))
+	for _, fn := range c.observers {
+		fns = append(fns, fn)
+	}
+	c.observerMu.Unlock()
+
+	for _, fn := range fns {
+		fn(change)
+	}
 }
 
 // Delta represents a set of changes with a causal timestamp.
@@ -148,6 +243,12 @@ func (c *CRDT[T]) View() T {
 // the local clock, and returns the delta for distribution to peers. Returns an
 // empty Delta if the edit produces no changes.
 func (c *CRDT[T]) Edit(fn func(*T)) Delta[T] {
+	delta := c.edit(fn)
+	c.notify(Change[T]{Patch: delta.patch, Source: ChangeLocal})
+	return delta
+}
+
+func (c *CRDT[T]) edit(fn func(*T)) Delta[T] {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -184,8 +285,14 @@ func (c *CRDT[T]) updateMetadataLocked(patch deep.Patch[T], ts hlc.HLC) {
 // ApplyDelta applies a delta from a remote peer using Last-Write-Wins resolution.
 // Returns true if any operations were accepted.
 func (c *CRDT[T]) ApplyDelta(delta Delta[T]) bool {
+	applied, ok := c.applyDelta(delta)
+	c.notify(Change[T]{Patch: applied, Source: ChangeRemote})
+	return ok
+}
+
+func (c *CRDT[T]) applyDelta(delta Delta[T]) (deep.Patch[T], bool) {
 	if delta.patch.IsEmpty() {
-		return false
+		return deep.Patch[T]{}, false
 	}
 
 	c.mu.Lock()
@@ -196,7 +303,10 @@ func (c *CRDT[T]) ApplyDelta(delta Delta[T]) bool {
 	// A self-merging value has its own convergence rules — always apply,
 	// skipping the LWW clock filter that would discard concurrent edits.
 	if _, ok := any(c.value).(Convergent); ok {
-		return deep.Apply(&c.value, delta.patch) == nil
+		if err := deep.Apply(&c.value, delta.patch); err != nil {
+			return deep.Patch[T]{}, false
+		}
+		return delta.patch, true
 	}
 	defer canonicalizeKeyedSlices(reflect.ValueOf(&c.value).Elem())
 
@@ -223,9 +333,13 @@ func (c *CRDT[T]) ApplyDelta(delta Delta[T]) bool {
 	}
 
 	if len(filtered) == 0 {
-		return false
+		return deep.Patch[T]{}, false
 	}
-	return deep.Apply(&c.value, deep.Patch[T]{Operations: filtered}) == nil
+	appliedPatch := deep.Patch[T]{Operations: filtered}
+	if err := deep.Apply(&c.value, appliedPatch); err != nil {
+		return deep.Patch[T]{}, false
+	}
+	return appliedPatch, true
 }
 
 // canonicalizeKeyedSlices puts every keyed slice reachable from v into a
@@ -382,6 +496,12 @@ func (c *CRDT[T]) Reverse(delta Delta[T]) Delta[T] {
 // (max of write clock and tombstone) wins. Text fields are always merged
 // convergently via MergeTextRuns, bypassing LWW.
 func (c *CRDT[T]) Merge(other *CRDT[T]) bool {
+	applied, ok := c.merge(other)
+	c.notify(Change[T]{Patch: applied, Source: ChangeMerge})
+	return ok
+}
+
+func (c *CRDT[T]) merge(other *CRDT[T]) (deep.Patch[T], bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -394,9 +514,14 @@ func (c *CRDT[T]) Merge(other *CRDT[T]) bool {
 
 	// Fast path: T itself merges.
 	if v, ok := any(c.value).(Convergent); ok {
+		before := deep.Clone(c.value)
 		c.value = v.MergeFrom(other.value).(T)
 		c.mergeMeta(other)
-		return true
+		applied, err := deep.Diff(before, c.value)
+		if err != nil {
+			applied = deep.Patch[T]{}
+		}
+		return applied, true
 	}
 
 	defer canonicalizeKeyedSlices(reflect.ValueOf(&c.value).Elem())
@@ -404,9 +529,10 @@ func (c *CRDT[T]) Merge(other *CRDT[T]) bool {
 	patch, err := deep.Diff(c.value, other.value)
 	if err != nil || patch.IsEmpty() {
 		c.mergeMeta(other)
-		return false
+		return deep.Patch[T]{}, false
 	}
 
+	beforeMerge := deep.Clone(c.value)
 	localRoot := reflect.ValueOf(&c.value).Elem()
 	otherRoot := reflect.ValueOf(&other.value).Elem()
 
@@ -489,7 +615,16 @@ func (c *CRDT[T]) Merge(other *CRDT[T]) bool {
 		changed = true
 	}
 
-	return changed
+	if !changed {
+		return deep.Patch[T]{}, false
+	}
+	// Report what the merge actually did rather than what was proposed: the
+	// filtered operations plus whatever the self-merging fields resolved to.
+	applied, err := deep.Diff(beforeMerge, c.value)
+	if err != nil {
+		applied = deep.Patch[T]{Operations: filtered}
+	}
+	return applied, true
 }
 
 func (c *CRDT[T]) mergeMeta(other *CRDT[T]) {
