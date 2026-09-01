@@ -266,10 +266,60 @@ func TestTextAdvanced(t *testing.T) {
 	text2.Patch(p2, nil)
 }
 
-func BenchmarkDiffGenerated(b *testing.B) {
-	u1 := testmodels.User{ID: 1, Name: "Alice", Roles: []string{"admin", "user"}}
-	u2 := testmodels.User{ID: 1, Name: "Bob", Roles: []string{"admin"}}
+// reflectionUser mirrors testmodels.User field for field but has no generated
+// code, so the two benchmark variants of each pair run the exact same shape
+// through the generated fast path and the reflection engine.
+type reflectionDetail struct {
+	Age     int
+	Address string `json:"addr"`
+}
 
+type reflectionUser struct {
+	ID    int              `json:"id"`
+	Name  string           `json:"full_name"`
+	Info  reflectionDetail `json:"info"`
+	Roles []string         `json:"roles"`
+	Score map[string]int   `json:"score"`
+}
+
+func benchUsers() (testmodels.User, testmodels.User) {
+	u1 := testmodels.User{
+		ID:    1,
+		Name:  "Alice",
+		Info:  testmodels.Detail{Age: 30, Address: "1 Main St"},
+		Roles: []string{"admin", "user"},
+		Score: map[string]int{"chess": 1500, "go": 2000},
+	}
+	u2 := testmodels.User{
+		ID:    1,
+		Name:  "Bob",
+		Info:  testmodels.Detail{Age: 31, Address: "1 Main St"},
+		Roles: []string{"admin"},
+		Score: map[string]int{"chess": 1500, "go": 2100},
+	}
+	return u1, u2
+}
+
+func benchReflectionUsers() (reflectionUser, reflectionUser) {
+	u1 := reflectionUser{
+		ID:    1,
+		Name:  "Alice",
+		Info:  reflectionDetail{Age: 30, Address: "1 Main St"},
+		Roles: []string{"admin", "user"},
+		Score: map[string]int{"chess": 1500, "go": 2000},
+	}
+	u2 := reflectionUser{
+		ID:    1,
+		Name:  "Bob",
+		Info:  reflectionDetail{Age: 31, Address: "1 Main St"},
+		Roles: []string{"admin"},
+		Score: map[string]int{"chess": 1500, "go": 2100},
+	}
+	return u1, u2
+}
+
+func BenchmarkDiffGenerated(b *testing.B) {
+	u1, u2 := benchUsers()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		deep.Diff(u1, u2)
@@ -277,24 +327,16 @@ func BenchmarkDiffGenerated(b *testing.B) {
 }
 
 func BenchmarkDiffReflection(b *testing.B) {
-	type SimpleData struct {
-		A int
-		B string
-		C []string
-	}
-	a := SimpleData{A: 1, B: "Alice", C: []string{"admin", "user"}}
-	c := SimpleData{A: 1, B: "Bob", C: []string{"admin"}}
-
+	u1, u2 := benchReflectionUsers()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		deep.Diff(a, c)
+		deep.Diff(u1, u2)
 	}
 }
 
 func BenchmarkEqualGenerated(b *testing.B) {
-	u1 := testmodels.User{ID: 1, Name: "Alice", Roles: []string{"admin", "user"}}
-	u2 := testmodels.User{ID: 1, Name: "Alice", Roles: []string{"admin", "user"}}
-
+	u1, _ := benchUsers()
+	u2 := u1
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		deep.Equal(u1, u2)
@@ -302,85 +344,54 @@ func BenchmarkEqualGenerated(b *testing.B) {
 }
 
 func BenchmarkEqualReflection(b *testing.B) {
-	type SimpleData struct {
-		A int
-		B string
-		C []string
-	}
-	a := SimpleData{A: 1, B: "Alice", C: []string{"admin", "user"}}
-	c := SimpleData{A: 1, B: "Alice", C: []string{"admin", "user"}}
-
+	u1, _ := benchReflectionUsers()
+	u2 := u1
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		deep.Equal(a, c)
+		deep.Equal(u1, u2)
 	}
 }
 
-func BenchmarkCopyGenerated(b *testing.B) {
-	u := testmodels.User{
-		ID:    1,
-		Name:  "Alice",
-		Roles: []string{"admin", "user"},
-		Score: map[string]int{"chess": 1500, "go": 2000},
-	}
-
+func BenchmarkCloneGenerated(b *testing.B) {
+	u1, _ := benchUsers()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		deep.Clone(u)
+		deep.Clone(u1)
 	}
 }
 
-func BenchmarkCopyReflection(b *testing.B) {
-	type SimpleData struct {
-		A int
-		B string
-		C []string
-		D map[string]int
-	}
-	a := SimpleData{
-		A: 1,
-		B: "Alice",
-		C: []string{"admin", "user"},
-		D: map[string]int{"chess": 1500, "go": 2000},
-	}
-
+func BenchmarkCloneReflection(b *testing.B) {
+	u1, _ := benchReflectionUsers()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		deep.Clone(a)
+		deep.Clone(u1)
 	}
 }
 
 func BenchmarkApplyGenerated(b *testing.B) {
-	u1 := testmodels.User{ID: 1, Name: "Alice"}
-	u2 := testmodels.User{ID: 1, Name: "Bob"}
+	u1, u2 := benchUsers()
 	p, err := deep.Diff(u1, u2)
 	if err != nil {
 		b.Fatal(err)
 	}
-
+	// The patch holds only replace ops, so re-applying it to the same value
+	// is idempotent — the clone stays outside the timed loop.
+	u3 := deep.Clone(u1)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		u3 := u1
 		deep.Apply(&u3, p)
 	}
 }
 
 func BenchmarkApplyReflection(b *testing.B) {
-	// SimpleData has no generated code, forcing the reflection engine path.
-	type SimpleData struct {
-		A int
-		B string
-	}
-	a := SimpleData{A: 1, B: "hello"}
-	c := SimpleData{A: 2, B: "world"}
-	p, err := deep.Diff(a, c)
+	u1, u2 := benchReflectionUsers()
+	p, err := deep.Diff(u1, u2)
 	if err != nil {
 		b.Fatal(err)
 	}
-
+	u3 := deep.Clone(u1)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		d := a
-		deep.Apply(&d, p)
+		deep.Apply(&u3, p)
 	}
 }
