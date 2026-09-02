@@ -82,8 +82,15 @@ func (t *Item) applyOperation(op deep.Operation, logger *slog.Logger) (bool, err
 		}
 		return true, fmt.Errorf("unsupported root operation: %s", op.Kind)
 	case "/sku", "/SKU":
-		if op.Kind == deep.OpReplace && op.Strict {
-			if _oldV, ok := op.Old.(string); !ok || t.SKU != _oldV {
+		if op.Kind == deep.OpReplace && op.Strict && op.Old != nil {
+			_match := false
+			if _oldV, ok := op.Old.(string); ok {
+				_match = t.SKU == _oldV
+			}
+			if !_match {
+				_match = deep.EqualCoerced(t.SKU, op.Old)
+			}
+			if !_match {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.SKU)
 			}
 		}
@@ -94,17 +101,15 @@ func (t *Item) applyOperation(op deep.Operation, logger *slog.Logger) (bool, err
 			}
 		}
 	case "/q", "/Quantity":
-		if op.Kind == deep.OpReplace && op.Strict {
-			_oldOK := false
+		if op.Kind == deep.OpReplace && op.Strict && op.Old != nil {
+			_match := false
 			if _oldV, ok := op.Old.(int); ok {
-				_oldOK = t.Quantity == _oldV
+				_match = t.Quantity == _oldV
 			}
-			if !_oldOK {
-				if _oldF, ok := op.Old.(float64); ok {
-					_oldOK = float64(t.Quantity) == _oldF
-				}
+			if !_match {
+				_match = deep.EqualCoerced(t.Quantity, op.Old)
 			}
-			if !_oldOK {
+			if !_match {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Quantity)
 			}
 		}
@@ -382,8 +387,15 @@ func (t *Inventory) applyOperation(op deep.Operation, logger *slog.Logger) (bool
 		}
 		return true, fmt.Errorf("unsupported root operation: %s", op.Kind)
 	case "/items", "/Items":
-		if op.Kind == deep.OpReplace && op.Strict {
-			if old, ok := op.Old.([]Item); !ok || !deep.Equal(t.Items, old) {
+		if op.Kind == deep.OpReplace && op.Strict && op.Old != nil {
+			_match := false
+			if old, ok := op.Old.([]Item); ok {
+				_match = deep.Equal(t.Items, old)
+			}
+			if !_match {
+				_match = deep.EqualCoerced(t.Items, op.Old)
+			}
+			if !_match {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Items)
 			}
 		}

@@ -240,3 +240,54 @@ func buildPath(stack []string) string {
 	}
 	return b.String()
 }
+
+// EqualCoerced reports whether current equals expected, where expected may be
+// of a different but losslessly convertible type.
+//
+// Operation.Old and a condition's Value are declared `any`, so a patch that
+// travelled as JSON carries whatever the decoder produced: every number arrives
+// as float64 regardless of the field's type. Comparing those with Equal, which
+// requires identical types, reports a mismatch for every numeric field — which
+// is why a strict check on a decoded patch used to fail against state it
+// actually matched.
+//
+// Converting before comparing fixes that, but a bare conversion truncates:
+// float64(5.7) becomes int(5), which would then compare equal to a field
+// holding 5. The conversion is therefore verified by converting back — only a
+// value that survives the round trip unchanged is accepted as comparable.
+func EqualCoerced(current reflect.Value, expected any) bool {
+	if !current.IsValid() {
+		return expected == nil
+	}
+	if expected == nil {
+		return isNilLike(current)
+	}
+
+	ev := reflect.ValueOf(expected)
+	if ev.Type() == current.Type() {
+		return ValueEqual(current, ev, nil)
+	}
+
+	conv := ConvertValue(ev, current.Type())
+	if !conv.IsValid() || conv.Type() != current.Type() {
+		return false
+	}
+	// A conversion that loses information is not a match: converting back has
+	// to reproduce what was given.
+	back := ConvertValue(conv, ev.Type())
+	if !back.IsValid() || back.Type() != ev.Type() || !ValueEqual(back, ev, nil) {
+		return false
+	}
+	return ValueEqual(current, conv, nil)
+}
+
+// isNilLike reports whether v is a nil reference or an invalid value, the two
+// things a nil `any` can reasonably be compared against.
+func isNilLike(v reflect.Value) bool {
+	switch v.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface,
+		reflect.Map, reflect.Pointer, reflect.Slice, reflect.UnsafePointer:
+		return v.IsNil()
+	}
+	return false
+}

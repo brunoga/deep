@@ -82,8 +82,15 @@ func (t *UIState) applyOperation(op deep.Operation, logger *slog.Logger) (bool, 
 		}
 		return true, fmt.Errorf("unsupported root operation: %s", op.Kind)
 	case "/theme", "/Theme":
-		if op.Kind == deep.OpReplace && op.Strict {
-			if _oldV, ok := op.Old.(string); !ok || t.Theme != _oldV {
+		if op.Kind == deep.OpReplace && op.Strict && op.Old != nil {
+			_match := false
+			if _oldV, ok := op.Old.(string); ok {
+				_match = t.Theme == _oldV
+			}
+			if !_match {
+				_match = deep.EqualCoerced(t.Theme, op.Old)
+			}
+			if !_match {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Theme)
 			}
 		}
@@ -94,8 +101,15 @@ func (t *UIState) applyOperation(op deep.Operation, logger *slog.Logger) (bool, 
 			}
 		}
 	case "/sidebar_open", "/Open":
-		if op.Kind == deep.OpReplace && op.Strict {
-			if _oldV, ok := op.Old.(bool); !ok || t.Open != _oldV {
+		if op.Kind == deep.OpReplace && op.Strict && op.Old != nil {
+			_match := false
+			if _oldV, ok := op.Old.(bool); ok {
+				_match = t.Open == _oldV
+			}
+			if !_match {
+				_match = deep.EqualCoerced(t.Open, op.Old)
+			}
+			if !_match {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Open)
 			}
 		}

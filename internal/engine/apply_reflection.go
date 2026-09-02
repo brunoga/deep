@@ -24,13 +24,21 @@ func ApplyOpReflectionValue(v reflect.Value, op Operation, logger *slog.Logger) 
 	if logger == nil {
 		logger = slog.Default()
 	}
-	// Strict check.
-	if op.Strict && (op.Kind == OpReplace || op.Kind == OpRemove) {
+	// Strict check. The comparison coerces, because a patch that travelled as
+	// JSON carries every number as float64 whatever the field's type; a check
+	// that demanded identical types would fail against state it matches.
+	// A nil Old is no expectation at all — a hand-built operation that did not
+	// record one — so there is nothing to check. Diff always records it.
+	if op.Strict && op.Old != nil && (op.Kind == OpReplace || op.Kind == OpRemove) {
 		current, err := icore.DeepPath(op.Path).Resolve(v)
-		if err == nil && current.IsValid() {
-			if !icore.Equal(current.Interface(), op.Old) {
-				return fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, current.Interface())
-			}
+		switch {
+		case err != nil || !current.IsValid():
+			// The path holds nothing, but the patch said what it expected to
+			// find. Silently skipping the check, as this used to, left a strict
+			// operation unchecked exactly when the target had drifted furthest.
+			return fmt.Errorf("strict check failed at %s: expected %v, found nothing", op.Path, op.Old)
+		case !icore.EqualCoerced(current, op.Old):
+			return fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, current.Interface())
 		}
 	}
 

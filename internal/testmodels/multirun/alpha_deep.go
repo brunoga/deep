@@ -82,8 +82,15 @@ func (t *Alpha) applyOperation(op deep.Operation, logger *slog.Logger) (bool, er
 		}
 		return true, fmt.Errorf("unsupported root operation: %s", op.Kind)
 	case "/m", "/M":
-		if op.Kind == deep.OpReplace && op.Strict {
-			if old, ok := op.Old.(map[string]int); !ok || !deep.Equal(t.M, old) {
+		if op.Kind == deep.OpReplace && op.Strict && op.Old != nil {
+			_match := false
+			if old, ok := op.Old.(map[string]int); ok {
+				_match = deep.Equal(t.M, old)
+			}
+			if !_match {
+				_match = deep.EqualCoerced(t.M, op.Old)
+			}
+			if !_match {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.M)
 			}
 		}

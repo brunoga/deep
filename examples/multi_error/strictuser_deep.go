@@ -82,8 +82,15 @@ func (t *StrictUser) applyOperation(op deep.Operation, logger *slog.Logger) (boo
 		}
 		return true, fmt.Errorf("unsupported root operation: %s", op.Kind)
 	case "/name", "/Name":
-		if op.Kind == deep.OpReplace && op.Strict {
-			if _oldV, ok := op.Old.(string); !ok || t.Name != _oldV {
+		if op.Kind == deep.OpReplace && op.Strict && op.Old != nil {
+			_match := false
+			if _oldV, ok := op.Old.(string); ok {
+				_match = t.Name == _oldV
+			}
+			if !_match {
+				_match = deep.EqualCoerced(t.Name, op.Old)
+			}
+			if !_match {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Name)
 			}
 		}
@@ -94,17 +101,15 @@ func (t *StrictUser) applyOperation(op deep.Operation, logger *slog.Logger) (boo
 			}
 		}
 	case "/age", "/Age":
-		if op.Kind == deep.OpReplace && op.Strict {
-			_oldOK := false
+		if op.Kind == deep.OpReplace && op.Strict && op.Old != nil {
+			_match := false
 			if _oldV, ok := op.Old.(int); ok {
-				_oldOK = t.Age == _oldV
+				_match = t.Age == _oldV
 			}
-			if !_oldOK {
-				if _oldF, ok := op.Old.(float64); ok {
-					_oldOK = float64(t.Age) == _oldF
-				}
+			if !_match {
+				_match = deep.EqualCoerced(t.Age, op.Old)
 			}
-			if !_oldOK {
+			if !_match {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Age)
 			}
 		}

@@ -82,8 +82,15 @@ func (t *User) applyOperation(op deep.Operation, logger *slog.Logger) (bool, err
 		}
 		return true, fmt.Errorf("unsupported root operation: %s", op.Kind)
 	case "/name", "/Name":
-		if op.Kind == deep.OpReplace && op.Strict {
-			if _oldV, ok := op.Old.(string); !ok || t.Name != _oldV {
+		if op.Kind == deep.OpReplace && op.Strict && op.Old != nil {
+			_match := false
+			if _oldV, ok := op.Old.(string); ok {
+				_match = t.Name == _oldV
+			}
+			if !_match {
+				_match = deep.EqualCoerced(t.Name, op.Old)
+			}
+			if !_match {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Name)
 			}
 		}
@@ -94,8 +101,15 @@ func (t *User) applyOperation(op deep.Operation, logger *slog.Logger) (bool, err
 			}
 		}
 	case "/email", "/Email":
-		if op.Kind == deep.OpReplace && op.Strict {
-			if _oldV, ok := op.Old.(string); !ok || t.Email != _oldV {
+		if op.Kind == deep.OpReplace && op.Strict && op.Old != nil {
+			_match := false
+			if _oldV, ok := op.Old.(string); ok {
+				_match = t.Email == _oldV
+			}
+			if !_match {
+				_match = deep.EqualCoerced(t.Email, op.Old)
+			}
+			if !_match {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Email)
 			}
 		}

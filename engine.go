@@ -5,13 +5,16 @@ import (
 	"log/slog"
 	"reflect"
 	"sort"
+	"strings"
 
 	"github.com/brunoga/deep/v5/condition"
+	icore "github.com/brunoga/deep/v5/internal/core"
 	"github.com/brunoga/deep/v5/internal/engine"
 )
 
 type applyConfig struct {
-	logger *slog.Logger
+	logger       *slog.Logger
+	allowedPaths []string
 }
 
 func newApplyConfig(opts ...ApplyOption) applyConfig {
@@ -22,6 +25,35 @@ func newApplyConfig(opts ...ApplyOption) applyConfig {
 	return cfg
 }
 
+// checkPaths rejects the whole patch if any operation addresses a path outside
+// the allowed set. Nothing is applied in that case: a patch that reached for a
+// path it was not entitled to is not one to apply the rest of.
+func (c applyConfig) checkPaths(ops []Operation) error {
+	if c.allowedPaths == nil {
+		return nil
+	}
+	for _, op := range ops {
+		for _, p := range []string{op.Path, op.From} {
+			if p == "" {
+				continue
+			}
+			if !pathAllowed(p, c.allowedPaths) {
+				return fmt.Errorf("%w: %s", ErrPathNotAllowed, p)
+			}
+		}
+	}
+	return nil
+}
+
+func pathAllowed(path string, allowed []string) bool {
+	for _, a := range allowed {
+		if a == "/" || path == a || strings.HasPrefix(path, strings.TrimSuffix(a, "/")+"/") {
+			return true
+		}
+	}
+	return false
+}
+
 // ApplyOption configures the behaviour of [Apply].
 type ApplyOption func(*applyConfig)
 
@@ -29,6 +61,27 @@ type ApplyOption func(*applyConfig)
 // single [Apply] call. If not provided, [slog.Default] is used.
 func WithLogger(l *slog.Logger) ApplyOption {
 	return func(c *applyConfig) { c.logger = l }
+}
+
+// WithAllowedPaths restricts a patch to the given path prefixes. An operation
+// addressing anything else — including through the From path of a move or a
+// copy, which reads from wherever it points — makes the whole call fail with
+// [ErrPathNotAllowed], leaving the target untouched.
+//
+// A patch that arrived from somewhere else is a program someone else wrote,
+// running against your data. [Struct tags] already keep fields out of reach:
+// `deep:"-"` hides a field entirely and `deep:"readonly"` makes writing it an
+// error. This is the complement for cases where the type is shared and the
+// restriction belongs to one caller rather than to the type — a service that
+// should only ever touch /status, say.
+//
+// A prefix matches itself and everything under it: "/a" allows "/a" and
+// "/a/b", but not "/ab". Passing "/" allows everything, which is the same as
+// not passing the option at all.
+//
+// [Struct tags]: https://github.com/brunoga/deep#struct-tags
+func WithAllowedPaths(prefixes ...string) ApplyOption {
+	return func(c *applyConfig) { c.allowedPaths = append(c.allowedPaths, prefixes...) }
 }
 
 // ApplyOpReflection applies a single Operation to target using reflection.
@@ -55,6 +108,10 @@ func Apply[T any](target *T, p Patch[T], opts ...ApplyOption) error {
 
 	cfg := newApplyConfig(opts...)
 
+	if err := cfg.checkPaths(p.Operations); err != nil {
+		return err
+	}
+
 	// Dispatch to generated Patch method if available.
 	if patcher, ok := any(target).(interface {
 		Patch(Patch[T], *slog.Logger) error
@@ -70,7 +127,7 @@ func Apply[T any](target *T, p Patch[T], opts ...ApplyOption) error {
 			return fmt.Errorf("global condition evaluation failed: %w", err)
 		}
 		if !ok {
-			return fmt.Errorf("global condition not met")
+			return ErrGuardNotMet
 		}
 	}
 
@@ -141,6 +198,27 @@ func Equal[T any](a, b T) bool {
 	}
 
 	return engine.Equal(a, b)
+}
+
+// EqualCoerced reports whether current equals expected, where expected may be
+// of a different but losslessly convertible type.
+//
+// [Operation.Old] and a condition's value are declared `any`, so a patch that
+// travelled as JSON carries whatever the decoder produced — every number
+// arrives as float64, a nested struct as map[string]any — regardless of the
+// types the patch was built from. [Equal] requires identical types and reports
+// those as mismatches, which is why a strict check against a decoded patch can
+// fail on state it actually matches.
+//
+// The conversion is verified rather than trusted: converting back has to
+// reproduce the value given, so float64(5.7) does not match an int field
+// holding 5.
+//
+// This is what generated code and the reflection engine use for strict-mode
+// checks. It is exported so a server applying patches from the wire can make
+// the same comparison itself.
+func EqualCoerced(current, expected any) bool {
+	return icore.EqualCoerced(reflect.ValueOf(current), expected)
 }
 
 // Clone returns a deep copy of v.

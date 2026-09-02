@@ -82,8 +82,15 @@ func (t *ProxyConfig) applyOperation(op deep.Operation, logger *slog.Logger) (bo
 		}
 		return true, fmt.Errorf("unsupported root operation: %s", op.Kind)
 	case "/host", "/Host":
-		if op.Kind == deep.OpReplace && op.Strict {
-			if _oldV, ok := op.Old.(string); !ok || t.Host != _oldV {
+		if op.Kind == deep.OpReplace && op.Strict && op.Old != nil {
+			_match := false
+			if _oldV, ok := op.Old.(string); ok {
+				_match = t.Host == _oldV
+			}
+			if !_match {
+				_match = deep.EqualCoerced(t.Host, op.Old)
+			}
+			if !_match {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Host)
 			}
 		}
@@ -94,17 +101,15 @@ func (t *ProxyConfig) applyOperation(op deep.Operation, logger *slog.Logger) (bo
 			}
 		}
 	case "/port", "/Port":
-		if op.Kind == deep.OpReplace && op.Strict {
-			_oldOK := false
+		if op.Kind == deep.OpReplace && op.Strict && op.Old != nil {
+			_match := false
 			if _oldV, ok := op.Old.(int); ok {
-				_oldOK = t.Port == _oldV
+				_match = t.Port == _oldV
 			}
-			if !_oldOK {
-				if _oldF, ok := op.Old.(float64); ok {
-					_oldOK = float64(t.Port) == _oldF
-				}
+			if !_match {
+				_match = deep.EqualCoerced(t.Port, op.Old)
 			}
-			if !_oldOK {
+			if !_match {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Port)
 			}
 		}
@@ -384,8 +389,15 @@ func (t *SystemMeta) applyOperation(op deep.Operation, logger *slog.Logger) (boo
 	case "/cid", "/ClusterID":
 		return true, fmt.Errorf("field %s is read-only", op.Path)
 	case "/proxy", "/Settings":
-		if op.Kind == deep.OpReplace && op.Strict {
-			if old, ok := op.Old.(ProxyConfig); !ok || !deep.Equal(t.Settings, old) {
+		if op.Kind == deep.OpReplace && op.Strict && op.Old != nil {
+			_match := false
+			if old, ok := op.Old.(ProxyConfig); ok {
+				_match = deep.Equal(t.Settings, old)
+			}
+			if !_match {
+				_match = deep.EqualCoerced(t.Settings, op.Old)
+			}
+			if !_match {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Settings)
 			}
 		}

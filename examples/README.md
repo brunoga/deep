@@ -44,6 +44,7 @@ If you are new to the library, these four cover the shape of everything else:
 | [`ignored_fields`](ignored_fields) | `json:"-"` and `deep:"-"` keeping secrets out of patches — and the sharp edge that invisible means invisible to `Clone` too |
 | [`policy_engine`](policy_engine) | A patch-level `Guard` built from `And`/`Or`/`Matches`: all-or-nothing |
 | [`conditional_ops`](conditional_ops) | Per-operation `If`/`Unless`: one patch, each operation deciding for itself |
+| [`conditional_writes`](conditional_writes) | Applying a patch where the data lives, so unrelated writers stop conflicting — plus what `ApplyResult` tells you that an error cannot |
 | [`concurrent_updates`](concurrent_updates) | Strict mode as optimistic locking — a stale patch is rejected |
 | [`three_way_merge`](three_way_merge) | `Merge` with a custom `ConflictResolver` |
 | [`reflection_fallback`](reflection_fallback) | What the reflection engine handles for a type with no generated code at all: unexported fields, and cycles |

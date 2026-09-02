@@ -11,6 +11,7 @@
 - **Data-oriented patches**: a patch is a flat, serializable list of operations — portable, mergeable, reversible.
 - **Conditional patching**: guards and per-operation conditions travel inside the patch.
 - **Strict mode**: optimistic-concurrency checks that verify expected old values before writing.
+- **Conditional writes**: apply a patch server-side and get a per-operation report of what applied, what its condition skipped, and what failed — narrowing the unit of conflict from the whole row to the fields a write depends on.
 - **Standard interop**: RFC 6902 JSON Patch import/export, including strict checks as `test` ops.
 - **First-class CRDTs**: `CRDT[T]` wrapper with hybrid logical clocks, plus `LWW`, `Text`, `Counter`, `Set` and `Map` convergent types.
 
@@ -188,6 +189,90 @@ err := deep.Apply(&target, strict) // fails if any Old value no longer matches
 ```
 
 Every `replace`/`remove` verifies the operation's `Old` value against the current state before writing. `Diff` fills `Old` automatically. Strictness survives JSON Patch interop: `ToJSONPatch` emits an RFC 6902 `test` op before each checked operation, and `ParseJSONPatch` folds them back into `Old` + `Strict`.
+
+## Conditional Writes
+
+A patch carries its own preconditions, so it can be applied where the data
+lives rather than round-tripped through the writer. That changes what counts as
+a conflict.
+
+Whole-payload optimistic concurrency conflicts when *anything* in the row
+changed. A conditional patch conflicts only when the fields its conditions name
+changed, so two writers touching unrelated fields stop knocking each other back:
+
+```go
+res, err := deep.ApplyWithResult(&row, patch,
+    deep.WithAllowedPaths("/title", "/price", "/stock"))
+if err != nil {
+    return err              // guard rejected, path refused, or an operation failed
+}
+if !res.AllApplied() {
+    return retry(res)       // a condition no longer holds
+}
+commit(row)
+```
+
+[`ApplyWithResult`](https://pkg.go.dev/github.com/brunoga/deep/v5#ApplyWithResult)
+behaves exactly as `Apply` — operations in order, each condition seeing what the
+ones before it left — but returns an `*ApplyResult` with one outcome per
+operation: `StatusApplied`, `StatusSkipped` or `StatusFailed`. The distinction
+matters because a skipped operation is not an error: `Apply` returns nil whether
+a conditional operation ran or not, so on its own it cannot tell a caller
+whether its conditional write landed.
+
+`Patch.Guard` rejects a whole patch with `ErrGuardNotMet`, which is the direct
+analogue of a compare-and-swap. `WithAllowedPaths` confines a patch that arrived
+from elsewhere to a set of prefixes, checking `From` as well as `Path` so a
+`move` or `copy` cannot read outside them; an operation that reaches further
+voids the whole patch with `ErrPathNotAllowed`. Struct tags remain the way to
+express restrictions that belong to the type rather than to one caller —
+`deep:"-"` to hide a field, `deep:"readonly"` to make writing it an error.
+
+Two things to get right:
+
+- **A condition must cover the read set, not just the write set.** Anything a
+  writer read in order to compute its new value has to appear in the condition,
+  or a concurrent change to it is a silently lost update. Blind writes need no
+  condition and never conflict; a read-modify-write needs one on every field it
+  read.
+- **Retries are only free if the operations are idempotent.** `add` on a slice
+  appends, so a lost response plus a client retry gives two entries. Either make
+  the operation self-guarding with a condition or carry an idempotency key. For
+  genuinely commutative updates — counters, sets, registers — the [CRDT
+  types](#crdts-and-synchronization) remove the retry entirely instead of
+  narrowing it.
+
+`benchmarks` below and [`examples/conditional_writes`](examples/conditional_writes)
+both work through a store holding serialized rows.
+
+### Contention
+
+`BenchmarkContention` runs both strategies against one shared row, with a
+jittered 200µs round trip standing in for the network — without it a client's
+read and its write land nanoseconds apart and compare-and-swap never sees an
+intervening commit. Writers take eight independent counters in turn, so at eight
+writers or fewer no two want the same field:
+
+| Concurrent writers | CAS retries/op | Conditional retries/op | Throughput |
+| ---: | ---: | ---: | ---: |
+| 2 | 0.94 | **0** | 2.0× |
+| 4 | 2.74 | **0** | 3.7× |
+| 8 | 6.35 | **0** | 7.5× |
+| 16 | 13.0 | 0.85 | 8.0× |
+| 32 | 21.6 | 2.09 | 9.9× |
+
+Up to eight writers the conditional patches never retry at all: every conflict
+compare-and-swap paid there was one its granularity invented. Past eight,
+writers start sharing a counter and some conflicts become real for both — the
+conditional patch still takes about a tenth as many.
+
+Neither strategy backs off, which real clients do; backoff trades retries for
+latency rather than removing conflicts, so read the ratio rather than the
+absolute numbers.
+
+```
+go test -run=XXX -bench=Contention -benchtime=2000x
+```
 
 ## Merging Patches
 
@@ -477,6 +562,7 @@ Every directory under [`examples/`](examples/) is a runnable program (`go run ./
 | [`ignored_fields`](examples/ignored_fields) | `json:"-"` / `deep:"-"` — keeping secrets out of patches |
 | [`policy_engine`](examples/policy_engine) | Patch-level `Guard` with composed conditions |
 | [`conditional_ops`](examples/conditional_ops) | Per-operation `If` / `Unless` inside one patch |
+| [`conditional_writes`](examples/conditional_writes) | Server-side conditional writes: narrowing the unit of conflict, and reading `ApplyResult` |
 | [`concurrent_updates`](examples/concurrent_updates) | Strict mode as optimistic locking |
 | [`three_way_merge`](examples/three_way_merge) | `Merge` with a custom `ConflictResolver` |
 | [`reflection_fallback`](examples/reflection_fallback) | Unexported fields and cyclic structures with no generated code at all |
