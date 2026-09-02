@@ -12,6 +12,7 @@
 - **Conditional patching**: guards and per-operation conditions travel inside the patch.
 - **Strict mode**: optimistic-concurrency checks that verify expected old values before writing.
 - **Conditional writes**: apply a patch server-side and get a per-operation report of what applied, what its condition skipped, and what failed — narrowing the unit of conflict from the whole row to the fields a write depends on.
+- **Checked on the wire**: a patch that travelled as JSON, gob or RFC 6902 applies to the same result, strict checks included — verified by a matrix of operation kind × field type × encoding.
 - **Standard interop**: RFC 6902 JSON Patch import/export, including strict checks as `test` ops.
 - **First-class CRDTs**: `CRDT[T]` wrapper with hybrid logical clocks, plus `LWW`, `Text`, `Counter`, `Set` and `Map` convergent types.
 
@@ -274,13 +275,51 @@ absolute numbers.
 go test -run=XXX -bench=Contention -benchtime=2000x
 ```
 
+## What Survives the Wire
+
+`Operation.Old` and `Operation.New` are declared `any`, so what a decoder
+returns is whatever it produces for an untyped value, not the type the patch
+was built from. JSON has one number type and no notion of a struct, so an `int`
+arrives as a `float64` and a struct as a `map[string]any`.
+
+The library reconciles that on the way in — a decoded value is converted to the
+field's type, and a strict check's recorded `Old` is compared the same way,
+with the conversion verified so `float64(5.7)` does not match an `int` field
+holding `5`. What that leaves is:
+
+| | native JSON | gob | RFC 6902 |
+| :--- | :---: | :---: | :---: |
+| Every operation kind and field type round-trips | ✅ | ✅ | ✅ |
+| Strict `Old` checks survive | ✅ | ✅ | as `test` ops |
+| nil distinguished from empty | ✅ | — (¹) | ✅ |
+| Clearing a pointer field | ✅ | — (²) | ✅ |
+| Reference sharing (`alias`) | ✅ | ✅ | downgraded to `copy` |
+
+¹ `encoding/gob` does not distinguish a nil slice or map from an empty one.
+² `encoding/gob` cannot encode a nil pointer inside an interface, which is what
+clearing a pointer field means.
+
+Both are properties of `gob` rather than of the patch, and are recorded as such
+in `TestWireFidelity` — a matrix of operation kind × field type × encoding — so
+the answer stays a checked property rather than something rediscovered.
+
+Types carried inside an `any` need registering with `gob.Register` before a
+patch containing them can be encoded, as gob requires everywhere.
+
 ## Merging Patches
 
-```go
-merged := deep.Merge(base, other, resolver) // resolver may be nil: other wins
-```
+`deep.Merge(base, other, resolver)` combines two patches. Operations are matched
+by path; when both write the same path the resolver decides the value, and
+without one `other` wins.
 
-Operations are deduplicated by path; on conflict a custom `ConflictResolver` (`Resolve(path string, local, remote any) any`) decides, and the output is sorted by path for determinism.
+Paths that are not equal can still collide. An operation on `/user` and one on
+`/user/name` are not independent, and keeping both produced a patch that could
+not be applied — removing `/user` and then writing `/user/name` fails on the
+path that is no longer there. When the two sides disagree that way the operation
+from `other` wins and the one it encloses, or is enclosed by, is dropped. The
+resolver is not consulted for these, because there is no single path at which to
+ask. An ancestor and a descendant from the *same* patch are left alone: that is
+a legitimate sequence, and the output ordering applies them in order.
 
 ## Patch Utilities
 
@@ -345,6 +384,24 @@ Rules worth knowing:
 - **What generation can't express falls back to reflection** — per operation, transparently: channels/funcs, slice-index paths, `move`/`copy`, strict map-entry checks, conditions on nested paths.
 - Generated files never need hand-editing and are safe to regenerate; deep-gen ignores its own previous output while parsing.
 - **Recursive and shared types are detected and handled.** See below.
+
+## Custom Behaviour per Type
+
+A type can carry its own behaviour by implementing a method — `Equal`, `Clone`,
+`Diff` or `Copy` — and both engines honour it. For a type whose method set you
+do not control, register a function instead:
+
+```go
+deep.RegisterCustomEqual(func(a, b money) bool { return a.Cents == b.Cents })
+deep.RegisterCustomClone(func(src money) (money, error) { return src, nil })
+deep.RegisterCustomDiff(func(a, b ver) (deep.Patch[ver], error) { ... })
+```
+
+Registration is global and applies to every subsequent operation, so do it
+during initialisation. It affects the reflection engine: generated code has its
+comparison and copying inlined and will not consult the registry for a type it
+handles itself, so prefer a method where you can define one — both paths honour
+that.
 
 ## Recursive and Shared Data
 

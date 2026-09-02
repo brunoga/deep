@@ -72,9 +72,15 @@ func (t *Stage) applyOperation(op deep.Operation, logger *slog.Logger) (bool, er
 
 	switch op.Path {
 	case "/":
-		if op.Strict && (op.Kind == deep.OpReplace || op.Kind == deep.OpRemove) {
-			old, ok := op.Old.(Stage)
-			if !ok || !deep.Equal(*t, old) {
+		if op.Strict && op.Old != nil && (op.Kind == deep.OpReplace || op.Kind == deep.OpRemove) {
+			_match := false
+			if old, ok := op.Old.(Stage); ok {
+				_match = deep.Equal(*t, old)
+			}
+			if !_match {
+				_match = deep.EqualCoerced(*t, op.Old)
+			}
+			if !_match {
 				return true, fmt.Errorf("strict check failed at root: expected %v, got %v", op.Old, *t)
 			}
 		}
@@ -332,9 +338,15 @@ func (t *Job) applyOperation(op deep.Operation, logger *slog.Logger) (bool, erro
 
 	switch op.Path {
 	case "/":
-		if op.Strict && (op.Kind == deep.OpReplace || op.Kind == deep.OpRemove) {
-			old, ok := op.Old.(Job)
-			if !ok || !deep.Equal(*t, old) {
+		if op.Strict && op.Old != nil && (op.Kind == deep.OpReplace || op.Kind == deep.OpRemove) {
+			_match := false
+			if old, ok := op.Old.(Job); ok {
+				_match = deep.Equal(*t, old)
+			}
+			if !_match {
+				_match = deep.EqualCoerced(*t, op.Old)
+			}
+			if !_match {
 				return true, fmt.Errorf("strict check failed at root: expected %v, got %v", op.Old, *t)
 			}
 		}
@@ -609,17 +621,19 @@ func (t *Job) applyOperation(op deep.Operation, logger *slog.Logger) (bool, erro
 		if strings.HasPrefix(op.Path, "/owners/") {
 			parts := strings.Split(op.Path[len("/owners/"):], "/")
 			key := deep.UnescapePathKey(parts[0])
-			if len(parts) == 1 && !op.Strict {
-				if op.Kind == deep.OpRemove {
-					delete(t.Owners, key)
-					return true, nil
-				}
-				if v, ok := op.New.(*Stage); ok && (op.Kind == deep.OpAdd || op.Kind == deep.OpReplace) {
-					if t.Owners == nil {
-						t.Owners = make(map[string]*Stage)
+			if len(parts) == 1 {
+				if !op.Strict {
+					if op.Kind == deep.OpRemove {
+						delete(t.Owners, key)
+						return true, nil
 					}
-					t.Owners[key] = v
-					return true, nil
+					if v, ok := op.New.(*Stage); ok && (op.Kind == deep.OpAdd || op.Kind == deep.OpReplace) {
+						if t.Owners == nil {
+							t.Owners = make(map[string]*Stage)
+						}
+						t.Owners[key] = v
+						return true, nil
+					}
 				}
 			} else if val, ok := t.Owners[key]; ok && val != nil {
 				op.Path = "/" + strings.Join(parts[1:], "/")

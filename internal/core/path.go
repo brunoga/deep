@@ -564,36 +564,59 @@ func CompareValues(v1, v2 reflect.Value, op string, ignoreCase bool) (bool, erro
 		}
 	}
 
+	// A condition's value is `any`, and one that arrived as JSON is a float64
+	// whatever the field's type. Both comparisons below therefore have to work
+	// across types — but converting the value to the field's type and leaving
+	// it there truncates, which would make "== 5.7" hold against an int field
+	// storing 5, and ">= 5.7" hold against 5 as well.
+	if op == "==" || op == "!=" {
+		if ignoreCase && v1.Kind() == reflect.String && v2.Kind() == reflect.String {
+			eq := strings.EqualFold(v1.String(), v2.String())
+			return eq == (op == "=="), nil
+		}
+		// The conversion is verified rather than trusted: see EqualCoerced.
+		eq := EqualCoercedValue(v1, v2)
+		return eq == (op == "=="), nil
+	}
+
+	// Ordered comparisons between two numbers are done as float64 rather than
+	// by converting one side to the other's type, for the same reason. This
+	// costs exactness above 2^53, which a value that arrived as a JSON number
+	// has already lost.
+	if isNumericKind(v1.Kind()) && isNumericKind(v2.Kind()) {
+		return compareOrdered(numericAsFloat(v1), numericAsFloat(v2), op)
+	}
+
 	v2 = ConvertValue(v2, v1.Type())
-
-	if op == "==" {
-		if ignoreCase && v1.Kind() == reflect.String && v2.Kind() == reflect.String {
-			return strings.EqualFold(v1.String(), v2.String()), nil
-		}
-		return ValueEqual(v1, v2, nil), nil
-	}
-	if op == "!=" {
-		if ignoreCase && v1.Kind() == reflect.String && v2.Kind() == reflect.String {
-			return !strings.EqualFold(v1.String(), v2.String()), nil
-		}
-		return !ValueEqual(v1, v2, nil), nil
-	}
-
 	if v1.Kind() != v2.Kind() {
 		return false, fmt.Errorf("type mismatch: %v and %v", v1.Type(), v2.Type())
 	}
 
 	switch v1.Kind() {
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		return compareOrdered(v1.Int(), v2.Int(), op)
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
-		return compareOrdered(v1.Uint(), v2.Uint(), op)
-	case reflect.Float32, reflect.Float64:
-		return compareOrdered(v1.Float(), v2.Float(), op)
 	case reflect.String:
 		return compareOrdered(v1.String(), v2.String(), op)
 	}
 	return false, fmt.Errorf("unsupported comparison %s for kind %v", op, v1.Kind())
+}
+
+func isNumericKind(k reflect.Kind) bool {
+	switch k {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
+		reflect.Float32, reflect.Float64:
+		return true
+	}
+	return false
+}
+
+func numericAsFloat(v reflect.Value) float64 {
+	switch v.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return float64(v.Int())
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		return float64(v.Uint())
+	}
+	return v.Float()
 }
 
 func compareOrdered[T int64 | uint64 | float64 | string](a, b T, op string) (bool, error) {

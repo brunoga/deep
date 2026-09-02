@@ -30,7 +30,10 @@ func ApplyOpReflectionValue(v reflect.Value, op Operation, logger *slog.Logger) 
 	// A nil Old is no expectation at all — a hand-built operation that did not
 	// record one — so there is nothing to check. Diff always records it.
 	if op.Strict && op.Old != nil && (op.Kind == OpReplace || op.Kind == OpRemove) {
-		current, err := icore.DeepPath(op.Path).Resolve(v)
+		// ResolveMember rather than Resolve: Resolve dereferences, so a
+		// pointer field came back as the struct it points at and was compared
+		// against an Old that is a pointer, which never matched.
+		current, err := icore.DeepPath(op.Path).ResolveMember(v)
 		switch {
 		case err != nil || !current.IsValid():
 			// The path holds nothing, but the patch said what it expected to

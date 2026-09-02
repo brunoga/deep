@@ -262,8 +262,15 @@ func EqualCoerced(current reflect.Value, expected any) bool {
 	if expected == nil {
 		return isNilLike(current)
 	}
+	return EqualCoercedValue(current, reflect.ValueOf(expected))
+}
 
-	ev := reflect.ValueOf(expected)
+// EqualCoercedValue is EqualCoerced over two reflect.Values. Conditions use it
+// so that == and != mean the same thing there as in a strict check.
+func EqualCoercedValue(current, ev reflect.Value) bool {
+	if !current.IsValid() || !ev.IsValid() {
+		return current.IsValid() == ev.IsValid()
+	}
 	if ev.Type() == current.Type() {
 		return ValueEqual(current, ev, nil)
 	}
@@ -272,11 +279,21 @@ func EqualCoerced(current reflect.Value, expected any) bool {
 	if !conv.IsValid() || conv.Type() != current.Type() {
 		return false
 	}
-	// A conversion that loses information is not a match: converting back has
-	// to reproduce what was given.
-	back := ConvertValue(conv, ev.Type())
-	if !back.IsValid() || back.Type() != ev.Type() || !ValueEqual(back, ev, nil) {
-		return false
+
+	// Only a numeric conversion needs verifying, and it needs it badly:
+	// float64(5.7) converts to int(5), which would otherwise match a field
+	// holding 5. Converting back has to reproduce what was given.
+	//
+	// The other conversions this relies on are not reversible and do not need
+	// to be. A map[string]any decoding into a struct — what a value looks like
+	// after JSON — has no meaningful conversion back, and no truncation to
+	// hide: the decode either produced the value or it did not, and the
+	// comparison below settles that.
+	if isNumericKind(current.Kind()) && isNumericKind(ev.Kind()) {
+		back := ConvertValue(conv, ev.Type())
+		if !back.IsValid() || back.Type() != ev.Type() || !ValueEqual(back, ev, nil) {
+			return false
+		}
 	}
 	return ValueEqual(current, conv, nil)
 }

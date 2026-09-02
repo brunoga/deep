@@ -172,7 +172,52 @@ func (p Patch[T]) Reverse() Patch[T] {
 		}
 		res.Operations = append(res.Operations, rev)
 	}
+	restoreSiblingAddOrder(res.Operations)
 	return res
+}
+
+// restoreSiblingAddOrder puts runs of adds into one collection back in the
+// order they had before the operations were reversed.
+//
+// Reversing the order is what makes a patch undo correctly when its operations
+// depend on each other: a chain of moves has to be walked backwards. A run of
+// adds into one collection is the opposite case. Applying an add to a keyed
+// slice appends, so reversing the run reverses the sequence it rebuilds —
+// undoing the removal of [a b c] put back [c b a].
+//
+// Sibling adds cannot depend on each other, so restoring their order is safe
+// where it is not necessary: for a map it makes no difference at all.
+func restoreSiblingAddOrder(ops []Operation) {
+	for i := 0; i < len(ops); {
+		parent, ok := parentPath(ops[i].Path)
+		if !ok || ops[i].Kind != OpAdd {
+			i++
+			continue
+		}
+		j := i + 1
+		for j < len(ops) && ops[j].Kind == OpAdd {
+			p, ok := parentPath(ops[j].Path)
+			if !ok || p != parent {
+				break
+			}
+			j++
+		}
+		for l, r := i, j-1; l < r; l, r = l+1, r-1 {
+			ops[l], ops[r] = ops[r], ops[l]
+		}
+		i = j
+	}
+}
+
+// parentPath returns the path of the collection or struct an operation's path
+// sits inside. It reports false for a root-level path, which has no parent to
+// share with a sibling.
+func parentPath(path string) (string, bool) {
+	i := strings.LastIndex(path, "/")
+	if i <= 0 {
+		return "", false
+	}
+	return path[:i], true
 }
 
 // ToJSONPatch returns a JSON Patch representation compatible with RFC 6902

@@ -6,6 +6,79 @@ All notable changes to this project are documented here, newest first.
 > version's entry before tagging, so the tag, the GitHub release notes, and this
 > file always agree.
 
+## v5.13.0
+
+### Added
+
+- **Property tests and a fuzz target.** Seven invariants — diff+apply reaches
+  the target, before and after a JSON round trip; strict checks pass against the
+  value they came from; reverse returns to the start; a clone equals its source
+  and differs from it nowhere; a value does not differ from itself; Equal agrees
+  with Diff — checked over 400 generated documents each, plus `FuzzDiffApply`.
+
+  They were added because of how the bugs in this library have actually been
+  found. Every significant one this year came from writing an example or a
+  differential test, never from a unit test: those were written next to the
+  implementation and shared its assumptions. The strict-mode tests all built
+  their patches in-process, so none of them ever saw a float64 where an int was
+  expected. The suite found four defects on its first run.
+
+- **A wire-fidelity matrix.** `TestWireFidelity` covers operation kind × field
+  type × encoding for native JSON, gob and RFC 6902, with `encoding/gob`'s two
+  limitations recorded rather than worked around. The README states the
+  resulting guarantees.
+
+- `RegisterCustomEqual`, `RegisterCustomClone` and `RegisterCustomDiff` are now
+  reachable. The mechanism existed and was tested but was never exported, so a
+  type whose method set you do not control had no way to say how it should be
+  compared, copied or diffed.
+
+### Fixed
+
+- **`Merge` produced patches that could not be applied.** Operations were
+  matched by exact path, so an operation on `/user` and one on `/user/name`
+  were kept as unrelated; the merged patch removed `/user` and then failed
+  writing `/user/name` to a path that was no longer there. Enclosing and
+  enclosed paths are now recognised as the collision they are.
+
+- **`Reverse` reversed a rebuilt collection.** Undoing the removal of a keyed
+  slice `[a b c]` put back `[c b a]`: operation order is reversed so that
+  dependent operations undo correctly, but applying an `add` appends, so a run
+  of them rebuilt the collection backwards. Runs of sibling adds keep their
+  order.
+
+- **Conditions truncated the value they compared against.** `== 5.7` held
+  against an int field storing 5, and so did `>= 5.7`, because the condition's
+  value was converted to the field's type before comparing. Equality now
+  verifies the conversion the way strict checks do, and ordered comparisons
+  between two numbers are made as float64.
+
+- **A `[]byte` field could not survive JSON.** `encoding/json` writes a byte
+  slice as base64, and converting that string back to []byte reinterpreted the
+  base64 text as its own ASCII bytes — so `[]byte{7,8}` arrived as
+  `[66 119 103 61]`. It is now decoded the way it was encoded.
+
+- **An `add` of a pointer field could not survive JSON.** The decoded
+  `map[string]any` had no conversion to `*T`, so the operation failed to
+  assign.
+
+- **A strict check on a pointer field never matched.** The check resolved the
+  path, which dereferences, and compared the struct against an `Old` holding a
+  pointer.
+
+- **A strict whole-entry operation on a map of generated structs failed.** It
+  was routed into the element with a path of `/`, which the element cannot
+  remove at, instead of to the reflection engine that verifies it.
+
+- **The custom-diff registry was written without synchronisation**, racing with
+  any concurrent `Diff`. It is now replaced wholesale under a lock and read
+  through an atomic pointer.
+
+### Documentation
+
+- README sections on what survives the wire, on custom behaviour per type, and
+  on what `Merge` does with overlapping paths.
+
 ## v5.12.0
 
 ### Added
