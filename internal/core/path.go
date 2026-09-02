@@ -163,6 +163,81 @@ func (p DeepPath) Navigate(v reflect.Value, parts []PathPart) (reflect.Value, Pa
 	return current, PathPart{}, nil
 }
 
+// ResolveMember resolves the path to the member the last segment names — the
+// struct field, map value, or slice element itself — without dereferencing it.
+// Resolve returns the value a pointer member points at; alias operations need
+// the pointer, because their whole purpose is to install that same reference
+// somewhere else.
+func (p DeepPath) ResolveMember(v reflect.Value) (reflect.Value, error) {
+	parts := ParsePath(string(p))
+	if len(parts) == 0 {
+		return Dereference(v)
+	}
+	parent, err := Dereference(v)
+	if err != nil {
+		return reflect.Value{}, err
+	}
+	if len(parts) > 1 {
+		parent, _, err = p.Navigate(v, parts[:len(parts)-1])
+		if err != nil {
+			return reflect.Value{}, err
+		}
+	}
+	part := parts[len(parts)-1]
+
+	switch parent.Kind() {
+	case reflect.Struct:
+		key := part.Key
+		if key == "" && part.IsIndex {
+			key = strconv.Itoa(part.Index)
+		}
+		info := GetTypeInfo(parent.Type())
+		for _, fInfo := range info.Fields {
+			if fInfo.Name == key || (fInfo.JSONTag != "" && fInfo.JSONTag == key) {
+				f := parent.Field(fInfo.Index)
+				if !f.CanInterface() {
+					unsafe.DisableRO(&f)
+				}
+				return f, nil
+			}
+		}
+		return reflect.Value{}, fmt.Errorf("field %s not found", key)
+	case reflect.Map:
+		keyVal, err := makeMapKey(parent.Type().Key(), part)
+		if err != nil {
+			return reflect.Value{}, err
+		}
+		elem := parent.MapIndex(keyVal)
+		if !elem.IsValid() {
+			return reflect.Value{}, fmt.Errorf("map key %v not found", part.Key)
+		}
+		return elem, nil
+	case reflect.Slice, reflect.Array:
+		if parent.Kind() == reflect.Slice {
+			if keyIdx, found := sliceKeyField(parent.Type()); found {
+				keyStr := part.Key
+				if keyStr == "" && part.IsIndex {
+					keyStr = strconv.Itoa(part.Index)
+				}
+				elem, ok := findSliceElemByKey(parent, keyIdx, keyStr)
+				if !ok {
+					return reflect.Value{}, fmt.Errorf("element with key %s not found", keyStr)
+				}
+				return elem, nil
+			}
+		}
+		if !part.IsIndex {
+			return reflect.Value{}, fmt.Errorf("non-numeric index %q for %v", part.Key, parent.Kind())
+		}
+		if part.Index < 0 || part.Index >= parent.Len() {
+			return reflect.Value{}, fmt.Errorf("index out of bounds: %d", part.Index)
+		}
+		return parent.Index(part.Index), nil
+	default:
+		return reflect.Value{}, fmt.Errorf("cannot navigate into %v", parent.Kind())
+	}
+}
+
 func (p DeepPath) Set(v reflect.Value, val reflect.Value) error {
 	if string(p) == "" || string(p) == "/" {
 		if !v.CanSet() {

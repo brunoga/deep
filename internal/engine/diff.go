@@ -65,9 +65,22 @@ func NewDiffer(opts ...DiffOption) *Differ {
 type diffContext struct {
 	valueIndex map[any]string
 	movedPaths map[string]bool
-	visited    map[icore.VisitKey]bool
-	pathStack  []string
-	rootB      reflect.Value
+	// visited tracks each pointer pair the diff has reached: at which path it
+	// was first diffed, whether that diff has finished, and whether it found
+	// changes. A pair is diffed once — shared structure can be reachable by
+	// exponentially many paths — and later routes to a changed pair become
+	// alias operations pointing at the first path.
+	visited map[icore.VisitKey]*diffVisit
+	// indexed guards indexValues' own traversal of cyclic values.
+	indexed   map[icore.VisitKey]bool
+	pathStack []string
+	rootB     reflect.Value
+}
+
+type diffVisit struct {
+	path    string
+	done    bool
+	changed bool
 }
 
 var diffContextPool = sync.Pool{
@@ -75,7 +88,8 @@ var diffContextPool = sync.Pool{
 		return &diffContext{
 			valueIndex: make(map[any]string),
 			movedPaths: make(map[string]bool),
-			visited:    make(map[icore.VisitKey]bool),
+			visited:    make(map[icore.VisitKey]*diffVisit),
+			indexed:    make(map[icore.VisitKey]bool),
 			pathStack:  make([]string, 0, 32),
 		}
 	},
@@ -94,6 +108,9 @@ func releaseDiffContext(ctx *diffContext) {
 	}
 	for k := range ctx.visited {
 		delete(ctx.visited, k)
+	}
+	for k := range ctx.indexed {
+		delete(ctx.indexed, k)
 	}
 	ctx.pathStack = ctx.pathStack[:0]
 	ctx.rootB = reflect.Value{}
@@ -351,10 +368,10 @@ func (d *Differ) indexValues(v reflect.Value, ctx *diffContext) {
 		}
 		if kind == reflect.Pointer {
 			ptr := v.Pointer()
-			if ctx.visited[icore.VisitKey{A: ptr}] {
+			if ctx.indexed[icore.VisitKey{A: ptr}] {
 				return
 			}
-			ctx.visited[icore.VisitKey{A: ptr}] = true
+			ctx.indexed[icore.VisitKey{A: ptr}] = true
 		}
 		d.indexValues(v.Elem(), ctx)
 		return
@@ -553,13 +570,26 @@ func (d *Differ) diffPtr(a, b reflect.Value, ctx *diffContext) (diffPatch, error
 		return nil, nil
 	}
 
+	// A pair is diffed once, at the first path that reaches it — shared
+	// structure can be reachable by exponentially many paths, so diffing every
+	// route is not an option. Later routes to a pair whose diff found changes
+	// become alias operations: the destination is made to hold the same object
+	// the first path holds, which lands correctly on any target. A pair whose
+	// diff is still in progress is a cycle; the comparison already under way
+	// covers it.
 	k := icore.VisitKey{A: a.Pointer(), B: b.Pointer(), Typ: a.Type()}
-	if ctx.visited[k] {
+	if v, ok := ctx.visited[k]; ok {
+		if v.done && v.changed {
+			return &aliasPatch{from: v.path, oldDst: icore.DeepCopyValue(a)}, nil
+		}
 		return nil, nil
 	}
-	ctx.visited[k] = true
+	visit := &diffVisit{path: ctx.buildPath()}
+	ctx.visited[k] = visit
 
 	elemPatch, err := d.diffRecursive(a.Elem(), b.Elem(), false, ctx)
+	visit.done = true
+	visit.changed = elemPatch != nil
 	if err != nil {
 		return nil, err
 	}

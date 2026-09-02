@@ -145,6 +145,13 @@ func resolveStructDependencies(p *structPatch, basePath string, root reflect.Val
 			}
 			valCopy := icore.DeepCopyValue(val)
 			effectivePatches[name] = newValuePatch(reflect.Value{}, valCopy)
+		} else if ap, ok := node.patch.(*aliasPatch); ok {
+			val, err := icore.DeepPath(ap.from).ResolveMember(root)
+			if err != nil {
+				return nil, nil, fmt.Errorf("failed to resolve cycle dependency for %s (from %s): %w", name, ap.from, err)
+			}
+			// Alias shares on purpose: no deep copy.
+			effectivePatches[name] = newValuePatch(reflect.Value{}, val)
 		} else if mp, ok := node.patch.(*movePatch); ok {
 			val, err := icore.DeepPath(mp.from).Resolve(root)
 			if err != nil {

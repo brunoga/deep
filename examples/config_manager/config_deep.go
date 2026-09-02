@@ -190,25 +190,29 @@ func (t *Config) Diff(other *Config) deep.Patch[Config] {
 	if t.Timeout != other.Timeout {
 		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/timeout", Old: t.Timeout, New: other.Timeout})
 	}
-	if other.Features != nil {
-		for k, v := range other.Features {
-			if t.Features == nil {
-				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/features/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
-				continue
-			}
-			if oldV, ok := t.Features[k]; !ok || v != oldV {
-				kind := deep.OpReplace
-				if !ok {
-					kind = deep.OpAdd
+	if (t.Features == nil) != (other.Features == nil) {
+		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/features", Old: t.Features, New: other.Features})
+	} else {
+		if other.Features != nil {
+			for k, v := range other.Features {
+				if t.Features == nil {
+					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/features/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
+					continue
 				}
-				p.Operations = append(p.Operations, deep.Operation{Kind: kind, Path: "/features/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: oldV, New: v})
+				if oldV, ok := t.Features[k]; !ok || v != oldV {
+					kind := deep.OpReplace
+					if !ok {
+						kind = deep.OpAdd
+					}
+					p.Operations = append(p.Operations, deep.Operation{Kind: kind, Path: "/features/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: oldV, New: v})
+				}
 			}
 		}
-	}
-	if t.Features != nil {
-		for k, v := range t.Features {
-			if _, ok := other.Features[k]; !ok {
-				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: "/features/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: v})
+		if t.Features != nil {
+			for k, v := range t.Features {
+				if _, ok := other.Features[k]; !ok {
+					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: "/features/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: v})
+				}
 			}
 		}
 	}

@@ -7,9 +7,14 @@ import (
 )
 
 // No //go:generate here: this package has no generated code, so everything runs
-// on the reflection engine. That engine handles shapes generated code cannot —
-// unexported fields and cyclic references — and it is also what a generated
-// type falls back to for any single operation its fast path does not model.
+// on the reflection engine. That engine handles unexported fields, which
+// generated code cannot reach, and it is also what a generated type falls back
+// to for any single operation its fast path does not model.
+//
+// It handles cycles too, as shown below — but so does generated code now, when
+// deep-gen sees that a type can reach itself. See the cyclic_graph example for
+// that side of it; here the point is that a type with no generated code at all
+// still gets the same behaviour.
 
 // Session carries state the owning package keeps private.
 type Session struct {
@@ -27,7 +32,8 @@ func (s *Session) String() string {
 }
 
 // Node forms a doubly-linked ring — a cycle that would make a naive recursive
-// copy run forever.
+// copy run forever. Nothing here is generated, so the reflection engine is what
+// keeps track of what it has already copied.
 type Node struct {
 	Name string
 	Next *Node

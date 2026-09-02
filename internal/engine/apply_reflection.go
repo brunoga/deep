@@ -103,6 +103,18 @@ func ApplyOpReflectionValue(v reflect.Value, op Operation, logger *slog.Logger) 
 		if err == nil {
 			err = icore.DeepPath(op.Path).Set(v, icore.DeepCopyValue(val))
 		}
+	case OpAlias:
+		// Unlike OpCopy, the resolved value is installed as-is: for a pointer
+		// that shares the object, which is the point — the destination must end
+		// up holding the same object the source path holds.
+		if op.From == "" {
+			return fmt.Errorf("alias at %s: missing From source path", op.Path)
+		}
+		var val reflect.Value
+		val, err = icore.DeepPath(op.From).ResolveMember(v)
+		if err == nil {
+			err = icore.DeepPath(op.Path).Set(v, val)
+		}
 	case OpLog:
 		logger.Info("deep log", "message", op.New, "path", op.Path)
 	}

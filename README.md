@@ -1,11 +1,12 @@
 # deep: Type-Safe Diff, Patch, Clone and Sync for Go
 
-`deep` is a comprehensive Go library for comparing, cloning, patching and synchronizing complex data structures. It combines **code generation** (fast, reflection-free implementations for your types) with a **reflection engine** (which handles everything else, including unexported fields and cyclic structures) behind one uniform API.
+`deep` is a comprehensive Go library for comparing, cloning, patching and synchronizing complex data structures. It combines **code generation** (fast, reflection-free implementations for your types) with a **reflection engine** (which handles everything else, including unexported fields) behind one uniform API.
 
 ## Key Features
 
 - **Four core operations**: `Diff`, `Apply`, `Equal`, `Clone` — one call each, for any type.
-- **Hybrid architecture**: `deep-gen` generates optimized fast paths; a reflection engine transparently handles types without generated code, unexported fields, cycles, and exotic shapes.
+- **Hybrid architecture**: `deep-gen` generates optimized fast paths; a reflection engine transparently handles types without generated code, unexported fields, and exotic shapes.
+- **Recursive data**: values that reference themselves, or reach the same value twice, work on both paths — cycles are rebuilt, shared nodes stay shared (foreign pointers included), and diffs stay linear with `alias` operations rewiring the extra routes.
 - **Compile-time safety**: type-safe field selectors replace brittle string paths.
 - **Data-oriented patches**: a patch is a flat, serializable list of operations — portable, mergeable, reversible.
 - **Conditional patching**: guards and per-operation conditions travel inside the patch.
@@ -76,12 +77,10 @@ Deep copy compared with other clone libraries, same struct:
 
 | Library | ns/op | allocs/op | Unexported fields | Cyclic structures |
 | :--- | ---: | ---: | :---: | :---: |
-| **deep (generated)** | **168** | 5 | ✅ | — (¹) |
+| **deep (generated)** | **168** | 5 | ✅ | ✅ |
 | [barkimedes/go-deepcopy](https://github.com/barkimedes/go-deepcopy) | 740 | 16 | silently zeroed | ✅ |
 | deep (reflection) | 981 | 15 | ✅ | ✅ |
 | [mitchellh/copystructure](https://github.com/mitchellh/copystructure) | 3,149 | 91 | silently zeroed | stack overflow |
-
-¹ Generated `Clone` assumes acyclic data; cyclic values are the reflection engine's territory.
 
 Numbers from an Intel Core Ultra 9 285K; relative ordering is what matters. The competitor benchmarks live out-of-tree so this module stays dependency-free.
 
@@ -90,7 +89,7 @@ Numbers from an Intel Core Ultra 9 285K; relative ordering is what matters. The 
 - `deep.Diff(a, b) (Patch[T], error)` — computes the operations turning `a` into `b`. Changed `chan`/`func` values diff to a whole-value replace that shares the reference; the error return covers values the reflection engine cannot process.
 - `deep.Apply(&target, patch, opts...) error` — applies a patch. Individual operation failures are collected: the returned error is an `*ApplyError` whose `Unwrap() []error` yields every failure; the remaining operations still apply. Pass `deep.WithLogger(l)` to route `log` operations to a specific `*slog.Logger`.
 - `deep.Equal(a, b) bool` — deep equality, including unexported fields and cyclic values.
-- `deep.Clone(v) T` — deep copy. The reflection path handles unexported fields and cycles; non-nil `chan` and `func` values are cloned as `nil`.
+- `deep.Clone(v) T` — deep copy. The reflection path also handles unexported fields; non-nil `chan` and `func` values are cloned as `nil`.
 
 All four automatically dispatch to generated methods when they exist and fall back to reflection when they don't — including per-operation: a generated `Patch` method hands any operation it does not model (slice indexing, `move`/`copy`, strict map entries) to the reflection engine.
 
@@ -260,6 +259,60 @@ Rules worth knowing:
 - **Types from other packages** (`time.Time`, generic instantiations, interfaces) are handled through `deep.Equal`/`deep.Clone`, which dispatch to the type's own methods when present. A small set of stdlib value types (`time.Time`, `time.Duration`, …) stays on a fast assignment path.
 - **What generation can't express falls back to reflection** — per operation, transparently: channels/funcs, slice-index paths, `move`/`copy`, strict map-entry checks, conditions on nested paths.
 - Generated files never need hand-editing and are safe to regenerate; deep-gen ignores its own previous output while parsing.
+- **Recursive and shared types are detected and handled.** See below.
+
+## Recursive and Shared Data
+
+A value can reference itself — a tree with parent pointers, a graph, a linked
+list — or reach the same value by two different routes. Both engines handle
+both, with the same behavior.
+
+`Clone` copies a value reached more than once exactly once, and points every
+reference at that one copy. That holds for pointers to your own structs and for
+foreign pointers alike: a `*time.Time` held by a field and a map entry clones
+into one copied `time.Time` with both routes pointing at it. A cycle is rebuilt
+as a cycle in the copy, closing on the copy rather than on the original:
+
+```go
+n := &Node{Name: "n"}
+n.Next = n
+n.Peers = []*Node{n, n}
+
+c := n.Clone()
+c.Next == c        // true — the cycle was rebuilt
+c.Peers[0] == c    // true — and every route agrees
+c.Next == n        // false — nothing is shared with the original
+```
+
+`Equal` follows a cycle only until it repeats, so two values with matching
+cyclic shapes compare equal instead of recursing forever.
+
+`Diff` descends into a pair of values once, at the first path that reaches it —
+shared structure can be reachable by exponentially many paths, so repeating the
+operations at each one is not an option. Every later route to a changed value
+becomes a single **alias** operation instead: `{Kind: OpAlias, Path: to, From:
+from}` makes `to` hold the same object `from` holds, where `OpCopy` would make
+an independent deep copy. Applying the patch lands the right values at every
+route and rebuilds the sharing — whether the target still shared the value (a
+clone) or was rebuilt without sharing (decoded from JSON, say). Alias ops
+survive the native flat JSON encoding; the RFC 6902 export maps them to
+`copy`, which reproduces the values but not the sharing, since JSON values have
+no identity.
+
+deep-gen works out which types need any of this by looking for two facts in the
+package's type graph: cycles, and reference classes reachable by more than one
+route (two `*Meta` fields, a `*time.Time` next to a `map[string]*time.Time`, an
+interface next to any pointer). Types where neither is possible — the common
+case — generate exactly the code they did before, with no bookkeeping and no
+extra allocation. Types that qualify thread a `deep.CloneMemo`, `deep.VisitSet`
+or `deep.DiffMemo`, still around 6× faster than the reflection engine on the
+same value; opaque fields are handed to `deep.CloneShared`, which runs the
+reflection engine against the same memo, so sharing survives even across the
+generated/reflection boundary.
+
+One boundary remains, shared by both engines: slice and map *headers* are
+copied per occurrence — two fields holding the same `[]int` clone into two
+independent slices. Identity is tracked through pointers.
 
 ## CRDTs and Synchronization
 
@@ -426,7 +479,8 @@ Every directory under [`examples/`](examples/) is a runnable program (`go run ./
 | [`conditional_ops`](examples/conditional_ops) | Per-operation `If` / `Unless` inside one patch |
 | [`concurrent_updates`](examples/concurrent_updates) | Strict mode as optimistic locking |
 | [`three_way_merge`](examples/three_way_merge) | `Merge` with a custom `ConflictResolver` |
-| [`reflection_fallback`](examples/reflection_fallback) | Unexported fields and cyclic structures |
+| [`reflection_fallback`](examples/reflection_fallback) | Unexported fields and cyclic structures with no generated code at all |
+| [`cyclic_graph`](examples/cyclic_graph) | Self-referencing types: cycles rebuilt, shared nodes kept shared, alias ops in diffs |
 
 **Transport and interop**
 

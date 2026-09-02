@@ -20,6 +20,16 @@
 // Embedded fields are addressed by their type name, the same way the language
 // (and the reflection engine) names them.
 //
+// The generator also inspects the package's type graph for two facts: cycles,
+// and reference classes reachable by more than one route (two *Meta fields, a
+// *time.Time next to a map[string]*time.Time, an interface next to any
+// pointer). Types where either holds are "shared": their Clone threads a
+// deep.CloneMemo so a value reached twice is copied once and cycles are
+// rebuilt, their Equal threads a deep.VisitSet so comparison terminates, and
+// their Diff threads a deep.DiffMemo so a pair is diffed once and every later
+// route becomes one alias operation. Types where neither holds generate
+// exactly the code they always did.
+//
 // Generated code calls Equal, Clone and applyOperation on every struct declared
 // in the package that a requested type references — directly, embedded, or as a
 // collection element. Those structs must therefore also have generated code:
@@ -74,6 +84,17 @@ type FieldInfo struct {
 	// ElemGenerated is true when a slice element or map value is a struct
 	// declared in this package, or a pointer to one.
 	ElemGenerated bool
+	// TypeShared is true when the field's own struct type is in the package's
+	// shared set — its values can hold two references to one value — so that
+	// type generates the memo-threaded methods and this field's code must call
+	// those rather than the plain ones. ElemShared is the same for a
+	// collection's element or value type.
+	//
+	// A field whose type is shared makes the struct holding it shared too, so a
+	// set flag here always comes with the threaded form of the enclosing
+	// method, where the memo or visited set is in scope.
+	TypeShared bool
+	ElemShared bool
 	// Comparable is true when == compares the field by value: a builtin
 	// comparable type, or a named type over one.
 	Comparable bool
@@ -153,9 +174,34 @@ type typeData struct {
 	P        string // package prefix
 	Fields   []FieldInfo
 	TypeKeys map[string]string
+	// Shared is true when values of the type can hold two references to the
+	// same value — through a cycle, or through two routes to one pointer.
+	// Clone then threads a CloneMemo, Equal a VisitSet and Diff a DiffMemo, so
+	// that shared values are copied once, cycles terminate, and every route to
+	// a changed value ends up correct after an apply.
+	Shared bool
 }
 
 // ── helpers used by both templates and FuncMap ───────────────────────────────
+
+// cloneCall and equalCall render a call to the generated method of another
+// struct in this package. When the callee is itself in the shared set they call
+// the threaded form, which carries the memo or visited set down with it;
+// otherwise they call the plain exported method, which is what the type
+// generated before sharing support and costs nothing extra.
+func cloneCall(recv string, shared bool) string {
+	if shared {
+		return recv + ".cloneShared(memo)"
+	}
+	return recv + ".Clone()"
+}
+
+func equalCall(recv, arg string, shared bool) string {
+	if shared {
+		return fmt.Sprintf("%s.equalShared(%s, seen)", recv, arg)
+	}
+	return fmt.Sprintf("%s.Equal(%s)", recv, arg)
+}
 
 func isPtr(s string) bool          { return strings.HasPrefix(s, "*") }
 func mapVal(s string) string       { return s[strings.Index(s, "]")+1:] }
@@ -324,8 +370,33 @@ func delegateCase(f FieldInfo, p string) string {
 	return b.String()
 }
 
-// diffFieldCode returns the diff fragment for one field.
-func diffFieldCode(f FieldInfo, p string, typeKeys map[string]string) string {
+// diffFieldCode returns the diff fragment for one field. shared is true when
+// the enclosing type threads a DiffMemo; its diffShared emits absolute paths (a
+// variable `at` holds the type's own path), so every path this fragment builds
+// is prefixed with it on the way out — see diffFieldPaths.
+func diffFieldCode(f FieldInfo, p string, typeKeys map[string]string, shared bool) string {
+	code := diffFieldBody(f, p, typeKeys)
+	if !shared {
+		return code
+	}
+	return diffFieldPaths(code)
+}
+
+// diffFieldPaths re-roots every path expression in a relative diff fragment on
+// the `at` variable. The fragment is machine-written by diffFieldBody, so its
+// path expressions take exactly three shapes: an Operation's Path field, a
+// keyed-slice `prefix` variable, and the re-rooting of a memo-free sub-diff's
+// operations.
+func diffFieldPaths(code string) string {
+	code = strings.ReplaceAll(code, `Path: "`, `Path: at + "`)
+	code = strings.ReplaceAll(code, `Path: fmt.Sprintf("`, `Path: at + fmt.Sprintf("`)
+	code = strings.ReplaceAll(code, `prefix := "`, `prefix := at + "`)
+	code = strings.ReplaceAll(code, `op.Path = "`, `op.Path = at + "`)
+	return code
+}
+
+// diffFieldBody renders the diff fragment with paths relative to the type.
+func diffFieldBody(f FieldInfo, p string, typeKeys map[string]string) string {
 	var b strings.Builder
 	if f.Ignore {
 		return ""
@@ -350,10 +421,19 @@ func diffFieldCode(f FieldInfo, p string, typeKeys map[string]string) string {
 			fmt.Fprintf(&b, "\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpRemove, Path: \"/%s\", Old: %s})\n", p, p, f.JSONName, self)
 			fmt.Fprintf(&b, "\t} else if %s != nil && %s != nil {\n", self, other)
 		}
-		fmt.Fprintf(&b, "\t\tsub%s := %s.Diff(%s)\n", f.Name, self, other)
-		fmt.Fprintf(&b, "\t\tfor _, op := range sub%s.Operations {\n", f.Name)
-		fmt.Fprintf(&b, "\t\t\tif op.Path == \"\" || op.Path == \"/\" { op.Path = \"/%s\" } else { op.Path = \"/%s\" + op.Path }\n", f.JSONName, f.JSONName)
-		b.WriteString("\t\t\tp.Operations = append(p.Operations, op)\n\t\t}\n")
+		if f.TypeShared {
+			// The callee threads the memo and emits absolute paths itself, so
+			// its operations are appended as they are.
+			fmt.Fprintf(&b, "\t\tsub%s := %s.diffShared(%s, seen, at + \"/%s\")\n", f.Name, self, other, f.JSONName)
+			fmt.Fprintf(&b, "\t\tp.Operations = append(p.Operations, sub%s.Operations...)\n", f.Name)
+		} else {
+			// Text and memo-free structs diff standalone with relative paths;
+			// their operations are re-rooted here.
+			fmt.Fprintf(&b, "\t\tsub%s := %s.Diff(%s)\n", f.Name, self, other)
+			fmt.Fprintf(&b, "\t\tfor _, op := range sub%s.Operations {\n", f.Name)
+			fmt.Fprintf(&b, "\t\t\tif op.Path == \"\" || op.Path == \"/\" { op.Path = \"/%s\" } else { op.Path = \"/%s\" + op.Path }\n", f.JSONName, f.JSONName)
+			b.WriteString("\t\t\tp.Operations = append(p.Operations, op)\n\t\t}\n")
+		}
 		if needsGuard {
 			b.WriteString("\t}\n")
 		}
@@ -361,30 +441,55 @@ func diffFieldCode(f FieldInfo, p string, typeKeys map[string]string) string {
 		if strings.HasPrefix(f.Type, "map[") {
 			vt := mapVal(f.Type)
 			ptrVal := isPtr(vt)
+			// A nil map and an empty one are different values, and per-key
+			// operations cannot turn one into the other: removing the last key
+			// leaves an empty map, not a nil one. Replace the whole field
+			// instead, which is what the reflection engine does.
+			fmt.Fprintf(&b, "\tif (t.%s == nil) != (other.%s == nil) {\n", f.Name, f.Name)
+			fmt.Fprintf(&b, "\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpReplace, Path: \"/%s\", Old: t.%s, New: other.%s})\n", p, p, f.JSONName, f.Name, f.Name)
+			b.WriteString("\t} else {\n")
 			fmt.Fprintf(&b, "\tif other.%s != nil {\n", f.Name)
 			fmt.Fprintf(&b, "\t\tfor k, v := range other.%s {\n", f.Name)
 			fmt.Fprintf(&b, "\t\t\tif t.%s == nil {\n", f.Name)
 			fmt.Fprintf(&b, "\t\t\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpReplace, Path: \"/%s/\" + %sEscapePathKey(fmt.Sprintf(\"%%v\", k)), New: v})\n", p, p, f.JSONName, p)
 			b.WriteString("\t\t\t\tcontinue\n\t\t\t}\n")
-			fmt.Fprintf(&b, "\t\t\tif oldV, ok := t.%s[k]; !ok || ", f.Name)
-			switch {
-			case ptrVal && f.ElemGenerated:
-				b.WriteString("!oldV.Equal(v) {\n")
-			case f.ElemGenerated:
-				b.WriteString("!oldV.Equal(&v) {\n")
-			case f.ElemComparable:
-				b.WriteString("v != oldV {\n")
-			default:
-				fmt.Fprintf(&b, "!%sEqual(oldV, v) {\n", p)
+			if ptrVal && f.ElemGenerated && f.ElemShared {
+				// Pointer values of a shared type are diffed in place, like
+				// struct fields: that tracks the pair, so a value reachable
+				// both through this map and elsewhere is diffed once and
+				// aliased at the other routes.
+				fmt.Fprintf(&b, "\t\t\toldV, ok := t.%s[k]\n", f.Name)
+				b.WriteString("\t\t\tswitch {\n")
+				b.WriteString("\t\t\tcase !ok:\n")
+				fmt.Fprintf(&b, "\t\t\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpAdd, Path: \"/%s/\" + %sEscapePathKey(fmt.Sprintf(\"%%v\", k)), New: v})\n", p, p, f.JSONName, p)
+				b.WriteString("\t\t\tcase (oldV == nil) != (v == nil):\n")
+				fmt.Fprintf(&b, "\t\t\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpReplace, Path: \"/%s/\" + %sEscapePathKey(fmt.Sprintf(\"%%v\", k)), Old: oldV, New: v})\n", p, p, f.JSONName, p)
+				b.WriteString("\t\t\tcase oldV != nil:\n")
+				fmt.Fprintf(&b, "\t\t\t\tsub := oldV.diffShared(v, seen, at + \"/%s/\" + %sEscapePathKey(fmt.Sprintf(\"%%v\", k)))\n", f.JSONName, p)
+				b.WriteString("\t\t\t\tp.Operations = append(p.Operations, sub.Operations...)\n")
+				b.WriteString("\t\t\t}\n\t\t}\n\t}\n")
+			} else {
+				fmt.Fprintf(&b, "\t\t\tif oldV, ok := t.%s[k]; !ok || ", f.Name)
+				switch {
+				case ptrVal && f.ElemGenerated:
+					b.WriteString("!oldV.Equal(v) {\n")
+				case f.ElemGenerated:
+					b.WriteString("!oldV.Equal(&v) {\n")
+				case f.ElemComparable:
+					b.WriteString("v != oldV {\n")
+				default:
+					fmt.Fprintf(&b, "!%sEqual(oldV, v) {\n", p)
+				}
+				fmt.Fprintf(&b, "\t\t\t\tkind := %sOpReplace\n\t\t\t\tif !ok { kind = %sOpAdd }\n", p, p)
+				fmt.Fprintf(&b, "\t\t\t\tp.Operations = append(p.Operations, %sOperation{Kind: kind, Path: \"/%s/\" + %sEscapePathKey(fmt.Sprintf(\"%%v\", k)), Old: oldV, New: v})\n", p, f.JSONName, p)
+				b.WriteString("\t\t\t}\n\t\t}\n\t}\n")
 			}
-			fmt.Fprintf(&b, "\t\t\t\tkind := %sOpReplace\n\t\t\t\tif !ok { kind = %sOpAdd }\n", p, p)
-			fmt.Fprintf(&b, "\t\t\t\tp.Operations = append(p.Operations, %sOperation{Kind: kind, Path: \"/%s/\" + %sEscapePathKey(fmt.Sprintf(\"%%v\", k)), Old: oldV, New: v})\n", p, f.JSONName, p)
-			b.WriteString("\t\t\t}\n\t\t}\n\t}\n")
 			fmt.Fprintf(&b, "\tif t.%s != nil {\n", f.Name)
 			fmt.Fprintf(&b, "\t\tfor k, v := range t.%s {\n", f.Name)
 			fmt.Fprintf(&b, "\t\t\tif _, ok := other.%s[k]; !ok {\n", f.Name)
 			fmt.Fprintf(&b, "\t\t\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpRemove, Path: \"/%s/\" + %sEscapePathKey(fmt.Sprintf(\"%%v\", k)), Old: v})\n", p, p, f.JSONName, p)
 			b.WriteString("\t\t\t}\n\t\t}\n\t}\n")
+			b.WriteString("\t}\n")
 		} else {
 			// Slice
 			elemType := sliceElem(f.Type)
@@ -393,6 +498,11 @@ func diffFieldCode(f FieldInfo, p string, typeKeys map[string]string) string {
 				// Keyed slice diff. Braces scope the per-field index maps so
 				// several keyed slices in one struct do not collide.
 				b.WriteString("\t{\n")
+				// As for maps: per-key operations cannot turn an empty keyed
+				// slice into a nil one.
+				fmt.Fprintf(&b, "\tif (t.%s == nil) != (other.%s == nil) {\n", f.Name, f.Name)
+				fmt.Fprintf(&b, "\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpReplace, Path: \"/%s\", Old: t.%s, New: other.%s})\n", p, p, f.JSONName, f.Name, f.Name)
+				b.WriteString("\t} else {\n")
 				fmt.Fprintf(&b, "\totherByKey := make(map[any]int)\n")
 				fmt.Fprintf(&b, "\tfor i, v := range other.%s { otherByKey[v.%s] = i }\n", f.Name, keyField)
 				fmt.Fprintf(&b, "\tfor _, v := range t.%s {\n", f.Name)
@@ -408,7 +518,10 @@ func diffFieldCode(f FieldInfo, p string, typeKeys map[string]string) string {
 				b.WriteString("\t\t\tcontinue\n\t\t}\n")
 				// A key present on both sides may still have changed content.
 				fmt.Fprintf(&b, "\t\tprefix := \"/%s/\" + %sEscapePathKey(fmt.Sprintf(\"%%v\", other.%s[j].%s))\n", f.JSONName, p, f.Name, keyField)
-				if f.ElemGenerated {
+				if f.ElemGenerated && f.ElemShared {
+					fmt.Fprintf(&b, "\t\tsub := (&t.%s[i]).diffShared(&other.%s[j], seen, prefix)\n", f.Name, f.Name)
+					b.WriteString("\t\tp.Operations = append(p.Operations, sub.Operations...)\n")
+				} else if f.ElemGenerated {
 					fmt.Fprintf(&b, "\t\tsub := t.%s[i].Diff(&other.%s[j])\n", f.Name, f.Name)
 					b.WriteString("\t\tfor _, op := range sub.Operations {\n")
 					b.WriteString("\t\t\tif op.Path == \"\" || op.Path == \"/\" { op.Path = prefix } else { op.Path = prefix + op.Path }\n")
@@ -420,11 +533,23 @@ func diffFieldCode(f FieldInfo, p string, typeKeys map[string]string) string {
 				}
 				b.WriteString("\t}\n")
 				b.WriteString("\t}\n")
+				b.WriteString("\t}\n")
 			} else {
-				fmt.Fprintf(&b, "\tif len(t.%s) != len(other.%s) {\n", f.Name, f.Name)
+				fmt.Fprintf(&b, "\tif len(t.%s) != len(other.%s) || (t.%s == nil) != (other.%s == nil) {\n", f.Name, f.Name, f.Name, f.Name)
 				fmt.Fprintf(&b, "\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpReplace, Path: \"/%s\", Old: t.%s, New: other.%s})\n", p, p, f.JSONName, f.Name, f.Name)
 				b.WriteString("\t} else {\n")
 				fmt.Fprintf(&b, "\t\tfor i := range t.%s {\n", f.Name)
+				if f.ElemGenerated && isPtr(elemType) && f.ElemShared {
+					// As for maps: shared pointer elements are diffed in
+					// place so the pair is tracked and aliases fire.
+					fmt.Fprintf(&b, "\t\t\tif (t.%s[i] == nil) != (other.%s[i] == nil) {\n", f.Name, f.Name)
+					fmt.Fprintf(&b, "\t\t\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpReplace, Path: fmt.Sprintf(\"/%s/%%d\", i), Old: t.%s[i], New: other.%s[i]})\n", p, p, f.JSONName, f.Name, f.Name)
+					fmt.Fprintf(&b, "\t\t\t} else if t.%s[i] != nil {\n", f.Name)
+					fmt.Fprintf(&b, "\t\t\t\tsub := t.%s[i].diffShared(other.%s[i], seen, at + fmt.Sprintf(\"/%s/%%d\", i))\n", f.Name, f.Name, f.JSONName)
+					b.WriteString("\t\t\t\tp.Operations = append(p.Operations, sub.Operations...)\n")
+					b.WriteString("\t\t\t}\n\t\t}\n\t}\n")
+					return b.String()
+				}
 				switch {
 				case f.ElemGenerated && isPtr(elemType):
 					fmt.Fprintf(&b, "\t\t\tif (t.%s[i] == nil) != (other.%s[i] == nil) || (t.%s[i] != nil && !t.%s[i].Equal(other.%s[i])) {\n",
@@ -547,9 +672,9 @@ func equalFieldCode(f FieldInfo, p string) string {
 	case f.IsStruct:
 		if isPtr(f.Type) {
 			fmt.Fprintf(&b, "\tif (%s == nil) != (%s == nil) { return false }\n", self, other)
-			fmt.Fprintf(&b, "\tif %s != nil && !%s.Equal(%s) { return false }\n", self, self, other)
+			fmt.Fprintf(&b, "\tif %s != nil && !%s { return false }\n", self, equalCall(self, other, f.TypeShared))
 		} else {
-			fmt.Fprintf(&b, "\tif !%s.Equal(%s) { return false }\n", self, other)
+			fmt.Fprintf(&b, "\tif !%s { return false }\n", equalCall(self, other, f.TypeShared))
 		}
 	case f.IsText:
 		fmt.Fprintf(&b, "\tif len(t.%s) != len(other.%s) { return false }\n", f.Name, f.Name)
@@ -563,9 +688,12 @@ func equalFieldCode(f FieldInfo, p string) string {
 			switch {
 			case ptrElem && f.ElemGenerated:
 				fmt.Fprintf(&b, "\t\tif (t.%s[i] == nil) != (other.%s[i] == nil) { return false }\n", f.Name, f.Name)
-				fmt.Fprintf(&b, "\t\tif t.%s[i] != nil && !t.%s[i].Equal(other.%s[i]) { return false }\n", f.Name, f.Name, f.Name)
+				elem := fmt.Sprintf("t.%s[i]", f.Name)
+				fmt.Fprintf(&b, "\t\tif %s != nil && !%s { return false }\n",
+					elem, equalCall(elem, fmt.Sprintf("other.%s[i]", f.Name), f.ElemShared))
 			case f.ElemGenerated:
-				fmt.Fprintf(&b, "\t\tif !t.%s[i].Equal(&other.%s[i]) { return false }\n", f.Name, f.Name)
+				fmt.Fprintf(&b, "\t\tif !%s { return false }\n",
+					equalCall(fmt.Sprintf("t.%s[i]", f.Name), fmt.Sprintf("&other.%s[i]", f.Name), f.ElemShared))
 			case f.ElemComparable:
 				fmt.Fprintf(&b, "\t\tif t.%s[i] != other.%s[i] { return false }\n", f.Name, f.Name)
 			default:
@@ -581,9 +709,18 @@ func equalFieldCode(f FieldInfo, p string) string {
 			switch {
 			case ptrVal && f.ElemGenerated:
 				b.WriteString("\t\tif (v == nil) != (vOther == nil) { return false }\n")
-				b.WriteString("\t\tif v != nil && !v.Equal(vOther) { return false }\n")
+				fmt.Fprintf(&b, "\t\tif v != nil && !%s { return false }\n", equalCall("v", "vOther", f.ElemShared))
 			case f.ElemGenerated:
-				b.WriteString("\t\tif !v.Equal(&vOther) { return false }\n")
+				if f.ElemShared {
+					// Map values are not addressable, so the visited set would
+					// otherwise key on the range variable. Copying into
+					// variables declared inside the loop body gives each
+					// iteration its own, in every language version.
+					b.WriteString("\t\t_e, _o := v, vOther\n")
+					fmt.Fprintf(&b, "\t\tif !%s { return false }\n", equalCall("_e", "&_o", f.ElemShared))
+				} else {
+					b.WriteString("\t\tif !v.Equal(&vOther) { return false }\n")
+				}
 			case f.ElemComparable:
 				b.WriteString("\t\tif v != vOther { return false }\n")
 			default:
@@ -606,15 +743,13 @@ func copyFieldInit(f FieldInfo) string {
 		return "" // handled in post-init phase
 	case f.Type == "":
 		return "" // unnameable type — deep-copied in the post-init phase
-	case f.IsText:
-		return fmt.Sprintf("\t\t%s: append(%s(nil), t.%s...),\n", f.Name, f.Type, f.Name)
-	case f.IsCollection && strings.HasPrefix(f.Type, "[]"):
-		if elemNeedsCopy(f, sliceElem(f.Type)) {
-			return fmt.Sprintf("\t\t%s: make(%s, len(t.%s)),\n", f.Name, f.Type, f.Name)
-		}
-		return fmt.Sprintf("\t\t%s: append(%s(nil), t.%s...),\n", f.Name, f.Type, f.Name)
-	case f.IsCollection:
-		return "" // map — handled in post-init phase
+	case f.IsText, f.IsCollection:
+		// Slices, Text and maps are allocated in the post-init phase, where the
+		// copy can be skipped for a nil one. A nil slice and an empty slice are
+		// different values — they marshal differently, and the reflection
+		// engine's Equal tells them apart — so a copy has to preserve which one
+		// it was given.
+		return ""
 	case f.Opaque() && !f.KnownValue && !isComparableArray(f.Type):
 		// A type the generator cannot see inside may hold references; it is
 		// deep-copied in the post-init phase.
@@ -637,25 +772,54 @@ func isComparableArray(t string) bool {
 	return isBuiltinComparable(t[i+1:])
 }
 
-// copyFieldPost returns post-init deep-copy code for one field.
-func copyFieldPost(f FieldInfo, p string) string {
+// copyFieldPost returns post-init deep-copy code for one field. shared is true
+// when the enclosing type threads a CloneMemo; then every pointer the field
+// holds goes through the memo, so a value reached by two routes is copied once
+// and both routes in the result point at that one copy. Fields the generator
+// cannot copy itself are handed to deep.CloneShared, which runs the reflection
+// engine against the same memo — one identity space across both.
+func copyFieldPost(f FieldInfo, p string, shared bool) string {
 	var b strings.Builder
 	if f.Ignore {
 		return ""
 	}
+	// genericClone renders the deep-copy call for values the generator cannot
+	// see inside.
+	genericClone := func(arg string) string {
+		if shared {
+			return fmt.Sprintf("%sCloneShared(%s, memo)", p, arg)
+		}
+		return fmt.Sprintf("%sClone(%s)", p, arg)
+	}
+	// memoPtr renders a pointer copy through the memo: reuse the recorded copy
+	// or make one with mk (an expression producing the copy of src) and record
+	// it. typ is the pointer type for the load assertion.
+	memoPtr := func(indent, src, dst, typ, mk string) string {
+		return fmt.Sprintf(
+			"%sif _d, ok := memo.Load(%s); ok { %s = _d.(%s) } else { %s = %s; memo.Store(%s, %s) }\n",
+			indent, src, dst, typ, dst, mk, src, dst)
+	}
+
 	if f.Type == "" {
 		// The generator cannot name the type, so it cannot copy it structurally.
-		fmt.Fprintf(&b, "\tres.%s = %sClone(t.%s)\n", f.Name, p, f.Name)
+		fmt.Fprintf(&b, "\tres.%s = %s\n", f.Name, genericClone("t."+f.Name))
 		return b.String()
 	}
 	if f.Opaque() && isPtr(f.Type) {
 		if f.PointeeKnown {
 			// Pointer to a value-semantics stdlib type: copying the pointee is
 			// a full copy.
-			fmt.Fprintf(&b, "\tif t.%s != nil { _v := *t.%s; res.%s = &_v }\n", f.Name, f.Name, f.Name)
+			if shared {
+				fmt.Fprintf(&b, "\tif t.%s != nil {\n", f.Name)
+				b.WriteString(memoPtr("\t\t", "t."+f.Name, "res."+f.Name, f.Type,
+					fmt.Sprintf("func() %s { _v := *t.%s; return &_v }()", f.Type, f.Name)))
+				b.WriteString("\t}\n")
+			} else {
+				fmt.Fprintf(&b, "\tif t.%s != nil { _v := *t.%s; res.%s = &_v }\n", f.Name, f.Name, f.Name)
+			}
 		} else {
 			// The pointee may hold references of its own.
-			fmt.Fprintf(&b, "\tres.%s = %sClone(t.%s)\n", f.Name, p, f.Name)
+			fmt.Fprintf(&b, "\tres.%s = %s\n", f.Name, genericClone("t."+f.Name))
 		}
 		return b.String()
 	}
@@ -663,50 +827,107 @@ func copyFieldPost(f FieldInfo, p string) string {
 		// A type the generator cannot see inside (another package's struct, a
 		// generic instantiation, an interface): deep-copy it so the clone does
 		// not share references with the original.
-		fmt.Fprintf(&b, "\tres.%s = %sClone(t.%s)\n", f.Name, p, f.Name)
+		fmt.Fprintf(&b, "\tres.%s = %s\n", f.Name, genericClone("t."+f.Name))
 		return b.String()
 	}
 	if f.IsStruct {
 		self := "(&t." + f.Name + ")"
 		if isPtr(f.Type) {
 			self = "t." + f.Name
-			fmt.Fprintf(&b, "\tif %s != nil { res.%s = %s.Clone() }\n", self, f.Name, self)
+			switch {
+			case f.TypeShared:
+				// cloneShared records itself in the memo.
+				fmt.Fprintf(&b, "\tif %s != nil { res.%s = %s }\n", self, f.Name, cloneCall(self, true))
+			case shared:
+				// The callee has nothing shareable inside, but the pointer
+				// itself is an identity two routes can share.
+				fmt.Fprintf(&b, "\tif %s != nil {\n", self)
+				b.WriteString(memoPtr("\t\t", self, "res."+f.Name, f.Type, self+".Clone()"))
+				b.WriteString("\t}\n")
+			default:
+				fmt.Fprintf(&b, "\tif %s != nil { res.%s = %s }\n", self, f.Name, cloneCall(self, false))
+			}
 		} else {
-			fmt.Fprintf(&b, "\tres.%s = *%s.Clone()\n", f.Name, self)
+			fmt.Fprintf(&b, "\tres.%s = *%s\n", f.Name, cloneCall(self, f.TypeShared))
 		}
+	}
+	if f.IsText {
+		// Text is a slice; a nil one stays nil.
+		fmt.Fprintf(&b, "\tif t.%s != nil {\n", f.Name)
+		fmt.Fprintf(&b, "\t\tres.%s = make(%s, len(t.%s))\n", f.Name, f.Type, f.Name)
+		fmt.Fprintf(&b, "\t\tcopy(res.%s, t.%s)\n\t}\n", f.Name, f.Name)
+		return b.String()
 	}
 	if f.IsCollection {
 		if strings.HasPrefix(f.Type, "[]") {
 			et := sliceElem(f.Type)
+			// The slice is allocated here rather than in the struct literal so
+			// that a nil one stays nil instead of becoming an empty slice.
+			fmt.Fprintf(&b, "\tif t.%s != nil {\n", f.Name)
+			fmt.Fprintf(&b, "\t\tres.%s = make(%s, len(t.%s))\n", f.Name, f.Type, f.Name)
+			dst := fmt.Sprintf("res.%s[i]", f.Name)
 			switch {
+			case isPtr(et) && f.ElemGenerated && (f.ElemShared || !shared):
+				fmt.Fprintf(&b, "\t\tfor i, v := range t.%s { if v != nil { %s = %s } }\n",
+					f.Name, dst, cloneCall("v", f.ElemShared))
 			case isPtr(et) && f.ElemGenerated:
-				fmt.Fprintf(&b, "\tfor i, v := range t.%s { if v != nil { res.%s[i] = v.Clone() } }\n", f.Name, f.Name)
+				fmt.Fprintf(&b, "\t\tfor i, v := range t.%s {\n\t\t\tif v != nil {\n", f.Name)
+				b.WriteString(memoPtr("\t\t\t\t", "v", dst, et, "v.Clone()"))
+				b.WriteString("\t\t\t}\n\t\t}\n")
+			case isPtr(et) && f.ElemKnownValue && shared:
+				fmt.Fprintf(&b, "\t\tfor i, v := range t.%s {\n\t\t\tif v != nil {\n", f.Name)
+				b.WriteString(memoPtr("\t\t\t\t", "v", dst, et,
+					fmt.Sprintf("func() %s { _v := *v; return &_v }()", et)))
+				b.WriteString("\t\t\t}\n\t\t}\n")
 			case isPtr(et) && f.ElemKnownValue:
-				fmt.Fprintf(&b, "\tfor i, v := range t.%s { if v != nil { _v := *v; res.%s[i] = &_v } }\n", f.Name, f.Name)
+				fmt.Fprintf(&b, "\t\tfor i, v := range t.%s { if v != nil { _v := *v; res.%s[i] = &_v } }\n", f.Name, f.Name)
 			case isPtr(et):
-				fmt.Fprintf(&b, "\tfor i, v := range t.%s { res.%s[i] = %sClone(v) }\n", f.Name, f.Name, p)
+				fmt.Fprintf(&b, "\t\tfor i, v := range t.%s { res.%s[i] = %s }\n", f.Name, f.Name, genericClone("v"))
 			case f.ElemGenerated:
-				fmt.Fprintf(&b, "\tfor i := range t.%s { res.%s[i] = *t.%s[i].Clone() }\n", f.Name, f.Name, f.Name)
+				fmt.Fprintf(&b, "\t\tfor i := range t.%s { res.%s[i] = *%s }\n",
+					f.Name, f.Name, cloneCall(fmt.Sprintf("t.%s[i]", f.Name), f.ElemShared))
 			case elemNeedsCopy(f, et):
 				// Reference-typed or opaque elements are deep-copied one by one.
-				fmt.Fprintf(&b, "\tfor i, v := range t.%s { res.%s[i] = %sClone(v) }\n", f.Name, f.Name, p)
+				fmt.Fprintf(&b, "\t\tfor i, v := range t.%s { res.%s[i] = %s }\n", f.Name, f.Name, genericClone("v"))
+			default:
+				// Elements an assignment copies whole.
+				fmt.Fprintf(&b, "\t\tcopy(res.%s, t.%s)\n", f.Name, f.Name)
 			}
+			b.WriteString("\t}\n")
 		} else if strings.HasPrefix(f.Type, "map[") {
 			vt := mapVal(f.Type)
 			fmt.Fprintf(&b, "\tif t.%s != nil {\n\t\tres.%s = make(%s)\n", f.Name, f.Name, f.Type)
 			fmt.Fprintf(&b, "\t\tfor k, v := range t.%s {\n", f.Name)
+			dst := fmt.Sprintf("res.%s[k]", f.Name)
 			switch {
+			case isPtr(vt) && f.ElemGenerated && (f.ElemShared || !shared):
+				fmt.Fprintf(&b, "\t\t\tif v != nil { %s = %s }\n", dst, cloneCall("v", f.ElemShared))
 			case isPtr(vt) && f.ElemGenerated:
-				fmt.Fprintf(&b, "\t\t\tif v != nil { res.%s[k] = v.Clone() }\n", f.Name)
+				b.WriteString("\t\t\tif v != nil {\n")
+				b.WriteString(memoPtr("\t\t\t\t", "v", dst, vt, "v.Clone()"))
+				b.WriteString("\t\t\t}\n")
+			case isPtr(vt) && f.ElemKnownValue && shared:
+				b.WriteString("\t\t\tif v != nil {\n")
+				b.WriteString(memoPtr("\t\t\t\t", "v", dst, vt,
+					fmt.Sprintf("func() %s { _v := *v; return &_v }()", vt)))
+				b.WriteString("\t\t\t}\n")
 			case isPtr(vt) && f.ElemKnownValue:
 				fmt.Fprintf(&b, "\t\t\tif v != nil { _v := *v; res.%s[k] = &_v }\n", f.Name)
 			case isPtr(vt):
-				fmt.Fprintf(&b, "\t\t\tres.%s[k] = %sClone(v)\n", f.Name, p)
+				fmt.Fprintf(&b, "\t\t\tres.%s[k] = %s\n", f.Name, genericClone("v"))
 			case f.ElemGenerated:
-				fmt.Fprintf(&b, "\t\t\tres.%s[k] = *v.Clone()\n", f.Name)
+				if f.ElemShared {
+					// See equalFieldCode: a map value has no stable address, so
+					// it is copied into a variable declared inside the loop
+					// body before the memo keys on it.
+					b.WriteString("\t\t\t_e := v\n")
+					fmt.Fprintf(&b, "\t\t\tres.%s[k] = *%s\n", f.Name, cloneCall("_e", true))
+				} else {
+					fmt.Fprintf(&b, "\t\t\tres.%s[k] = *v.Clone()\n", f.Name)
+				}
 			case elemNeedsCopy(f, vt):
 				// Reference-typed or opaque values are deep-copied one by one.
-				fmt.Fprintf(&b, "\t\t\tres.%s[k] = %sClone(v)\n", f.Name, p)
+				fmt.Fprintf(&b, "\t\t\tres.%s[k] = %s\n", f.Name, genericClone("v"))
 			default:
 				fmt.Fprintf(&b, "\t\t\tres.%s[k] = v\n", f.Name)
 			}
@@ -835,14 +1056,42 @@ var applyOpTmpl = template.Must(template.New("applyOp").Funcs(tmplFuncs).Parse(
 `))
 
 var diffTmpl = template.Must(template.New("diff").Funcs(tmplFuncs).Parse(
-	`// Diff compares t with other and returns a Patch.
+	`{{if .Shared}}// Diff compares t with other and returns a Patch.
+//
+// {{.TypeName}} values can hold two references to the same value, so a pair of
+// values is diffed once, at the first path that reaches it. Every later route
+// to a changed pair becomes one alias operation — "make this path hold the
+// object that path holds" — appended after the rest. That keeps the patch
+// linear where listing every route could be exponential, and applying it
+// rebuilds the sharing whatever the target looked like before.
 func (t *{{.TypeName}}) Diff(other *{{.TypeName}}) {{.P}}Patch[{{.TypeName}}] {
-	p := {{.P}}Patch[{{.TypeName}}]{}
-{{range .Fields}}{{diffFieldCode . $.P $.TypeKeys}}{{end}}
+	seen := {{.P}}NewDiffMemo()
+	defer seen.Release()
+	p := t.diffShared(other, seen, "")
+	p.Operations = append(p.Operations, seen.AliasOperations()...)
 	return p
 }
 
-`))
+// diffShared is Diff threaded with the pairs already visited and the absolute
+// path at which t sits.
+func (t *{{.TypeName}}) diffShared(other *{{.TypeName}}, seen *{{.P}}DiffMemo, at string) {{.P}}Patch[{{.TypeName}}] {
+	p := {{.P}}Patch[{{.TypeName}}]{}
+	if t == other || !seen.Enter(t, other, at) {
+		return p
+	}
+{{range .Fields}}{{diffFieldCode . $.P $.TypeKeys $.Shared}}{{end}}
+	seen.Leave(t, other, len(p.Operations))
+	return p
+}
+
+{{else}}// Diff compares t with other and returns a Patch.
+func (t *{{.TypeName}}) Diff(other *{{.TypeName}}) {{.P}}Patch[{{.TypeName}}] {
+	p := {{.P}}Patch[{{.TypeName}}]{}
+{{range .Fields}}{{diffFieldCode . $.P $.TypeKeys $.Shared}}{{end}}
+	return p
+}
+
+{{end}}`))
 
 var evalCondTmpl = template.Must(template.New("evalCond").Funcs(tmplFuncs).Parse(
 	`func (t *{{.TypeName}}) evaluateCondition(c condition.Condition) (bool, error) {
@@ -882,21 +1131,70 @@ var evalCondTmpl = template.Must(template.New("evalCond").Funcs(tmplFuncs).Parse
 `))
 
 var equalTmpl = template.Must(template.New("equal").Funcs(tmplFuncs).Parse(
-	`// Equal returns true if t and other are deeply equal.
+	`{{if .Shared}}// Equal returns true if t and other are deeply equal.
+//
+// {{.TypeName}} values can hold two references to the same value, so a pair of
+// values is compared once however many routes lead to it, and a cycle is
+// followed only until it repeats.
 func (t *{{.TypeName}}) Equal(other *{{.TypeName}}) bool {
-{{range .Fields}}{{if not .Ignore}}{{equalFieldCode . $.P}}{{end}}{{end -}}
+	seen := {{.P}}NewVisitSet()
+	defer seen.Release()
+	return t.equalShared(other, seen)
+}
+
+// equalShared is Equal threaded with the set of pairs already under comparison.
+func (t *{{.TypeName}}) equalShared(other *{{.TypeName}}, seen *{{.P}}VisitSet) bool {
+	if t == other {
+		return true
+	}
+	if t == nil || other == nil {
+		return false
+	}
+	if !seen.Enter(t, other) {
+		// This pair has been reached before: settled if that comparison
+		// finished, and a cycle if it is still running — either way there is
+		// nothing left to compare here.
+		return true
+	}
+{{else}}// Equal returns true if t and other are deeply equal.
+func (t *{{.TypeName}}) Equal(other *{{.TypeName}}) bool {
+{{end}}{{range .Fields}}{{if not .Ignore}}{{equalFieldCode . $.P}}{{end}}{{end -}}
 	return true
 }
 
 `))
 
 var copyTmpl = template.Must(template.New("copy").Funcs(tmplFuncs).Parse(
-	`// Clone returns a deep copy of t.
+	`{{if .Shared}}// Clone returns a deep copy of t.
+//
+// {{.TypeName}} values can hold two references to the same value — through a
+// cycle, or through two routes to one pointer — so the copy keeps track of what
+// it has already copied: a value reached more than once is copied once, every
+// reference to it in the result points at that one copy, and a reference cycle
+// is rebuilt rather than followed forever.
 func (t *{{.TypeName}}) Clone() *{{.TypeName}} {
-	res := &{{.TypeName}}{
+	memo := {{.P}}NewCloneMemo()
+	defer memo.Release()
+	return t.cloneShared(memo)
+}
+
+// cloneShared is Clone threaded with the memo of copies already made.
+func (t *{{.TypeName}}) cloneShared(memo *{{.P}}CloneMemo) *{{.TypeName}} {
+	if t == nil {
+		return nil
+	}
+	if done, ok := memo.Load(t); ok {
+		return done.(*{{.TypeName}})
+	}
+{{else}}// Clone returns a deep copy of t.
+func (t *{{.TypeName}}) Clone() *{{.TypeName}} {
+{{end}}	res := &{{.TypeName}}{
 {{range .Fields}}{{if not .Ignore}}{{copyFieldInit .}}{{end}}{{end -}}
 	}
-{{range .Fields}}{{if not .Ignore}}{{copyFieldPost . $.P}}{{end}}{{end -}}
+{{if .Shared}}	// Recorded before the fields are copied, so a reference back to t from
+	// anywhere below resolves to res instead of starting the copy again.
+	memo.Store(t, res)
+{{end}}{{range .Fields}}{{if not .Ignore}}{{copyFieldPost . $.P $.Shared}}{{end}}{{end -}}
 	return res
 }
 `))
@@ -984,7 +1282,13 @@ func (g *Generator) writeType(typeName string, fields []FieldInfo) {
 	if g.pkgName != "deep" {
 		g.pkgPrefix = "deep."
 	}
-	d := typeData{TypeName: typeName, P: g.pkgPrefix, Fields: fields, TypeKeys: g.typeKeys}
+	d := typeData{
+		TypeName: typeName,
+		P:        g.pkgPrefix,
+		Fields:   fields,
+		TypeKeys: g.typeKeys,
+		Shared:   g.idx.shared[typeName],
+	}
 	must(patchTmpl.Execute(&g.body, d))
 	must(applyOpTmpl.Execute(&g.body, d))
 	must(diffTmpl.Execute(&g.body, d))
@@ -1049,6 +1353,7 @@ func main() {
 				idx: pkgIndex{
 					structs: make(map[string]bool),
 					scalars: make(map[string]bool),
+					shared:  make(map[string]bool),
 				},
 				imports: make(map[string]string),
 			}
@@ -1060,8 +1365,12 @@ func main() {
 		}
 
 		// Pass 1: index the package's own types and collect deep:"key" field
-		// names.
+		// names. The struct bodies and their files' imports are kept so the
+		// reference graph can be built once every declared name is known.
+		structDecls := make(map[string]*ast.StructType)
+		structImports := make(map[string]map[string]string)
 		for _, file := range pkg.Files {
+			imports := fileImports(file)
 			ast.Inspect(file, func(n ast.Node) bool {
 				ts, ok := n.(*ast.TypeSpec)
 				if !ok {
@@ -1075,6 +1384,8 @@ func main() {
 					return true
 				}
 				g.idx.structs[ts.Name.Name] = true
+				structDecls[ts.Name.Name] = st
+				structImports[ts.Name.Name] = imports
 				for _, field := range st.Fields.List {
 					if field.Tag == nil || len(field.Names) == 0 {
 						continue
@@ -1087,6 +1398,15 @@ func main() {
 				return true
 			})
 		}
+
+		// With every declared struct known, work out which of them can hold two
+		// references to the same value. Their generated methods track what they
+		// have already visited.
+		refs := make(map[string]map[string]bool, len(structDecls))
+		for name, st := range structDecls {
+			refs[name] = referencedStructs(st, g.idx.structs)
+		}
+		g.idx.shared = sharedStructs(structDecls, structImports, g.idx, refs)
 
 		// Pass 2: collect field info for requested types.
 		var allTypes []string
@@ -1211,6 +1531,8 @@ func parseFields(st *ast.StructType, imports map[string]string, idx pkgIndex) []
 				IsCollection:   ti.isCollection,
 				IsText:         ti.isText,
 				ElemGenerated:  ti.elemGenerated,
+				TypeShared:     ti.shared,
+				ElemShared:     ti.elemShared,
 				Comparable:     ti.comparable,
 				ElemComparable: ti.elemComparable,
 				KnownValue:     ti.knownValue,
@@ -1235,6 +1557,216 @@ type pkgIndex struct {
 	// scalars are named types over a comparable builtin (type Priority int),
 	// for which == is value equality.
 	scalars map[string]bool
+	// shared are the structs whose values can hold two references to the same
+	// value — through a cycle, or simply through two routes to one pointer.
+	// Their generated methods carry a memo (Clone), a visited set (Equal) or a
+	// diff memo (Diff); without one, a shared value would be duplicated, a
+	// cycle would recurse until the stack ran out, and a diff could be
+	// exponential. Structs that cannot hold two references to anything generate
+	// exactly the code they always did.
+	shared map[string]bool
+}
+
+// referencedStructs returns the package structs named anywhere in st's field
+// types. Qualified names are skipped: a type from another package is opaque
+// here, so it cannot be an edge in this package's reference graph.
+func referencedStructs(st *ast.StructType, structs map[string]bool) map[string]bool {
+	out := make(map[string]bool)
+	for _, field := range st.Fields.List {
+		ast.Inspect(field.Type, func(n ast.Node) bool {
+			if _, ok := n.(*ast.SelectorExpr); ok {
+				return false
+			}
+			if id, ok := n.(*ast.Ident); ok && structs[id.Name] {
+				out[id.Name] = true
+			}
+			return true
+		})
+	}
+	return out
+}
+
+// classRoutes returns, for one struct, how many routes lead to each kind of
+// shareable reference — capped at two, since "more than one" is all that
+// matters. Classes are rendered pointer types ("*time.Time", "*Meta"); the
+// pseudo-class "?" stands for opaque values (interfaces, foreign structs,
+// unnameable types) that may hold references the generator cannot see, and so
+// can alias with anything.
+//
+// Reaching a collection counts its element routes twice: two elements of one
+// slice can point at the same value. Reaching a package struct adds that
+// struct's own routes. Ignored fields are counted anyway — over-counting can
+// only cost a memo, never correctness.
+func classRoutes(name string, decls map[string]*ast.StructType,
+	imps map[string]map[string]string, idx pkgIndex,
+	memo map[string]map[string]int, active map[string]bool) map[string]int {
+
+	if done, ok := memo[name]; ok {
+		return done
+	}
+	if active[name] {
+		// A cycle in the expansion; the cyclic rule already forces the memo for
+		// everything on it, so the partial answer is fine here.
+		return nil
+	}
+	active[name] = true
+	defer delete(active, name)
+
+	add := func(dst map[string]int, class string, n int) {
+		if v := dst[class] + n; v > 2 {
+			dst[class] = 2
+		} else {
+			dst[class] = v
+		}
+	}
+	merge := func(dst, src map[string]int, factor int) {
+		for c, n := range src {
+			add(dst, c, n*factor)
+		}
+	}
+
+	routes := make(map[string]int)
+	st := decls[name]
+	imports := imps[name]
+	for _, field := range st.Fields.List {
+		ti := resolveType(field.Type, imports, idx)
+		switch {
+		case ti.name == "":
+			add(routes, "?", 1)
+		case ti.isText, ti.comparable, ti.knownValue:
+			// Value semantics: nothing to share.
+		case ti.isStruct && isPtr(ti.name):
+			add(routes, ti.name, 1)
+			merge(routes, classRoutes(ti.name[1:], decls, imps, idx, memo, active), 1)
+		case ti.isStruct:
+			merge(routes, classRoutes(ti.name, decls, imps, idx, memo, active), 1)
+		case ti.isCollection:
+			et := mapVal(ti.name)
+			if strings.HasPrefix(ti.name, "[]") {
+				et = sliceElem(ti.name)
+			}
+			switch {
+			case isPtr(et):
+				add(routes, et, 2)
+				if ti.elemGenerated {
+					merge(routes, classRoutes(et[1:], decls, imps, idx, memo, active), 2)
+				}
+			case ti.elemGenerated:
+				merge(routes, classRoutes(et, decls, imps, idx, memo, active), 2)
+			case ti.elemComparable, ti.elemKnownValue:
+				// Value elements: nothing to share.
+			default:
+				add(routes, "?", 2)
+			}
+		case isPtr(ti.name):
+			// Foreign pointer: the pointer itself is the shareable identity.
+			add(routes, ti.name, 1)
+		default:
+			// Opaque value — may hold references the generator cannot see.
+			add(routes, "?", 1)
+		}
+	}
+	memo[name] = routes
+	return routes
+}
+
+// sharedStructs returns the structs whose generated methods must track what
+// they have already visited: those on or reaching a cycle, and those where two
+// routes can lead to one reference. The set is then closed downward — a shared
+// struct's non-shared struct fields must thread the memo too when they hold
+// references of their own, or the sharing between a reference inside them and
+// one outside would be lost.
+func sharedStructs(decls map[string]*ast.StructType, imps map[string]map[string]string,
+	idx pkgIndex, refs map[string]map[string]bool) map[string]bool {
+
+	out := cyclicStructs(refs)
+
+	memo := make(map[string]map[string]int, len(decls))
+	for name := range decls {
+		routes := classRoutes(name, decls, imps, idx, memo, make(map[string]bool))
+		if aliasPossible(routes) {
+			out[name] = true
+		}
+	}
+
+	// Downward closure: every struct a shared struct reaches that has routes of
+	// its own becomes shared, so the memo travels with the value all the way
+	// down. Structs with no routes stay plain — they have nothing to record.
+	changed := true
+	for changed {
+		changed = false
+		for name := range out {
+			for ref := range refs[name] {
+				if !out[ref] && len(memo[ref]) > 0 {
+					out[ref] = true
+					changed = true
+				}
+			}
+		}
+	}
+	return out
+}
+
+// aliasPossible reports whether two routes can lead to the same reference: a
+// specific class reachable twice, or an opaque value ("?" — which can hold
+// anything) next to any other route.
+func aliasPossible(routes map[string]int) bool {
+	for class, n := range routes {
+		if n >= 2 {
+			return true
+		}
+		if class == "?" && len(routes) >= 2 {
+			return true
+		}
+	}
+	return false
+}
+
+// cyclicStructs returns the structs whose generated methods need cycle
+// handling: those that lie on a cycle in the reference graph, plus those that
+// can reach one. A type that reaches a recursive type has to thread the memo
+// down to it, or the recursion below would be unguarded.
+//
+// The graph is small — the structs of one package — so this walks it directly
+// rather than condensing it into components.
+func cyclicStructs(refs map[string]map[string]bool) map[string]bool {
+	// reach[a][b] reports whether a reaches b over one or more edges, so
+	// reach[a][a] means a lies on a cycle.
+	reach := make(map[string]map[string]bool, len(refs))
+	for name := range refs {
+		seen := make(map[string]bool)
+		var stack []string
+		for next := range refs[name] {
+			stack = append(stack, next)
+		}
+		for len(stack) > 0 {
+			cur := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			if seen[cur] {
+				continue
+			}
+			seen[cur] = true
+			for next := range refs[cur] {
+				stack = append(stack, next)
+			}
+		}
+		reach[name] = seen
+	}
+
+	out := make(map[string]bool)
+	for name := range refs {
+		if reach[name][name] {
+			out[name] = true
+			continue
+		}
+		for other := range reach[name] {
+			if reach[other][other] {
+				out[name] = true
+				break
+			}
+		}
+	}
+	return out
 }
 
 // typeInfo is what the generator managed to work out about a field's type.
@@ -1244,6 +1776,8 @@ type typeInfo struct {
 	isCollection   bool
 	isText         bool
 	elemGenerated  bool
+	shared         bool
+	elemShared     bool
 	comparable     bool
 	elemComparable bool
 	knownValue     bool
@@ -1279,11 +1813,13 @@ func resolveType(expr ast.Expr, imports map[string]string, idx pkgIndex) typeInf
 	switch typ := expr.(type) {
 	case *ast.Ident:
 		ti.isStruct = isGeneratedStruct(typ, idx)
+		ti.shared = idx.shared[generatedStructName(typ, idx)]
 		ti.comparable = idx.isComparable(typ)
 	case *ast.SelectorExpr:
 		ti.knownValue = isKnownValueExpr(typ, imports)
 	case *ast.StarExpr:
 		ti.isStruct = isGeneratedStruct(unparen(typ.X), idx)
+		ti.shared = idx.shared[generatedStructName(typ.X, idx)]
 		ti.pointeeKnown = isKnownValueExpr(unparen(typ.X), imports)
 	case *ast.ArrayType:
 		// Fixed-size arrays are values, not collections: patching into them is
@@ -1291,12 +1827,14 @@ func resolveType(expr ast.Expr, imports map[string]string, idx pkgIndex) typeInf
 		if typ.Len == nil {
 			ti.isCollection = true
 			ti.elemGenerated = isGeneratedStructRef(typ.Elt, idx)
+			ti.elemShared = idx.shared[generatedStructName(typ.Elt, idx)]
 			ti.elemComparable = idx.isComparable(unparen(typ.Elt))
 			ti.elemKnownValue = isKnownValueRef(typ.Elt, imports)
 		}
 	case *ast.MapType:
 		ti.isCollection = true
 		ti.elemGenerated = isGeneratedStructRef(typ.Value, idx)
+		ti.elemShared = idx.shared[generatedStructName(typ.Value, idx)]
 		ti.elemComparable = idx.isComparable(unparen(typ.Value))
 		ti.elemKnownValue = isKnownValueRef(typ.Value, imports)
 	}
@@ -1441,6 +1979,21 @@ func isTextType(expr ast.Expr, imports map[string]string) bool {
 
 // isGeneratedStruct reports whether expr names an exported struct declared in
 // the package being generated, and therefore has the generated methods.
+// generatedStructName returns the name of the package struct expr denotes,
+// looking through one pointer. It returns "" for anything else, which never
+// matches an entry in idx.shared.
+func generatedStructName(expr ast.Expr, idx pkgIndex) string {
+	expr = unparen(expr)
+	if star, ok := expr.(*ast.StarExpr); ok {
+		expr = unparen(star.X)
+	}
+	ident, ok := expr.(*ast.Ident)
+	if !ok || !idx.structs[ident.Name] {
+		return ""
+	}
+	return ident.Name
+}
+
 func isGeneratedStruct(expr ast.Expr, idx pkgIndex) bool {
 	ident, ok := expr.(*ast.Ident)
 	if !ok || !idx.structs[ident.Name] {

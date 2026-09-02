@@ -149,25 +149,29 @@ func (t *DocState) Diff(other *DocState) deep.Patch[DocState] {
 	if t.Content != other.Content {
 		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/content", Old: t.Content, New: other.Content})
 	}
-	if other.Metadata != nil {
-		for k, v := range other.Metadata {
-			if t.Metadata == nil {
-				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/metadata/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
-				continue
-			}
-			if oldV, ok := t.Metadata[k]; !ok || v != oldV {
-				kind := deep.OpReplace
-				if !ok {
-					kind = deep.OpAdd
+	if (t.Metadata == nil) != (other.Metadata == nil) {
+		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/metadata", Old: t.Metadata, New: other.Metadata})
+	} else {
+		if other.Metadata != nil {
+			for k, v := range other.Metadata {
+				if t.Metadata == nil {
+					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/metadata/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
+					continue
 				}
-				p.Operations = append(p.Operations, deep.Operation{Kind: kind, Path: "/metadata/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: oldV, New: v})
+				if oldV, ok := t.Metadata[k]; !ok || v != oldV {
+					kind := deep.OpReplace
+					if !ok {
+						kind = deep.OpAdd
+					}
+					p.Operations = append(p.Operations, deep.Operation{Kind: kind, Path: "/metadata/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: oldV, New: v})
+				}
 			}
 		}
-	}
-	if t.Metadata != nil {
-		for k, v := range t.Metadata {
-			if _, ok := other.Metadata[k]; !ok {
-				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: "/metadata/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: v})
+		if t.Metadata != nil {
+			for k, v := range t.Metadata {
+				if _, ok := other.Metadata[k]; !ok {
+					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: "/metadata/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: v})
+				}
 			}
 		}
 	}

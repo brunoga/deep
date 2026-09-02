@@ -133,20 +133,29 @@ func MustCopy[T any](src T, opts ...CopyOption) T {
 	return dst
 }
 
-type pointersMapKey struct {
-	ptr uintptr
-	typ reflect.Type
+// PointersMapKey identifies one already-copied value: the address it lives at
+// and the type it was reached as. The type matters because pointers of
+// different types can share an address — a struct and its first field — and
+// must not be mistaken for one another.
+type PointersMapKey struct {
+	Ptr uintptr
+	Typ reflect.Type
 }
-type pointersMap map[pointersMapKey]reflect.Value
+
+// PointersMap records the copy made for each value during one deep copy. It is
+// exported so a copy can be run against a caller-provided map: generated Clone
+// code and the reflection engine share one map, which is what keeps a value
+// referenced from both sides copied exactly once.
+type PointersMap map[PointersMapKey]reflect.Value
 
 var pointersMapPool = sync.Pool{
 	New: func() any {
-		return make(pointersMap)
+		return make(PointersMap)
 	},
 }
 
 func copyInternal(v reflect.Value, config *copyConfig) (reflect.Value, error) {
-	pointers := pointersMapPool.Get().(pointersMap)
+	pointers := pointersMapPool.Get().(PointersMap)
 	defer func() {
 		for k := range pointers {
 			delete(pointers, k)
@@ -162,7 +171,7 @@ func copyInternal(v reflect.Value, config *copyConfig) (reflect.Value, error) {
 	return dst, nil
 }
 
-func recursiveCopy(v reflect.Value, pointers pointersMap,
+func recursiveCopy(v reflect.Value, pointers PointersMap,
 	config *copyConfig, path string, atomic bool) (reflect.Value, error) {
 
 	checkPath := path
@@ -207,7 +216,7 @@ func recursiveCopy(v reflect.Value, pointers pointersMap,
 	if v.CanAddr() {
 		ptr := v.Addr().Pointer()
 		typ := v.Type()
-		key := pointersMapKey{ptr, typ}
+		key := PointersMapKey{ptr, typ}
 		if dst, ok := pointers[key]; ok {
 			if dst.Kind() == reflect.Pointer && v.Kind() != reflect.Pointer {
 				return dst.Elem(), nil
@@ -217,7 +226,7 @@ func recursiveCopy(v reflect.Value, pointers pointersMap,
 	} else if kind == reflect.Pointer && !v.IsNil() {
 		ptr := v.Pointer()
 		typ := v.Type()
-		key := pointersMapKey{ptr, typ}
+		key := PointersMapKey{ptr, typ}
 		if dst, ok := pointers[key]; ok {
 			return dst, nil
 		}
@@ -280,7 +289,7 @@ func recursiveCopy(v reflect.Value, pointers pointersMap,
 	}
 }
 
-func recursiveCopyArray(v reflect.Value, pointers pointersMap,
+func recursiveCopyArray(v reflect.Value, pointers PointersMap,
 	config *copyConfig, path string) (reflect.Value, error) {
 	dst := reflect.New(v.Type()).Elem()
 
@@ -306,7 +315,7 @@ func recursiveCopyArray(v reflect.Value, pointers pointersMap,
 	return dst, nil
 }
 
-func recursiveCopyInterface(v reflect.Value, pointers pointersMap,
+func recursiveCopyInterface(v reflect.Value, pointers PointersMap,
 	config *copyConfig, path string) (reflect.Value, error) {
 	if v.IsNil() {
 		return v, nil
@@ -315,7 +324,7 @@ func recursiveCopyInterface(v reflect.Value, pointers pointersMap,
 	return recursiveCopy(v.Elem(), pointers, config, path, false)
 }
 
-func recursiveCopyMap(v reflect.Value, pointers pointersMap,
+func recursiveCopyMap(v reflect.Value, pointers PointersMap,
 	config *copyConfig, path string) (reflect.Value, error) {
 	if v.IsNil() {
 		return v, nil
@@ -350,7 +359,7 @@ func recursiveCopyMap(v reflect.Value, pointers pointersMap,
 	return dst, nil
 }
 
-func recursiveCopyPtr(v reflect.Value, pointers pointersMap,
+func recursiveCopyPtr(v reflect.Value, pointers PointersMap,
 	config *copyConfig, path string) (reflect.Value, error) {
 	if v.IsNil() {
 		return v, nil
@@ -358,7 +367,7 @@ func recursiveCopyPtr(v reflect.Value, pointers pointersMap,
 
 	ptr := v.Pointer()
 	typ := v.Type()
-	key := pointersMapKey{ptr, typ}
+	key := PointersMapKey{ptr, typ}
 
 	if dst, ok := pointers[key]; ok {
 		return dst, nil
@@ -378,7 +387,7 @@ func recursiveCopyPtr(v reflect.Value, pointers pointersMap,
 	return dst, nil
 }
 
-func recursiveCopySlice(v reflect.Value, pointers pointersMap,
+func recursiveCopySlice(v reflect.Value, pointers PointersMap,
 	config *copyConfig, path string) (reflect.Value, error) {
 	if v.IsNil() {
 		return v, nil
@@ -408,12 +417,12 @@ func recursiveCopySlice(v reflect.Value, pointers pointersMap,
 	return dst, nil
 }
 
-func recursiveCopyStruct(v reflect.Value, pointers pointersMap,
+func recursiveCopyStruct(v reflect.Value, pointers PointersMap,
 	config *copyConfig, path string) (reflect.Value, error) {
 	dst := reflect.New(v.Type()).Elem()
 
 	if v.CanAddr() {
-		pointers[pointersMapKey{v.Addr().Pointer(), v.Type()}] = dst.Addr()
+		pointers[PointersMapKey{v.Addr().Pointer(), v.Type()}] = dst.Addr()
 	}
 
 	hasIgnoredPaths := config.ignoredPaths != nil
@@ -462,7 +471,7 @@ func DeepCopyValue(v reflect.Value) reflect.Value {
 		return reflect.Value{}
 	}
 	config := defaultCopyConfig
-	pointers := pointersMapPool.Get().(pointersMap)
+	pointers := pointersMapPool.Get().(PointersMap)
 	defer func() {
 		for k := range pointers {
 			delete(pointers, k)
@@ -490,4 +499,33 @@ func DeepCopyValue(v reflect.Value) reflect.Value {
 	}
 
 	return copied
+}
+
+// CopyShared deep-copies src recording into (and honouring) the caller's
+// pointers map instead of a private one. Passing the same map across several
+// copies makes them one copy for sharing purposes: a value any of them has
+// already copied is reused, not copied again. Generated Clone code threads its
+// memo through here for the fields it cannot copy itself.
+func CopyShared(src any, pointers PointersMap) (any, error) {
+	v := reflect.ValueOf(src)
+	if !v.IsValid() {
+		return src, nil
+	}
+
+	// As in Copy: root value types are made addressable so cyclic-reference
+	// detection can key on their address.
+	var rv reflect.Value
+	if v.Kind() == reflect.Pointer {
+		rv = v
+	} else {
+		pv := reflect.New(v.Type())
+		pv.Elem().Set(v)
+		rv = pv.Elem()
+	}
+
+	dst, err := recursiveCopy(rv, pointers, defaultCopyConfig, "", false)
+	if err != nil {
+		return nil, err
+	}
+	return dst.Interface(), nil
 }
