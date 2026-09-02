@@ -42,6 +42,10 @@ const (
 	OpMove    = engine.OpMove
 	OpCopy    = engine.OpCopy
 	OpLog     = engine.OpLog
+	// OpAlias makes Path hold the same object From resolves to — sharing,
+	// where OpCopy makes an independent deep copy. Diff emits it for the second
+	// and later routes to a value referenced more than once.
+	OpAlias = engine.OpAlias
 )
 
 // Patch is a pure data structure representing a set of changes to type T.
@@ -108,6 +112,8 @@ func (p Patch[T]) String() string {
 			b.WriteString(fmt.Sprintf("Move %s to %s", op.From, op.Path))
 		case OpCopy:
 			b.WriteString(fmt.Sprintf("Copy %s to %s", op.From, op.Path))
+		case OpAlias:
+			b.WriteString(fmt.Sprintf("Alias %s to %s", op.From, op.Path))
 		case OpLog:
 			b.WriteString(fmt.Sprintf("Log %s: %v", op.Path, op.New))
 		}
@@ -150,9 +156,11 @@ func (p Patch[T]) Reverse() Patch[T] {
 			if op.Old != nil {
 				rev.New = op.Old
 			}
-		case OpCopy:
+		case OpCopy, OpAlias:
 			// If we know the prior destination value, restore it with Replace;
 			// otherwise the destination was empty pre-copy so Remove suffices.
+			// (Reversing an alias never needs to be an alias itself: the prior
+			// destination value is a plain value to put back.)
 			if op.Old != nil {
 				rev.Kind = OpReplace
 				rev.Old = op.New
@@ -204,6 +212,12 @@ func (p Patch[T]) ToJSONPatch() ([]byte, error) {
 		case OpAdd, OpReplace:
 			m["value"] = op.New
 		case OpMove, OpCopy:
+			m["from"] = op.From
+		case OpAlias:
+			// RFC 6902 has no aliasing — JSON values have no identity to
+			// share. "copy" is the closest faithful translation: the values
+			// come out right, the sharing does not survive the trip.
+			m["op"] = "copy"
 			m["from"] = op.From
 		case OpLog:
 			m["value"] = op.New // log message

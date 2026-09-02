@@ -233,7 +233,7 @@ func (t *User) Diff(other *User) deep.Patch[User] {
 		}
 		p.Operations = append(p.Operations, op)
 	}
-	if len(t.Roles) != len(other.Roles) {
+	if len(t.Roles) != len(other.Roles) || (t.Roles == nil) != (other.Roles == nil) {
 		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/roles", Old: t.Roles, New: other.Roles})
 	} else {
 		for i := range t.Roles {
@@ -242,25 +242,29 @@ func (t *User) Diff(other *User) deep.Patch[User] {
 			}
 		}
 	}
-	if other.Score != nil {
-		for k, v := range other.Score {
-			if t.Score == nil {
-				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/score/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
-				continue
-			}
-			if oldV, ok := t.Score[k]; !ok || v != oldV {
-				kind := deep.OpReplace
-				if !ok {
-					kind = deep.OpAdd
+	if (t.Score == nil) != (other.Score == nil) {
+		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/score", Old: t.Score, New: other.Score})
+	} else {
+		if other.Score != nil {
+			for k, v := range other.Score {
+				if t.Score == nil {
+					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/score/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
+					continue
 				}
-				p.Operations = append(p.Operations, deep.Operation{Kind: kind, Path: "/score/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: oldV, New: v})
+				if oldV, ok := t.Score[k]; !ok || v != oldV {
+					kind := deep.OpReplace
+					if !ok {
+						kind = deep.OpAdd
+					}
+					p.Operations = append(p.Operations, deep.Operation{Kind: kind, Path: "/score/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: oldV, New: v})
+				}
 			}
 		}
-	}
-	if t.Score != nil {
-		for k, v := range t.Score {
-			if _, ok := other.Score[k]; !ok {
-				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: "/score/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: v})
+		if t.Score != nil {
+			for k, v := range t.Score {
+				if _, ok := other.Score[k]; !ok {
+					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: "/score/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: v})
+				}
 			}
 		}
 	}
@@ -547,18 +551,24 @@ func (t *User) Equal(other *User) bool {
 // Clone returns a deep copy of t.
 func (t *User) Clone() *User {
 	res := &User{
-		ID:    t.ID,
-		Name:  t.Name,
-		Roles: append([]string(nil), t.Roles...),
-		Bio:   append(crdt.Text(nil), t.Bio...),
-		age:   t.age,
+		ID:   t.ID,
+		Name: t.Name,
+		age:  t.age,
 	}
 	res.Info = *(&t.Info).Clone()
+	if t.Roles != nil {
+		res.Roles = make([]string, len(t.Roles))
+		copy(res.Roles, t.Roles)
+	}
 	if t.Score != nil {
 		res.Score = make(map[string]int)
 		for k, v := range t.Score {
 			res.Score[k] = v
 		}
+	}
+	if t.Bio != nil {
+		res.Bio = make(crdt.Text, len(t.Bio))
+		copy(res.Bio, t.Bio)
 	}
 	return res
 }

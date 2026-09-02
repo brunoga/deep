@@ -402,34 +402,38 @@ func (t *Inventory) applyOperation(op deep.Operation, logger *slog.Logger) (bool
 func (t *Inventory) Diff(other *Inventory) deep.Patch[Inventory] {
 	p := deep.Patch[Inventory]{}
 	{
-		otherByKey := make(map[any]int)
-		for i, v := range other.Items {
-			otherByKey[v.SKU] = i
-		}
-		for _, v := range t.Items {
-			if _, ok := otherByKey[v.SKU]; !ok {
-				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: "/items/" + deep.EscapePathKey(fmt.Sprintf("%v", v.SKU)), Old: v})
+		if (t.Items == nil) != (other.Items == nil) {
+			p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/items", Old: t.Items, New: other.Items})
+		} else {
+			otherByKey := make(map[any]int)
+			for i, v := range other.Items {
+				otherByKey[v.SKU] = i
 			}
-		}
-		tByKey := make(map[any]int)
-		for i, v := range t.Items {
-			tByKey[v.SKU] = i
-		}
-		for j := range other.Items {
-			i, ok := tByKey[other.Items[j].SKU]
-			if !ok {
-				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpAdd, Path: "/items/" + deep.EscapePathKey(fmt.Sprintf("%v", other.Items[j].SKU)), New: other.Items[j]})
-				continue
-			}
-			prefix := "/items/" + deep.EscapePathKey(fmt.Sprintf("%v", other.Items[j].SKU))
-			sub := t.Items[i].Diff(&other.Items[j])
-			for _, op := range sub.Operations {
-				if op.Path == "" || op.Path == "/" {
-					op.Path = prefix
-				} else {
-					op.Path = prefix + op.Path
+			for _, v := range t.Items {
+				if _, ok := otherByKey[v.SKU]; !ok {
+					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: "/items/" + deep.EscapePathKey(fmt.Sprintf("%v", v.SKU)), Old: v})
 				}
-				p.Operations = append(p.Operations, op)
+			}
+			tByKey := make(map[any]int)
+			for i, v := range t.Items {
+				tByKey[v.SKU] = i
+			}
+			for j := range other.Items {
+				i, ok := tByKey[other.Items[j].SKU]
+				if !ok {
+					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpAdd, Path: "/items/" + deep.EscapePathKey(fmt.Sprintf("%v", other.Items[j].SKU)), New: other.Items[j]})
+					continue
+				}
+				prefix := "/items/" + deep.EscapePathKey(fmt.Sprintf("%v", other.Items[j].SKU))
+				sub := t.Items[i].Diff(&other.Items[j])
+				for _, op := range sub.Operations {
+					if op.Path == "" || op.Path == "/" {
+						op.Path = prefix
+					} else {
+						op.Path = prefix + op.Path
+					}
+					p.Operations = append(p.Operations, op)
+				}
 			}
 		}
 	}
@@ -489,11 +493,12 @@ func (t *Inventory) Equal(other *Inventory) bool {
 
 // Clone returns a deep copy of t.
 func (t *Inventory) Clone() *Inventory {
-	res := &Inventory{
-		Items: make([]Item, len(t.Items)),
-	}
-	for i := range t.Items {
-		res.Items[i] = *t.Items[i].Clone()
+	res := &Inventory{}
+	if t.Items != nil {
+		res.Items = make([]Item, len(t.Items))
+		for i := range t.Items {
+			res.Items[i] = *t.Items[i].Clone()
+		}
 	}
 	return res
 }

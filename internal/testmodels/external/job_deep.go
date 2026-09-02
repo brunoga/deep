@@ -526,107 +526,136 @@ func (t *Job) applyOperation(op deep.Operation, logger *slog.Logger) (bool, erro
 }
 
 // Diff compares t with other and returns a Patch.
+//
+// Job values can hold two references to the same value, so a pair of
+// values is diffed once, at the first path that reaches it. Every later route
+// to a changed pair becomes one alias operation — "make this path hold the
+// object that path holds" — appended after the rest. That keeps the patch
+// linear where listing every route could be exponential, and applying it
+// rebuilds the sharing whatever the target looked like before.
 func (t *Job) Diff(other *Job) deep.Patch[Job] {
+	seen := deep.NewDiffMemo()
+	defer seen.Release()
+	p := t.diffShared(other, seen, "")
+	p.Operations = append(p.Operations, seen.AliasOperations()...)
+	return p
+}
+
+// diffShared is Diff threaded with the pairs already visited and the absolute
+// path at which t sits.
+func (t *Job) diffShared(other *Job, seen *deep.DiffMemo, at string) deep.Patch[Job] {
 	p := deep.Patch[Job]{}
+	if t == other || !seen.Enter(t, other, at) {
+		return p
+	}
 	if !deep.Equal(t.StartAt, other.StartAt) {
-		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/startAt", Old: t.StartAt, New: other.StartAt})
+		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/startAt", Old: t.StartAt, New: other.StartAt})
 	}
 	if !deep.Equal(t.Deadline, other.Deadline) {
-		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/deadline", Old: t.Deadline, New: other.Deadline})
+		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/deadline", Old: t.Deadline, New: other.Deadline})
 	}
 	if !deep.Equal(t.Timeout, other.Timeout) {
-		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/timeout", Old: t.Timeout, New: other.Timeout})
+		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/timeout", Old: t.Timeout, New: other.Timeout})
 	}
-	if len(t.Window) != len(other.Window) {
-		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/window", Old: t.Window, New: other.Window})
+	if len(t.Window) != len(other.Window) || (t.Window == nil) != (other.Window == nil) {
+		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/window", Old: t.Window, New: other.Window})
 	} else {
 		for i := range t.Window {
 			if !deep.Equal(t.Window[i], other.Window[i]) {
-				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: fmt.Sprintf("/window/%d", i), Old: t.Window[i], New: other.Window[i]})
+				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + fmt.Sprintf("/window/%d", i), Old: t.Window[i], New: other.Window[i]})
 			}
 		}
 	}
-	if other.Retries != nil {
-		for k, v := range other.Retries {
-			if t.Retries == nil {
-				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/retries/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
-				continue
-			}
-			if oldV, ok := t.Retries[k]; !ok || !deep.Equal(oldV, v) {
-				kind := deep.OpReplace
-				if !ok {
-					kind = deep.OpAdd
+	if (t.Retries == nil) != (other.Retries == nil) {
+		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/retries", Old: t.Retries, New: other.Retries})
+	} else {
+		if other.Retries != nil {
+			for k, v := range other.Retries {
+				if t.Retries == nil {
+					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/retries/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
+					continue
 				}
-				p.Operations = append(p.Operations, deep.Operation{Kind: kind, Path: "/retries/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: oldV, New: v})
+				if oldV, ok := t.Retries[k]; !ok || !deep.Equal(oldV, v) {
+					kind := deep.OpReplace
+					if !ok {
+						kind = deep.OpAdd
+					}
+					p.Operations = append(p.Operations, deep.Operation{Kind: kind, Path: at + "/retries/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: oldV, New: v})
+				}
+			}
+		}
+		if t.Retries != nil {
+			for k, v := range t.Retries {
+				if _, ok := other.Retries[k]; !ok {
+					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: at + "/retries/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: v})
+				}
 			}
 		}
 	}
-	if t.Retries != nil {
-		for k, v := range t.Retries {
-			if _, ok := other.Retries[k]; !ok {
-				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: "/retries/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: v})
-			}
-		}
-	}
-	if len(t.Stages) != len(other.Stages) {
-		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/stages", Old: t.Stages, New: other.Stages})
+	if len(t.Stages) != len(other.Stages) || (t.Stages == nil) != (other.Stages == nil) {
+		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/stages", Old: t.Stages, New: other.Stages})
 	} else {
 		for i := range t.Stages {
 			if !t.Stages[i].Equal(&other.Stages[i]) {
-				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: fmt.Sprintf("/stages/%d", i), Old: t.Stages[i], New: other.Stages[i]})
+				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + fmt.Sprintf("/stages/%d", i), Old: t.Stages[i], New: other.Stages[i]})
 			}
 		}
 	}
-	if other.Owners != nil {
-		for k, v := range other.Owners {
-			if t.Owners == nil {
-				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/owners/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
-				continue
-			}
-			if oldV, ok := t.Owners[k]; !ok || !oldV.Equal(v) {
-				kind := deep.OpReplace
-				if !ok {
-					kind = deep.OpAdd
+	if (t.Owners == nil) != (other.Owners == nil) {
+		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/owners", Old: t.Owners, New: other.Owners})
+	} else {
+		if other.Owners != nil {
+			for k, v := range other.Owners {
+				if t.Owners == nil {
+					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/owners/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
+					continue
 				}
-				p.Operations = append(p.Operations, deep.Operation{Kind: kind, Path: "/owners/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: oldV, New: v})
+				if oldV, ok := t.Owners[k]; !ok || !oldV.Equal(v) {
+					kind := deep.OpReplace
+					if !ok {
+						kind = deep.OpAdd
+					}
+					p.Operations = append(p.Operations, deep.Operation{Kind: kind, Path: at + "/owners/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: oldV, New: v})
+				}
 			}
 		}
-	}
-	if t.Owners != nil {
-		for k, v := range t.Owners {
-			if _, ok := other.Owners[k]; !ok {
-				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: "/owners/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: v})
+		if t.Owners != nil {
+			for k, v := range t.Owners {
+				if _, ok := other.Owners[k]; !ok {
+					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: at + "/owners/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: v})
+				}
 			}
 		}
 	}
 	if t.Priority != other.Priority {
-		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/priority", Old: t.Priority, New: other.Priority})
+		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/priority", Old: t.Priority, New: other.Priority})
 	}
 	subNotes := (&t.Notes).Diff(other.Notes)
 	for _, op := range subNotes.Operations {
 		if op.Path == "" || op.Path == "/" {
-			op.Path = "/notes"
+			op.Path = at + "/notes"
 		} else {
-			op.Path = "/notes" + op.Path
+			op.Path = at + "/notes" + op.Path
 		}
 		p.Operations = append(p.Operations, op)
 	}
 	if !deep.Equal(t.Title, other.Title) {
-		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/title", Old: t.Title, New: other.Title})
+		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/title", Old: t.Title, New: other.Title})
 	}
 	if !deep.Equal(t.History, other.History) {
-		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/history", Old: t.History, New: other.History})
+		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/history", Old: t.History, New: other.History})
 	}
 	if !deep.Equal(t.Checked, other.Checked) {
-		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/checked", Old: t.Checked, New: other.Checked})
+		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/checked", Old: t.Checked, New: other.Checked})
 	}
 	if !deep.Equal(t.Grid, other.Grid) {
-		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/grid", Old: t.Grid, New: other.Grid})
+		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/grid", Old: t.Grid, New: other.Grid})
 	}
 	if !deep.Equal(t.Done, other.Done) {
-		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/done", Old: t.Done, New: other.Done})
+		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/done", Old: t.Done, New: other.Done})
 	}
 
+	seen.Leave(t, other, len(p.Operations))
 	return p
 }
 
@@ -860,7 +889,30 @@ func (t *Job) evaluateCondition(c condition.Condition) (bool, error) {
 }
 
 // Equal returns true if t and other are deeply equal.
+//
+// Job values can hold two references to the same value, so a pair of
+// values is compared once however many routes lead to it, and a cycle is
+// followed only until it repeats.
 func (t *Job) Equal(other *Job) bool {
+	seen := deep.NewVisitSet()
+	defer seen.Release()
+	return t.equalShared(other, seen)
+}
+
+// equalShared is Equal threaded with the set of pairs already under comparison.
+func (t *Job) equalShared(other *Job, seen *deep.VisitSet) bool {
+	if t == other {
+		return true
+	}
+	if t == nil || other == nil {
+		return false
+	}
+	if !seen.Enter(t, other) {
+		// This pair has been reached before: settled if that comparison
+		// finished, and a cycle if it is still running — either way there is
+		// nothing left to compare here.
+		return true
+	}
 	if !deep.Equal(t.StartAt, other.StartAt) {
 		return false
 	}
@@ -943,43 +995,86 @@ func (t *Job) Equal(other *Job) bool {
 }
 
 // Clone returns a deep copy of t.
+//
+// Job values can hold two references to the same value — through a
+// cycle, or through two routes to one pointer — so the copy keeps track of what
+// it has already copied: a value reached more than once is copied once, every
+// reference to it in the result points at that one copy, and a reference cycle
+// is rebuilt rather than followed forever.
 func (t *Job) Clone() *Job {
+	memo := deep.NewCloneMemo()
+	defer memo.Release()
+	return t.cloneShared(memo)
+}
+
+// cloneShared is Clone threaded with the memo of copies already made.
+func (t *Job) cloneShared(memo *deep.CloneMemo) *Job {
+	if t == nil {
+		return nil
+	}
+	if done, ok := memo.Load(t); ok {
+		return done.(*Job)
+	}
 	res := &Job{
 		Deadline: t.Deadline,
 		Timeout:  t.Timeout,
-		Window:   append([]time.Time(nil), t.Window...),
-		Stages:   make([]Stage, len(t.Stages)),
 		Priority: t.Priority,
-		Notes:    append(crdt.Text(nil), t.Notes...),
 		Checked:  t.Checked,
 		Grid:     t.Grid,
 	}
+	// Recorded before the fields are copied, so a reference back to t from
+	// anywhere below resolves to res instead of starting the copy again.
+	memo.Store(t, res)
 	if t.StartAt != nil {
-		_v := *t.StartAt
-		res.StartAt = &_v
+		if _d, ok := memo.Load(t.StartAt); ok {
+			res.StartAt = _d.(*time.Time)
+		} else {
+			res.StartAt = func() *time.Time { _v := *t.StartAt; return &_v }()
+			memo.Store(t.StartAt, res.StartAt)
+		}
+	}
+	if t.Window != nil {
+		res.Window = make([]time.Time, len(t.Window))
+		copy(res.Window, t.Window)
 	}
 	if t.Retries != nil {
 		res.Retries = make(map[string]*time.Time)
 		for k, v := range t.Retries {
 			if v != nil {
-				_v := *v
-				res.Retries[k] = &_v
+				if _d, ok := memo.Load(v); ok {
+					res.Retries[k] = _d.(*time.Time)
+				} else {
+					res.Retries[k] = func() *time.Time { _v := *v; return &_v }()
+					memo.Store(v, res.Retries[k])
+				}
 			}
 		}
 	}
-	for i := range t.Stages {
-		res.Stages[i] = *t.Stages[i].Clone()
+	if t.Stages != nil {
+		res.Stages = make([]Stage, len(t.Stages))
+		for i := range t.Stages {
+			res.Stages[i] = *t.Stages[i].Clone()
+		}
 	}
 	if t.Owners != nil {
 		res.Owners = make(map[string]*Stage)
 		for k, v := range t.Owners {
 			if v != nil {
-				res.Owners[k] = v.Clone()
+				if _d, ok := memo.Load(v); ok {
+					res.Owners[k] = _d.(*Stage)
+				} else {
+					res.Owners[k] = v.Clone()
+					memo.Store(v, res.Owners[k])
+				}
 			}
 		}
 	}
-	res.Title = deep.Clone(t.Title)
-	res.History = deep.Clone(t.History)
-	res.Done = deep.Clone(t.Done)
+	if t.Notes != nil {
+		res.Notes = make(crdt.Text, len(t.Notes))
+		copy(res.Notes, t.Notes)
+	}
+	res.Title = deep.CloneShared(t.Title, memo)
+	res.History = deep.CloneShared(t.History, memo)
+	res.Done = deep.CloneShared(t.Done, memo)
 	return res
 }

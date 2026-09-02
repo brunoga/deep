@@ -46,7 +46,8 @@ If you are new to the library, these four cover the shape of everything else:
 | [`conditional_ops`](conditional_ops) | Per-operation `If`/`Unless`: one patch, each operation deciding for itself |
 | [`concurrent_updates`](concurrent_updates) | Strict mode as optimistic locking — a stale patch is rejected |
 | [`three_way_merge`](three_way_merge) | `Merge` with a custom `ConflictResolver` |
-| [`reflection_fallback`](reflection_fallback) | What the reflection engine handles that generated code cannot: unexported fields and cyclic structures |
+| [`reflection_fallback`](reflection_fallback) | What the reflection engine handles for a type with no generated code at all: unexported fields, and cycles |
+| [`cyclic_graph`](cyclic_graph) | A team chart that points back at itself: `Clone` rebuilds the cycles and keeps a person reached four ways one person, `Equal` terminates, and `Diff` emits alias operations so applying a patch rewires every route |
 
 ## Transport and interop
 

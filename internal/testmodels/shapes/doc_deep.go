@@ -714,7 +714,7 @@ func (t *Payload) applyOperation(op deep.Operation, logger *slog.Logger) (bool, 
 // Diff compares t with other and returns a Patch.
 func (t *Payload) Diff(other *Payload) deep.Patch[Payload] {
 	p := deep.Patch[Payload]{}
-	if len(t.Bytes) != len(other.Bytes) {
+	if len(t.Bytes) != len(other.Bytes) || (t.Bytes == nil) != (other.Bytes == nil) {
 		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/bytes", Old: t.Bytes, New: other.Bytes})
 	} else {
 		for i := range t.Bytes {
@@ -838,8 +838,11 @@ func (t *Payload) Equal(other *Payload) bool {
 // Clone returns a deep copy of t.
 func (t *Payload) Clone() *Payload {
 	res := &Payload{
-		Bytes: append([]byte(nil), t.Bytes...),
 		Label: t.Label,
+	}
+	if t.Bytes != nil {
+		res.Bytes = make([]byte, len(t.Bytes))
+		copy(res.Bytes, t.Bytes)
 	}
 	return res
 }
@@ -1081,137 +1084,174 @@ func (t *Doc) applyOperation(op deep.Operation, logger *slog.Logger) (bool, erro
 }
 
 // Diff compares t with other and returns a Patch.
+//
+// Doc values can hold two references to the same value, so a pair of
+// values is diffed once, at the first path that reaches it. Every later route
+// to a changed pair becomes one alias operation — "make this path hold the
+// object that path holds" — appended after the rest. That keeps the patch
+// linear where listing every route could be exponential, and applying it
+// rebuilds the sharing whatever the target looked like before.
 func (t *Doc) Diff(other *Doc) deep.Patch[Doc] {
+	seen := deep.NewDiffMemo()
+	defer seen.Release()
+	p := t.diffShared(other, seen, "")
+	p.Operations = append(p.Operations, seen.AliasOperations()...)
+	return p
+}
+
+// diffShared is Diff threaded with the pairs already visited and the absolute
+// path at which t sits.
+func (t *Doc) diffShared(other *Doc, seen *deep.DiffMemo, at string) deep.Patch[Doc] {
 	p := deep.Patch[Doc]{}
+	if t == other || !seen.Enter(t, other, at) {
+		return p
+	}
 	subMeta := (&t.Meta).Diff(&other.Meta)
 	for _, op := range subMeta.Operations {
 		if op.Path == "" || op.Path == "/" {
-			op.Path = "/Meta"
+			op.Path = at + "/Meta"
 		} else {
-			op.Path = "/Meta" + op.Path
+			op.Path = at + "/Meta" + op.Path
 		}
 		p.Operations = append(p.Operations, op)
 	}
 	{
-		otherByKey := make(map[any]int)
-		for i, v := range other.Entries {
-			otherByKey[v.ID] = i
-		}
-		for _, v := range t.Entries {
-			if _, ok := otherByKey[v.ID]; !ok {
-				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: "/entries/" + deep.EscapePathKey(fmt.Sprintf("%v", v.ID)), Old: v})
+		if (t.Entries == nil) != (other.Entries == nil) {
+			p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/entries", Old: t.Entries, New: other.Entries})
+		} else {
+			otherByKey := make(map[any]int)
+			for i, v := range other.Entries {
+				otherByKey[v.ID] = i
 			}
-		}
-		tByKey := make(map[any]int)
-		for i, v := range t.Entries {
-			tByKey[v.ID] = i
-		}
-		for j := range other.Entries {
-			i, ok := tByKey[other.Entries[j].ID]
-			if !ok {
-				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpAdd, Path: "/entries/" + deep.EscapePathKey(fmt.Sprintf("%v", other.Entries[j].ID)), New: other.Entries[j]})
-				continue
-			}
-			prefix := "/entries/" + deep.EscapePathKey(fmt.Sprintf("%v", other.Entries[j].ID))
-			sub := t.Entries[i].Diff(&other.Entries[j])
-			for _, op := range sub.Operations {
-				if op.Path == "" || op.Path == "/" {
-					op.Path = prefix
-				} else {
-					op.Path = prefix + op.Path
+			for _, v := range t.Entries {
+				if _, ok := otherByKey[v.ID]; !ok {
+					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: at + "/entries/" + deep.EscapePathKey(fmt.Sprintf("%v", v.ID)), Old: v})
 				}
-				p.Operations = append(p.Operations, op)
 			}
-		}
-	}
-	if other.Nested != nil {
-		for k, v := range other.Nested {
-			if t.Nested == nil {
-				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/nested/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
-				continue
+			tByKey := make(map[any]int)
+			for i, v := range t.Entries {
+				tByKey[v.ID] = i
 			}
-			if oldV, ok := t.Nested[k]; !ok || !deep.Equal(oldV, v) {
-				kind := deep.OpReplace
+			for j := range other.Entries {
+				i, ok := tByKey[other.Entries[j].ID]
 				if !ok {
-					kind = deep.OpAdd
+					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpAdd, Path: at + "/entries/" + deep.EscapePathKey(fmt.Sprintf("%v", other.Entries[j].ID)), New: other.Entries[j]})
+					continue
 				}
-				p.Operations = append(p.Operations, deep.Operation{Kind: kind, Path: "/nested/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: oldV, New: v})
-			}
-		}
-	}
-	if t.Nested != nil {
-		for k, v := range t.Nested {
-			if _, ok := other.Nested[k]; !ok {
-				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: "/nested/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: v})
-			}
-		}
-	}
-	if other.Stages != nil {
-		for k, v := range other.Stages {
-			if t.Stages == nil {
-				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/stages/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
-				continue
-			}
-			if oldV, ok := t.Stages[k]; !ok || !oldV.Equal(v) {
-				kind := deep.OpReplace
-				if !ok {
-					kind = deep.OpAdd
+				prefix := at + "/entries/" + deep.EscapePathKey(fmt.Sprintf("%v", other.Entries[j].ID))
+				sub := t.Entries[i].Diff(&other.Entries[j])
+				for _, op := range sub.Operations {
+					if op.Path == "" || op.Path == "/" {
+						op.Path = prefix
+					} else {
+						op.Path = prefix + op.Path
+					}
+					p.Operations = append(p.Operations, op)
 				}
-				p.Operations = append(p.Operations, deep.Operation{Kind: kind, Path: "/stages/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: oldV, New: v})
 			}
 		}
 	}
-	if t.Stages != nil {
-		for k, v := range t.Stages {
-			if _, ok := other.Stages[k]; !ok {
-				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: "/stages/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: v})
+	if (t.Nested == nil) != (other.Nested == nil) {
+		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/nested", Old: t.Nested, New: other.Nested})
+	} else {
+		if other.Nested != nil {
+			for k, v := range other.Nested {
+				if t.Nested == nil {
+					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/nested/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
+					continue
+				}
+				if oldV, ok := t.Nested[k]; !ok || !deep.Equal(oldV, v) {
+					kind := deep.OpReplace
+					if !ok {
+						kind = deep.OpAdd
+					}
+					p.Operations = append(p.Operations, deep.Operation{Kind: kind, Path: at + "/nested/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: oldV, New: v})
+				}
+			}
+		}
+		if t.Nested != nil {
+			for k, v := range t.Nested {
+				if _, ok := other.Nested[k]; !ok {
+					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: at + "/nested/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: v})
+				}
+			}
+		}
+	}
+	if (t.Stages == nil) != (other.Stages == nil) {
+		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/stages", Old: t.Stages, New: other.Stages})
+	} else {
+		if other.Stages != nil {
+			for k, v := range other.Stages {
+				if t.Stages == nil {
+					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/stages/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
+					continue
+				}
+				if oldV, ok := t.Stages[k]; !ok || !oldV.Equal(v) {
+					kind := deep.OpReplace
+					if !ok {
+						kind = deep.OpAdd
+					}
+					p.Operations = append(p.Operations, deep.Operation{Kind: kind, Path: at + "/stages/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: oldV, New: v})
+				}
+			}
+		}
+		if t.Stages != nil {
+			for k, v := range t.Stages {
+				if _, ok := other.Stages[k]; !ok {
+					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: at + "/stages/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: v})
+				}
 			}
 		}
 	}
 	if t.Side == nil && other.Side != nil {
-		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpAdd, Path: "/side", New: other.Side})
+		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpAdd, Path: at + "/side", New: other.Side})
 	} else if t.Side != nil && other.Side == nil {
-		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: "/side", Old: t.Side})
+		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: at + "/side", Old: t.Side})
 	} else if t.Side != nil && other.Side != nil {
 		subSide := t.Side.Diff(other.Side)
 		for _, op := range subSide.Operations {
 			if op.Path == "" || op.Path == "/" {
-				op.Path = "/side"
+				op.Path = at + "/side"
 			} else {
-				op.Path = "/side" + op.Path
+				op.Path = at + "/side" + op.Path
 			}
 			p.Operations = append(p.Operations, op)
 		}
 	}
 	if !deep.Equal(t.Blob, other.Blob) {
-		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/blob", Old: t.Blob, New: other.Blob})
+		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/blob", Old: t.Blob, New: other.Blob})
 	}
-	if other.Scores != nil {
-		for k, v := range other.Scores {
-			if t.Scores == nil {
-				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/scores/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
-				continue
-			}
-			if oldV, ok := t.Scores[k]; !ok || v != oldV {
-				kind := deep.OpReplace
-				if !ok {
-					kind = deep.OpAdd
+	if (t.Scores == nil) != (other.Scores == nil) {
+		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/scores", Old: t.Scores, New: other.Scores})
+	} else {
+		if other.Scores != nil {
+			for k, v := range other.Scores {
+				if t.Scores == nil {
+					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/scores/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
+					continue
 				}
-				p.Operations = append(p.Operations, deep.Operation{Kind: kind, Path: "/scores/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: oldV, New: v})
+				if oldV, ok := t.Scores[k]; !ok || v != oldV {
+					kind := deep.OpReplace
+					if !ok {
+						kind = deep.OpAdd
+					}
+					p.Operations = append(p.Operations, deep.Operation{Kind: kind, Path: at + "/scores/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: oldV, New: v})
+				}
 			}
 		}
-	}
-	if t.Scores != nil {
-		for k, v := range t.Scores {
-			if _, ok := other.Scores[k]; !ok {
-				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: "/scores/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: v})
+		if t.Scores != nil {
+			for k, v := range t.Scores {
+				if _, ok := other.Scores[k]; !ok {
+					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: at + "/scores/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: v})
+				}
 			}
 		}
 	}
 	if t.Name != other.Name {
-		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/name", Old: t.Name, New: other.Name})
+		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/name", Old: t.Name, New: other.Name})
 	}
 
+	seen.Leave(t, other, len(p.Operations))
 	return p
 }
 
@@ -1305,7 +1345,30 @@ func (t *Doc) evaluateCondition(c condition.Condition) (bool, error) {
 }
 
 // Equal returns true if t and other are deeply equal.
+//
+// Doc values can hold two references to the same value, so a pair of
+// values is compared once however many routes lead to it, and a cycle is
+// followed only until it repeats.
 func (t *Doc) Equal(other *Doc) bool {
+	seen := deep.NewVisitSet()
+	defer seen.Release()
+	return t.equalShared(other, seen)
+}
+
+// equalShared is Equal threaded with the set of pairs already under comparison.
+func (t *Doc) equalShared(other *Doc, seen *deep.VisitSet) bool {
+	if t == other {
+		return true
+	}
+	if t == nil || other == nil {
+		return false
+	}
+	if !seen.Enter(t, other) {
+		// This pair has been reached before: settled if that comparison
+		// finished, and a cycle if it is still running — either way there is
+		// nothing left to compare here.
+		return true
+	}
 	if !(&t.Meta).Equal((&other.Meta)) {
 		return false
 	}
@@ -1372,31 +1435,65 @@ func (t *Doc) Equal(other *Doc) bool {
 }
 
 // Clone returns a deep copy of t.
+//
+// Doc values can hold two references to the same value — through a
+// cycle, or through two routes to one pointer — so the copy keeps track of what
+// it has already copied: a value reached more than once is copied once, every
+// reference to it in the result points at that one copy, and a reference cycle
+// is rebuilt rather than followed forever.
 func (t *Doc) Clone() *Doc {
-	res := &Doc{
-		Entries: make([]Entry, len(t.Entries)),
-		Name:    t.Name,
+	memo := deep.NewCloneMemo()
+	defer memo.Release()
+	return t.cloneShared(memo)
+}
+
+// cloneShared is Clone threaded with the memo of copies already made.
+func (t *Doc) cloneShared(memo *deep.CloneMemo) *Doc {
+	if t == nil {
+		return nil
 	}
+	if done, ok := memo.Load(t); ok {
+		return done.(*Doc)
+	}
+	res := &Doc{
+		Name: t.Name,
+	}
+	// Recorded before the fields are copied, so a reference back to t from
+	// anywhere below resolves to res instead of starting the copy again.
+	memo.Store(t, res)
 	res.Meta = *(&t.Meta).Clone()
-	for i := range t.Entries {
-		res.Entries[i] = *t.Entries[i].Clone()
+	if t.Entries != nil {
+		res.Entries = make([]Entry, len(t.Entries))
+		for i := range t.Entries {
+			res.Entries[i] = *t.Entries[i].Clone()
+		}
 	}
 	if t.Nested != nil {
 		res.Nested = make(map[string]map[string]int)
 		for k, v := range t.Nested {
-			res.Nested[k] = deep.Clone(v)
+			res.Nested[k] = deep.CloneShared(v, memo)
 		}
 	}
 	if t.Stages != nil {
 		res.Stages = make(map[string]*Meta)
 		for k, v := range t.Stages {
 			if v != nil {
-				res.Stages[k] = v.Clone()
+				if _d, ok := memo.Load(v); ok {
+					res.Stages[k] = _d.(*Meta)
+				} else {
+					res.Stages[k] = v.Clone()
+					memo.Store(v, res.Stages[k])
+				}
 			}
 		}
 	}
 	if t.Side != nil {
-		res.Side = t.Side.Clone()
+		if _d, ok := memo.Load(t.Side); ok {
+			res.Side = _d.(*Meta)
+		} else {
+			res.Side = t.Side.Clone()
+			memo.Store(t.Side, res.Side)
+		}
 	}
 	res.Blob = *(&t.Blob).Clone()
 	if t.Scores != nil {

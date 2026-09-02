@@ -42,12 +42,21 @@ func Diff[T any](a, b T) (Patch[T], error) {
 			New:  new,
 		}
 		// Internal walk emits the source path in `old` for Move/Copy; lift it
-		// into the typed From field so Old stays free for prior values.
-		if op == engine.OpMove || op == engine.OpCopy {
+		// into the typed From field so Old stays free for prior values. Alias
+		// is the other way around — `new` carries the source path so `old` can
+		// keep the prior destination value, which Reverse needs.
+		switch op {
+		case engine.OpMove, engine.OpCopy:
 			if s, ok := old.(string); ok {
 				o.From = s
 			}
-		} else {
+		case engine.OpAlias:
+			if s, ok := new.(string); ok {
+				o.From = s
+				o.New = nil
+			}
+			o.Old = old
+		default:
 			o.Old = old
 		}
 		res.Operations = append(res.Operations, o)

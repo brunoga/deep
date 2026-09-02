@@ -17,6 +17,11 @@ const (
 	OpMove
 	OpCopy
 	OpLog
+	// OpAlias makes Path hold the same object From resolves to — sharing, where
+	// OpCopy makes an independent deep copy. Diff emits it for the second and
+	// later routes to a value that is referenced more than once, so applying
+	// the patch rebuilds the sharing the new value has.
+	OpAlias
 )
 
 func (k OpKind) String() string {
@@ -33,6 +38,8 @@ func (k OpKind) String() string {
 		return "copy"
 	case OpLog:
 		return "log"
+	case OpAlias:
+		return "alias"
 	default:
 		return "unknown"
 	}

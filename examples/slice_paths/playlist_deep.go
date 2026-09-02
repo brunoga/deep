@@ -116,7 +116,7 @@ func (t *Playlist) Diff(other *Playlist) deep.Patch[Playlist] {
 	if t.Name != other.Name {
 		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/name", Old: t.Name, New: other.Name})
 	}
-	if len(t.Tracks) != len(other.Tracks) {
+	if len(t.Tracks) != len(other.Tracks) || (t.Tracks == nil) != (other.Tracks == nil) {
 		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/tracks", Old: t.Tracks, New: other.Tracks})
 	} else {
 		for i := range t.Tracks {
@@ -237,8 +237,11 @@ func (t *Playlist) Equal(other *Playlist) bool {
 // Clone returns a deep copy of t.
 func (t *Playlist) Clone() *Playlist {
 	res := &Playlist{
-		Name:   t.Name,
-		Tracks: append([]string(nil), t.Tracks...),
+		Name: t.Name,
+	}
+	if t.Tracks != nil {
+		res.Tracks = make([]string, len(t.Tracks))
+		copy(res.Tracks, t.Tracks)
 	}
 	return res
 }

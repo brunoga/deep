@@ -225,6 +225,88 @@ func applyCopyOrMoveInternal(from, to, currentPath string, root, v reflect.Value
 	return nil
 }
 
+// aliasPatch makes its position hold the same object another path holds.
+// Where copyPatch installs an independent deep copy, aliasPatch installs the
+// resolved value as-is — for a pointer, that shares the object. Diff produces
+// it for the second and later routes to a value referenced more than once, so
+// the ordering is forgiving by construction: whether the from-subtree's
+// operations ran before or after, they mutate the one object both paths hold.
+type aliasPatch struct {
+	from string
+	// oldDst is the value the destination held before, kept for Reverse.
+	oldDst reflect.Value
+}
+
+func (p *aliasPatch) apply(root, v reflect.Value, path string) {
+	_ = p.applyChecked(root, v, false, path)
+}
+
+func (p *aliasPatch) applyChecked(root, v reflect.Value, strict bool, path string) error {
+	rvRoot := root
+	if rvRoot.Kind() == reflect.Pointer {
+		rvRoot = rvRoot.Elem()
+	}
+	fromVal, err := icore.DeepPath(p.from).ResolveMember(rvRoot)
+	if err != nil {
+		return err
+	}
+	if v.IsValid() && v.CanSet() {
+		icore.SetValue(v, fromVal)
+		return nil
+	}
+	return icore.DeepPath(path).Set(rvRoot, fromVal)
+}
+
+func (p *aliasPatch) applyResolved(root, v reflect.Value, path string, resolver ConflictResolver) error {
+	if resolver != nil {
+		_, ok := resolver.Resolve(path, OpAlias, nil, nil, v, reflect.Value{})
+		if !ok {
+			return nil
+		}
+	}
+	return p.applyChecked(root, v, false, path)
+}
+
+func (p *aliasPatch) dependencies(path string) (reads []string, writes []string) {
+	return []string{p.from}, []string{path}
+}
+
+func (p *aliasPatch) reverse() diffPatch {
+	if p.oldDst.IsValid() {
+		return &valuePatch{newVal: p.oldDst}
+	}
+	return &valuePatch{newVal: reflect.Value{}}
+}
+
+func (p *aliasPatch) walk(path string, fn func(path string, op OpKind, old, new any) error) error {
+	// Alias inverts the move/copy convention: the source path travels in `new`
+	// so `old` can carry the prior destination value, which Reverse needs. The
+	// flattener in deep.Diff undoes this.
+	var old any
+	if p.oldDst.IsValid() {
+		old = icore.ValueToInterface(p.oldDst)
+	}
+	return fn(path, OpAlias, old, p.from)
+}
+
+func (p *aliasPatch) format(indent int) string {
+	return fmt.Sprintf("Alias(from: %s)", p.from)
+}
+
+func (p *aliasPatch) toJSONPatch(path string) []map[string]any {
+	fullPath := path
+	if fullPath == "" {
+		fullPath = "/"
+	}
+	// RFC 6902 has no aliasing — JSON values carry no identity. "copy" is the
+	// closest faithful translation: values right, sharing lost.
+	return []map[string]any{{"op": "copy", "from": p.from, "path": fullPath}}
+}
+
+func (p *aliasPatch) summary(path string) string {
+	return fmt.Sprintf("Aliased %s to %s", p.from, path)
+}
+
 // movePatch moves a value from another path.
 type movePatch struct {
 	from string

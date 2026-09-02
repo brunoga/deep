@@ -162,25 +162,29 @@ func (t *SystemConfig) Diff(other *SystemConfig) deep.Patch[SystemConfig] {
 	if t.MaxThreads != other.MaxThreads {
 		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/threads", Old: t.MaxThreads, New: other.MaxThreads})
 	}
-	if other.Endpoints != nil {
-		for k, v := range other.Endpoints {
-			if t.Endpoints == nil {
-				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/endpoints/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
-				continue
-			}
-			if oldV, ok := t.Endpoints[k]; !ok || v != oldV {
-				kind := deep.OpReplace
-				if !ok {
-					kind = deep.OpAdd
+	if (t.Endpoints == nil) != (other.Endpoints == nil) {
+		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/endpoints", Old: t.Endpoints, New: other.Endpoints})
+	} else {
+		if other.Endpoints != nil {
+			for k, v := range other.Endpoints {
+				if t.Endpoints == nil {
+					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/endpoints/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
+					continue
 				}
-				p.Operations = append(p.Operations, deep.Operation{Kind: kind, Path: "/endpoints/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: oldV, New: v})
+				if oldV, ok := t.Endpoints[k]; !ok || v != oldV {
+					kind := deep.OpReplace
+					if !ok {
+						kind = deep.OpAdd
+					}
+					p.Operations = append(p.Operations, deep.Operation{Kind: kind, Path: "/endpoints/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: oldV, New: v})
+				}
 			}
 		}
-	}
-	if t.Endpoints != nil {
-		for k, v := range t.Endpoints {
-			if _, ok := other.Endpoints[k]; !ok {
-				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: "/endpoints/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: v})
+		if t.Endpoints != nil {
+			for k, v := range t.Endpoints {
+				if _, ok := other.Endpoints[k]; !ok {
+					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: "/endpoints/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: v})
+				}
 			}
 		}
 	}

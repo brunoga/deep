@@ -149,25 +149,29 @@ func (t *User) Diff(other *User) deep.Patch[User] {
 	if t.Email != other.Email {
 		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/email", Old: t.Email, New: other.Email})
 	}
-	if other.Tags != nil {
-		for k, v := range other.Tags {
-			if t.Tags == nil {
-				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/tags/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
-				continue
-			}
-			if oldV, ok := t.Tags[k]; !ok || v != oldV {
-				kind := deep.OpReplace
-				if !ok {
-					kind = deep.OpAdd
+	if (t.Tags == nil) != (other.Tags == nil) {
+		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/tags", Old: t.Tags, New: other.Tags})
+	} else {
+		if other.Tags != nil {
+			for k, v := range other.Tags {
+				if t.Tags == nil {
+					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/tags/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
+					continue
 				}
-				p.Operations = append(p.Operations, deep.Operation{Kind: kind, Path: "/tags/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: oldV, New: v})
+				if oldV, ok := t.Tags[k]; !ok || v != oldV {
+					kind := deep.OpReplace
+					if !ok {
+						kind = deep.OpAdd
+					}
+					p.Operations = append(p.Operations, deep.Operation{Kind: kind, Path: "/tags/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: oldV, New: v})
+				}
 			}
 		}
-	}
-	if t.Tags != nil {
-		for k, v := range t.Tags {
-			if _, ok := other.Tags[k]; !ok {
-				p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: "/tags/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: v})
+		if t.Tags != nil {
+			for k, v := range t.Tags {
+				if _, ok := other.Tags[k]; !ok {
+					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: "/tags/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: v})
+				}
 			}
 		}
 	}

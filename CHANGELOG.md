@@ -6,6 +6,78 @@ All notable changes to this project are documented here, newest first.
 > version's entry before tagging, so the tag, the GitHub release notes, and this
 > file always agree.
 
+## v5.11.0
+
+### Added
+
+- **Generated code handles values that reference themselves, or reach the same
+  value twice.** `deep-gen` inspects the package's type graph for two facts:
+  cycles, and reference classes reachable by more than one route — two `*Meta`
+  fields, a `*time.Time` beside a `map[string]*time.Time`, an interface beside
+  any pointer. Types where either holds thread a memo through their generated
+  methods; types where neither holds generate exactly the code they generated
+  before, with no bookkeeping and no extra allocation.
+
+  `Clone` copies a value reached more than once exactly once and points every
+  reference at that one copy, cycles included. `Equal` follows a cycle only
+  until it repeats. `Diff` descends into a pair once and rewires the other
+  routes with `alias` operations, described below.
+
+- `deep.CloneMemo`, `deep.VisitSet` and `deep.DiffMemo` — the bookkeeping the
+  generated methods thread — and `deep.CloneShared`, which deep-copies through
+  the reflection engine against a caller's memo. Generated code hands its opaque
+  fields to it, so the two engines share one identity space and a value
+  referenced from both sides is still copied once.
+
+- `deep.OpAlias`, an operation that makes its `Path` hold the same object its
+  `From` path holds. `OpCopy` installs an independent deep copy; alias shares,
+  which is what rebuilding a value's internal sharing requires.
+
+- `examples/cyclic_graph`, a team chart that points back at itself.
+
+### Fixed
+
+- **`Clone`, `Equal` and `Diff` overflowed the stack on a generated type that
+  could reference itself.** Reaching the reflection engine instead was not the
+  documented escape it appeared to be: `deep.Clone` and `deep.Equal` dispatch to
+  a type's generated methods whenever it has them, so generating code for a
+  recursive type made all three unusable on it. The README credited `Equal` with
+  handling cyclic values throughout.
+
+- **Generated `Clone` duplicated a value reached by two routes.** The divergence
+  was never only about cycles: a plain acyclic value referenced twice came back
+  as two, where the reflection engine returned one referenced twice. This now
+  holds for pointers to types from other packages too — a `time.Time` held by a
+  field and a map entry clones into one `time.Time` that both routes point at.
+
+- **Generated `Clone` confused a nil slice with an empty one**, in both
+  directions: a nil slice came back allocated and empty, and an empty slice came
+  back nil. The values are different — they marshal differently, and the
+  reflection engine's `Equal` tells them apart — so `deep.Equal(v, v.Clone())`
+  was false for any value with a nil slice.
+
+- **Generated `Diff` could not express emptying a container.** Per-key removes
+  leave an empty map where the target holds nil, so a nil/non-nil mismatch now
+  replaces the whole field, which is what the reflection engine already did.
+
+- **`Diff` silently dropped changes to a value reachable by two routes.**
+  Reporting the change only at the first path is correct when the target shares
+  that value the same way the source does, and wrong otherwise — after a decode,
+  or against a value rebuilt any other way, the second route kept its old
+  contents. Reporting every route is not an option either: the routes through
+  shared structure are exponential in its depth, and enumerating them turned an
+  18-level graph into 262,144 operations. Each additional route now costs one
+  `alias` operation, which is linear in edges, lands correctly on any target,
+  and rebuilds the sharing the new value has.
+
+### Compatibility
+
+- `OpAlias` is a new operation kind on the wire (`"k":6`). A peer built against
+  an earlier version will not understand it. Only values whose type can reach
+  the same value twice produce one, and the RFC 6902 export maps it to `copy`,
+  which reproduces the values but not the sharing — JSON values carry no
+  identity to share.
+
 ## v5.10.2
 
 ### Fixed
