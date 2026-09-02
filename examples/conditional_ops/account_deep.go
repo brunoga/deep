@@ -82,8 +82,15 @@ func (t *Account) applyOperation(op deep.Operation, logger *slog.Logger) (bool, 
 		}
 		return true, fmt.Errorf("unsupported root operation: %s", op.Kind)
 	case "/owner", "/Owner":
-		if op.Kind == deep.OpReplace && op.Strict {
-			if _oldV, ok := op.Old.(string); !ok || t.Owner != _oldV {
+		if op.Kind == deep.OpReplace && op.Strict && op.Old != nil {
+			_match := false
+			if _oldV, ok := op.Old.(string); ok {
+				_match = t.Owner == _oldV
+			}
+			if !_match {
+				_match = deep.EqualCoerced(t.Owner, op.Old)
+			}
+			if !_match {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Owner)
 			}
 		}
@@ -94,17 +101,15 @@ func (t *Account) applyOperation(op deep.Operation, logger *slog.Logger) (bool, 
 			}
 		}
 	case "/balance", "/Balance":
-		if op.Kind == deep.OpReplace && op.Strict {
-			_oldOK := false
+		if op.Kind == deep.OpReplace && op.Strict && op.Old != nil {
+			_match := false
 			if _oldV, ok := op.Old.(float64); ok {
-				_oldOK = t.Balance == _oldV
+				_match = t.Balance == _oldV
 			}
-			if !_oldOK {
-				if _oldF, ok := op.Old.(float64); ok {
-					_oldOK = float64(t.Balance) == _oldF
-				}
+			if !_match {
+				_match = deep.EqualCoerced(t.Balance, op.Old)
 			}
-			if !_oldOK {
+			if !_match {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Balance)
 			}
 		}
@@ -119,17 +124,15 @@ func (t *Account) applyOperation(op deep.Operation, logger *slog.Logger) (bool, 
 			}
 		}
 	case "/late_fee", "/LateFee":
-		if op.Kind == deep.OpReplace && op.Strict {
-			_oldOK := false
+		if op.Kind == deep.OpReplace && op.Strict && op.Old != nil {
+			_match := false
 			if _oldV, ok := op.Old.(float64); ok {
-				_oldOK = t.LateFee == _oldV
+				_match = t.LateFee == _oldV
 			}
-			if !_oldOK {
-				if _oldF, ok := op.Old.(float64); ok {
-					_oldOK = float64(t.LateFee) == _oldF
-				}
+			if !_match {
+				_match = deep.EqualCoerced(t.LateFee, op.Old)
 			}
-			if !_oldOK {
+			if !_match {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.LateFee)
 			}
 		}
@@ -144,8 +147,15 @@ func (t *Account) applyOperation(op deep.Operation, logger *slog.Logger) (bool, 
 			}
 		}
 	case "/status", "/Status":
-		if op.Kind == deep.OpReplace && op.Strict {
-			if _oldV, ok := op.Old.(string); !ok || t.Status != _oldV {
+		if op.Kind == deep.OpReplace && op.Strict && op.Old != nil {
+			_match := false
+			if _oldV, ok := op.Old.(string); ok {
+				_match = t.Status == _oldV
+			}
+			if !_match {
+				_match = deep.EqualCoerced(t.Status, op.Old)
+			}
+			if !_match {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Status)
 			}
 		}
@@ -156,8 +166,15 @@ func (t *Account) applyOperation(op deep.Operation, logger *slog.Logger) (bool, 
 			}
 		}
 	case "/last_seen", "/LastSeen":
-		if op.Kind == deep.OpReplace && op.Strict {
-			if _oldV, ok := op.Old.(string); !ok || t.LastSeen != _oldV {
+		if op.Kind == deep.OpReplace && op.Strict && op.Old != nil {
+			_match := false
+			if _oldV, ok := op.Old.(string); ok {
+				_match = t.LastSeen == _oldV
+			}
+			if !_match {
+				_match = deep.EqualCoerced(t.LastSeen, op.Old)
+			}
+			if !_match {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.LastSeen)
 			}
 		}

@@ -82,8 +82,15 @@ func (t *Playlist) applyOperation(op deep.Operation, logger *slog.Logger) (bool,
 		}
 		return true, fmt.Errorf("unsupported root operation: %s", op.Kind)
 	case "/name", "/Name":
-		if op.Kind == deep.OpReplace && op.Strict {
-			if _oldV, ok := op.Old.(string); !ok || t.Name != _oldV {
+		if op.Kind == deep.OpReplace && op.Strict && op.Old != nil {
+			_match := false
+			if _oldV, ok := op.Old.(string); ok {
+				_match = t.Name == _oldV
+			}
+			if !_match {
+				_match = deep.EqualCoerced(t.Name, op.Old)
+			}
+			if !_match {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Name)
 			}
 		}
@@ -94,8 +101,15 @@ func (t *Playlist) applyOperation(op deep.Operation, logger *slog.Logger) (bool,
 			}
 		}
 	case "/tracks", "/Tracks":
-		if op.Kind == deep.OpReplace && op.Strict {
-			if old, ok := op.Old.([]string); !ok || !deep.Equal(t.Tracks, old) {
+		if op.Kind == deep.OpReplace && op.Strict && op.Old != nil {
+			_match := false
+			if old, ok := op.Old.([]string); ok {
+				_match = deep.Equal(t.Tracks, old)
+			}
+			if !_match {
+				_match = deep.EqualCoerced(t.Tracks, op.Old)
+			}
+			if !_match {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Tracks)
 			}
 		}

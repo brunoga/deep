@@ -82,8 +82,15 @@ func (t *Resource) applyOperation(op deep.Operation, logger *slog.Logger) (bool,
 		}
 		return true, fmt.Errorf("unsupported root operation: %s", op.Kind)
 	case "/id", "/ID":
-		if op.Kind == deep.OpReplace && op.Strict {
-			if _oldV, ok := op.Old.(string); !ok || t.ID != _oldV {
+		if op.Kind == deep.OpReplace && op.Strict && op.Old != nil {
+			_match := false
+			if _oldV, ok := op.Old.(string); ok {
+				_match = t.ID == _oldV
+			}
+			if !_match {
+				_match = deep.EqualCoerced(t.ID, op.Old)
+			}
+			if !_match {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.ID)
 			}
 		}
@@ -94,8 +101,15 @@ func (t *Resource) applyOperation(op deep.Operation, logger *slog.Logger) (bool,
 			}
 		}
 	case "/data", "/Data":
-		if op.Kind == deep.OpReplace && op.Strict {
-			if _oldV, ok := op.Old.(string); !ok || t.Data != _oldV {
+		if op.Kind == deep.OpReplace && op.Strict && op.Old != nil {
+			_match := false
+			if _oldV, ok := op.Old.(string); ok {
+				_match = t.Data == _oldV
+			}
+			if !_match {
+				_match = deep.EqualCoerced(t.Data, op.Old)
+			}
+			if !_match {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Data)
 			}
 		}
@@ -106,17 +120,15 @@ func (t *Resource) applyOperation(op deep.Operation, logger *slog.Logger) (bool,
 			}
 		}
 	case "/value", "/Value":
-		if op.Kind == deep.OpReplace && op.Strict {
-			_oldOK := false
+		if op.Kind == deep.OpReplace && op.Strict && op.Old != nil {
+			_match := false
 			if _oldV, ok := op.Old.(int); ok {
-				_oldOK = t.Value == _oldV
+				_match = t.Value == _oldV
 			}
-			if !_oldOK {
-				if _oldF, ok := op.Old.(float64); ok {
-					_oldOK = float64(t.Value) == _oldF
-				}
+			if !_match {
+				_match = deep.EqualCoerced(t.Value, op.Old)
 			}
-			if !_oldOK {
+			if !_match {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Value)
 			}
 		}

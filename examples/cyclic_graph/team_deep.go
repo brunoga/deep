@@ -83,8 +83,15 @@ func (t *Person) applyOperation(op deep.Operation, logger *slog.Logger) (bool, e
 		}
 		return true, fmt.Errorf("unsupported root operation: %s", op.Kind)
 	case "/name", "/Name":
-		if op.Kind == deep.OpReplace && op.Strict {
-			if _oldV, ok := op.Old.(string); !ok || t.Name != _oldV {
+		if op.Kind == deep.OpReplace && op.Strict && op.Old != nil {
+			_match := false
+			if _oldV, ok := op.Old.(string); ok {
+				_match = t.Name == _oldV
+			}
+			if !_match {
+				_match = deep.EqualCoerced(t.Name, op.Old)
+			}
+			if !_match {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Name)
 			}
 		}
@@ -95,8 +102,15 @@ func (t *Person) applyOperation(op deep.Operation, logger *slog.Logger) (bool, e
 			}
 		}
 	case "/team", "/Team":
-		if op.Kind == deep.OpReplace && op.Strict {
-			if old, ok := op.Old.(*Team); !ok || !deep.Equal(t.Team, old) {
+		if op.Kind == deep.OpReplace && op.Strict && op.Old != nil {
+			_match := false
+			if old, ok := op.Old.(*Team); ok {
+				_match = deep.Equal(t.Team, old)
+			}
+			if !_match {
+				_match = deep.EqualCoerced(t.Team, op.Old)
+			}
+			if !_match {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Team)
 			}
 		}
@@ -107,8 +121,15 @@ func (t *Person) applyOperation(op deep.Operation, logger *slog.Logger) (bool, e
 			}
 		}
 	case "/manager", "/Manager":
-		if op.Kind == deep.OpReplace && op.Strict {
-			if old, ok := op.Old.(*Person); !ok || !deep.Equal(t.Manager, old) {
+		if op.Kind == deep.OpReplace && op.Strict && op.Old != nil {
+			_match := false
+			if old, ok := op.Old.(*Person); ok {
+				_match = deep.Equal(t.Manager, old)
+			}
+			if !_match {
+				_match = deep.EqualCoerced(t.Manager, op.Old)
+			}
+			if !_match {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Manager)
 			}
 		}
@@ -422,8 +443,15 @@ func (t *Team) applyOperation(op deep.Operation, logger *slog.Logger) (bool, err
 		}
 		return true, fmt.Errorf("unsupported root operation: %s", op.Kind)
 	case "/name", "/Name":
-		if op.Kind == deep.OpReplace && op.Strict {
-			if _oldV, ok := op.Old.(string); !ok || t.Name != _oldV {
+		if op.Kind == deep.OpReplace && op.Strict && op.Old != nil {
+			_match := false
+			if _oldV, ok := op.Old.(string); ok {
+				_match = t.Name == _oldV
+			}
+			if !_match {
+				_match = deep.EqualCoerced(t.Name, op.Old)
+			}
+			if !_match {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Name)
 			}
 		}
@@ -434,8 +462,15 @@ func (t *Team) applyOperation(op deep.Operation, logger *slog.Logger) (bool, err
 			}
 		}
 	case "/members", "/Members":
-		if op.Kind == deep.OpReplace && op.Strict {
-			if old, ok := op.Old.([]*Person); !ok || !deep.Equal(t.Members, old) {
+		if op.Kind == deep.OpReplace && op.Strict && op.Old != nil {
+			_match := false
+			if old, ok := op.Old.([]*Person); ok {
+				_match = deep.Equal(t.Members, old)
+			}
+			if !_match {
+				_match = deep.EqualCoerced(t.Members, op.Old)
+			}
+			if !_match {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Members)
 			}
 		}
@@ -446,8 +481,15 @@ func (t *Team) applyOperation(op deep.Operation, logger *slog.Logger) (bool, err
 			}
 		}
 	case "/byName", "/ByName":
-		if op.Kind == deep.OpReplace && op.Strict {
-			if old, ok := op.Old.(map[string]*Person); !ok || !deep.Equal(t.ByName, old) {
+		if op.Kind == deep.OpReplace && op.Strict && op.Old != nil {
+			_match := false
+			if old, ok := op.Old.(map[string]*Person); ok {
+				_match = deep.Equal(t.ByName, old)
+			}
+			if !_match {
+				_match = deep.EqualCoerced(t.ByName, op.Old)
+			}
+			if !_match {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.ByName)
 			}
 		}
@@ -458,8 +500,15 @@ func (t *Team) applyOperation(op deep.Operation, logger *slog.Logger) (bool, err
 			}
 		}
 	case "/lead", "/Lead":
-		if op.Kind == deep.OpReplace && op.Strict {
-			if old, ok := op.Old.(*Person); !ok || !deep.Equal(t.Lead, old) {
+		if op.Kind == deep.OpReplace && op.Strict && op.Old != nil {
+			_match := false
+			if old, ok := op.Old.(*Person); ok {
+				_match = deep.Equal(t.Lead, old)
+			}
+			if !_match {
+				_match = deep.EqualCoerced(t.Lead, op.Old)
+			}
+			if !_match {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Lead)
 			}
 		}

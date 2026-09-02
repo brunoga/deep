@@ -6,6 +6,76 @@ All notable changes to this project are documented here, newest first.
 > version's entry before tagging, so the tag, the GitHub release notes, and this
 > file always agree.
 
+## v5.12.0
+
+### Added
+
+- **Conditional writes report what they did.** [`ApplyWithResult`] applies a
+  patch exactly as `Apply` does — operations in order, each condition seeing
+  what the ones before it left — and returns an `*ApplyResult` carrying one
+  outcome per operation: applied, skipped by its condition, or failed.
+
+  The distinction was previously unavailable. An operation whose condition does
+  not hold is deliberately not applied, and that is not an error, so `Apply`
+  returns nil whether a conditional operation ran or not. A caller using a
+  condition as a precondition — the narrow equivalent of a compare-and-swap —
+  could not tell whether its write had landed. `res.AllApplied()` is that
+  answer.
+
+- `WithAllowedPaths` confines a patch to a set of path prefixes. It checks
+  `From` as well as `Path`, since a `move` or a `copy` reads from wherever it
+  points, and an operation reaching outside voids the whole patch with
+  `ErrPathNotAllowed` rather than letting the permitted part through. Struct
+  tags remain the way to express what belongs to the type rather than to one
+  caller: `deep:"-"` to hide a field, `deep:"readonly"` to make writing it an
+  error.
+
+- `ErrGuardNotMet` is a sentinel, so a patch rejected by its guard is
+  distinguishable from one that could not be applied. `Apply` returns it too.
+
+- `EqualCoerced` compares a value against one of a different but losslessly
+  convertible type. It is what the strict-mode checks now use, exported so a
+  service applying patches from the wire can make the same comparison itself.
+
+- `examples/conditional_writes`, and `BenchmarkContention` measuring both
+  strategies against a contended row.
+
+### Fixed
+
+- **Strict checks rejected state they matched, after a JSON round trip.**
+  `Operation.Old` is declared `any`, so a decoded patch carries every number as
+  float64 whatever the field's type, and a nested struct as `map[string]any`.
+  The comparison demanded identical types and reported a mismatch for all of
+  them — meaning strict mode was unusable for the case it is most wanted in, a
+  patch arriving from somewhere else. The comparison now coerces, and verifies
+  the coercion by converting back, so `float64(5)` matches an int field holding
+  5 while `float64(5.7)` does not.
+
+  The generated path had the same defect in a different form: a type assertion
+  on `op.Old` that failed outright for named scalars and nested structs. It now
+  falls back to the coercing comparison when the assertion misses, so the exact
+  case stays a direct comparison.
+
+- **A strict check against a path holding nothing silently passed.** The check
+  was skipped when the path did not resolve, which left a strict operation
+  unchecked exactly when the target had drifted furthest from what the patch
+  expected. It is now a mismatch.
+
+- **A strict operation with no recorded `Old` was treated as a failed check.**
+  `Patch.Strict` stamps every operation, including hand-built ones that never
+  recorded what they expected to find. No expectation is not a failed one, so
+  those now apply.
+
+### Documentation
+
+- A README section on conditional writes: what changes about the unit of
+  conflict, the two things to get right — a condition has to cover the read set
+  and not just the write set, and retries are only free if the operations are
+  idempotent — and where the CRDT types remove the retry instead of narrowing
+  it.
+
+[`ApplyWithResult`]: https://pkg.go.dev/github.com/brunoga/deep/v5#ApplyWithResult
+
 ## v5.11.0
 
 ### Added

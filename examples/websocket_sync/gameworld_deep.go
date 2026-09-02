@@ -83,8 +83,15 @@ func (t *GameWorld) applyOperation(op deep.Operation, logger *slog.Logger) (bool
 		}
 		return true, fmt.Errorf("unsupported root operation: %s", op.Kind)
 	case "/players", "/Players":
-		if op.Kind == deep.OpReplace && op.Strict {
-			if old, ok := op.Old.(map[string]Player); !ok || !deep.Equal(t.Players, old) {
+		if op.Kind == deep.OpReplace && op.Strict && op.Old != nil {
+			_match := false
+			if old, ok := op.Old.(map[string]Player); ok {
+				_match = deep.Equal(t.Players, old)
+			}
+			if !_match {
+				_match = deep.EqualCoerced(t.Players, op.Old)
+			}
+			if !_match {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Players)
 			}
 		}
@@ -95,17 +102,15 @@ func (t *GameWorld) applyOperation(op deep.Operation, logger *slog.Logger) (bool
 			}
 		}
 	case "/time", "/Time":
-		if op.Kind == deep.OpReplace && op.Strict {
-			_oldOK := false
+		if op.Kind == deep.OpReplace && op.Strict && op.Old != nil {
+			_match := false
 			if _oldV, ok := op.Old.(int); ok {
-				_oldOK = t.Time == _oldV
+				_match = t.Time == _oldV
 			}
-			if !_oldOK {
-				if _oldF, ok := op.Old.(float64); ok {
-					_oldOK = float64(t.Time) == _oldF
-				}
+			if !_match {
+				_match = deep.EqualCoerced(t.Time, op.Old)
 			}
-			if !_oldOK {
+			if !_match {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Time)
 			}
 		}
@@ -385,17 +390,15 @@ func (t *Player) applyOperation(op deep.Operation, logger *slog.Logger) (bool, e
 		}
 		return true, fmt.Errorf("unsupported root operation: %s", op.Kind)
 	case "/x", "/X":
-		if op.Kind == deep.OpReplace && op.Strict {
-			_oldOK := false
+		if op.Kind == deep.OpReplace && op.Strict && op.Old != nil {
+			_match := false
 			if _oldV, ok := op.Old.(int); ok {
-				_oldOK = t.X == _oldV
+				_match = t.X == _oldV
 			}
-			if !_oldOK {
-				if _oldF, ok := op.Old.(float64); ok {
-					_oldOK = float64(t.X) == _oldF
-				}
+			if !_match {
+				_match = deep.EqualCoerced(t.X, op.Old)
 			}
-			if !_oldOK {
+			if !_match {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.X)
 			}
 		}
@@ -410,17 +413,15 @@ func (t *Player) applyOperation(op deep.Operation, logger *slog.Logger) (bool, e
 			}
 		}
 	case "/y", "/Y":
-		if op.Kind == deep.OpReplace && op.Strict {
-			_oldOK := false
+		if op.Kind == deep.OpReplace && op.Strict && op.Old != nil {
+			_match := false
 			if _oldV, ok := op.Old.(int); ok {
-				_oldOK = t.Y == _oldV
+				_match = t.Y == _oldV
 			}
-			if !_oldOK {
-				if _oldF, ok := op.Old.(float64); ok {
-					_oldOK = float64(t.Y) == _oldF
-				}
+			if !_match {
+				_match = deep.EqualCoerced(t.Y, op.Old)
 			}
-			if !_oldOK {
+			if !_match {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Y)
 			}
 		}
@@ -435,8 +436,15 @@ func (t *Player) applyOperation(op deep.Operation, logger *slog.Logger) (bool, e
 			}
 		}
 	case "/name", "/Name":
-		if op.Kind == deep.OpReplace && op.Strict {
-			if _oldV, ok := op.Old.(string); !ok || t.Name != _oldV {
+		if op.Kind == deep.OpReplace && op.Strict && op.Old != nil {
+			_match := false
+			if _oldV, ok := op.Old.(string); ok {
+				_match = t.Name == _oldV
+			}
+			if !_match {
+				_match = deep.EqualCoerced(t.Name, op.Old)
+			}
+			if !_match {
 				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Name)
 			}
 		}

@@ -264,25 +264,22 @@ func fieldApplyCase(f FieldInfo, p string) string {
 	}
 	// OpLog is handled once at the top of applyOperation, before the path
 	// switch, so cases never see it.
-	// Strict check
-	fmt.Fprintf(&b, "\t\tif op.Kind == %sOpReplace && op.Strict {\n", p)
+	// Strict check. The fast form is a type assertion, which holds when the
+	// patch was built in this process. A patch that arrived over the wire
+	// carries decoded shapes instead — every number a float64, a nested struct
+	// a map[string]any — so a failed assertion falls back to the coercing
+	// comparison rather than reporting a mismatch that is not there.
+	fmt.Fprintf(&b, "\t\tif op.Kind == %sOpReplace && op.Strict && op.Old != nil {\n", p)
+	b.WriteString("\t\t\t_match := false\n")
 	if f.IsStruct || f.IsText || f.IsCollection || f.Opaque() {
-		fmt.Fprintf(&b, "\t\t\tif old, ok := op.Old.(%s); !ok || !%sEqual(t.%s, old) {\n", f.Type, p, f.Name)
-		fmt.Fprintf(&b, "\t\t\t\treturn true, fmt.Errorf(\"strict check failed at %%s: expected %%v, got %%v\", op.Path, op.Old, t.%s)\n", f.Name)
-		b.WriteString("\t\t\t}\n")
-	} else if isNumericType(f.Type) {
-		// Numeric types: op.Old may be float64 after JSON roundtrip.
-		fmt.Fprintf(&b, "\t\t\t_oldOK := false\n")
-		fmt.Fprintf(&b, "\t\t\tif _oldV, ok := op.Old.(%s); ok { _oldOK = t.%s == _oldV }\n", f.Type, f.Name)
-		fmt.Fprintf(&b, "\t\t\tif !_oldOK { if _oldF, ok := op.Old.(float64); ok { _oldOK = %s(t.%s) == _oldF } }\n", "float64", f.Name)
-		fmt.Fprintf(&b, "\t\t\tif !_oldOK {\n")
-		fmt.Fprintf(&b, "\t\t\t\treturn true, fmt.Errorf(\"strict check failed at %%s: expected %%v, got %%v\", op.Path, op.Old, t.%s)\n", f.Name)
-		b.WriteString("\t\t\t}\n")
+		fmt.Fprintf(&b, "\t\t\tif old, ok := op.Old.(%s); ok { _match = %sEqual(t.%s, old) }\n", f.Type, p, f.Name)
 	} else {
-		fmt.Fprintf(&b, "\t\t\tif _oldV, ok := op.Old.(%s); !ok || t.%s != _oldV {\n", f.Type, f.Name)
-		fmt.Fprintf(&b, "\t\t\t\treturn true, fmt.Errorf(\"strict check failed at %%s: expected %%v, got %%v\", op.Path, op.Old, t.%s)\n", f.Name)
-		b.WriteString("\t\t\t}\n")
+		fmt.Fprintf(&b, "\t\t\tif _oldV, ok := op.Old.(%s); ok { _match = t.%s == _oldV }\n", f.Type, f.Name)
 	}
+	fmt.Fprintf(&b, "\t\t\tif !_match { _match = %sEqualCoerced(t.%s, op.Old) }\n", p, f.Name)
+	b.WriteString("\t\t\tif !_match {\n")
+	fmt.Fprintf(&b, "\t\t\t\treturn true, fmt.Errorf(\"strict check failed at %%s: expected %%v, got %%v\", op.Path, op.Old, t.%s)\n", f.Name)
+	b.WriteString("\t\t\t}\n")
 	b.WriteString("\t\t}\n")
 	// Value assignment
 	if f.IsText {

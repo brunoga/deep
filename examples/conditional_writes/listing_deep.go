@@ -8,11 +8,10 @@ import (
 	"log/slog"
 	"reflect"
 	"regexp"
-	"strings"
 )
 
 // Patch applies p to t using the generated fast path.
-func (t *DocState) Patch(p deep.Patch[DocState], logger *slog.Logger) error {
+func (t *Listing) Patch(p deep.Patch[Listing], logger *slog.Logger) error {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -43,7 +42,7 @@ func (t *DocState) Patch(p deep.Patch[DocState], logger *slog.Logger) error {
 	return nil
 }
 
-func (t *DocState) applyOperation(op deep.Operation, logger *slog.Logger) (bool, error) {
+func (t *Listing) applyOperation(op deep.Operation, logger *slog.Logger) (bool, error) {
 	if op.If != nil {
 		ok, err := t.evaluateCondition(*op.If)
 		if err != nil {
@@ -70,18 +69,37 @@ func (t *DocState) applyOperation(op deep.Operation, logger *slog.Logger) (bool,
 	switch op.Path {
 	case "/":
 		if op.Strict && (op.Kind == deep.OpReplace || op.Kind == deep.OpRemove) {
-			old, ok := op.Old.(DocState)
+			old, ok := op.Old.(Listing)
 			if !ok || !deep.Equal(*t, old) {
 				return true, fmt.Errorf("strict check failed at root: expected %v, got %v", op.Old, *t)
 			}
 		}
 		if op.Kind == deep.OpReplace {
-			if v, ok := op.New.(DocState); ok {
+			if v, ok := op.New.(Listing); ok {
 				*t = v
 				return true, nil
 			}
 		}
 		return true, fmt.Errorf("unsupported root operation: %s", op.Kind)
+	case "/id", "/ID":
+		if op.Kind == deep.OpReplace && op.Strict && op.Old != nil {
+			_match := false
+			if _oldV, ok := op.Old.(string); ok {
+				_match = t.ID == _oldV
+			}
+			if !_match {
+				_match = deep.EqualCoerced(t.ID, op.Old)
+			}
+			if !_match {
+				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.ID)
+			}
+		}
+		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
+			if v, ok := op.New.(string); ok {
+				t.ID = v
+				return true, nil
+			}
+		}
 	case "/title", "/Title":
 		if op.Kind == deep.OpReplace && op.Strict && op.Old != nil {
 			_match := false
@@ -101,106 +119,77 @@ func (t *DocState) applyOperation(op deep.Operation, logger *slog.Logger) (bool,
 				return true, nil
 			}
 		}
-	case "/content", "/Content":
+	case "/price", "/Price":
 		if op.Kind == deep.OpReplace && op.Strict && op.Old != nil {
 			_match := false
-			if _oldV, ok := op.Old.(string); ok {
-				_match = t.Content == _oldV
+			if _oldV, ok := op.Old.(int); ok {
+				_match = t.Price == _oldV
 			}
 			if !_match {
-				_match = deep.EqualCoerced(t.Content, op.Old)
+				_match = deep.EqualCoerced(t.Price, op.Old)
 			}
 			if !_match {
-				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Content)
+				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Price)
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(string); ok {
-				t.Content = v
+			if v, ok := op.New.(int); ok {
+				t.Price = v
+				return true, nil
+			}
+			if f, ok := op.New.(float64); ok {
+				t.Price = int(f)
 				return true, nil
 			}
 		}
-	case "/metadata", "/Metadata":
+	case "/stock", "/Stock":
 		if op.Kind == deep.OpReplace && op.Strict && op.Old != nil {
 			_match := false
-			if old, ok := op.Old.(map[string]string); ok {
-				_match = deep.Equal(t.Metadata, old)
+			if _oldV, ok := op.Old.(int); ok {
+				_match = t.Stock == _oldV
 			}
 			if !_match {
-				_match = deep.EqualCoerced(t.Metadata, op.Old)
+				_match = deep.EqualCoerced(t.Stock, op.Old)
 			}
 			if !_match {
-				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Metadata)
+				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Stock)
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(map[string]string); ok {
-				t.Metadata = v
+			if v, ok := op.New.(int); ok {
+				t.Stock = v
+				return true, nil
+			}
+			if f, ok := op.New.(float64); ok {
+				t.Stock = int(f)
 				return true, nil
 			}
 		}
 	default:
-		if strings.HasPrefix(op.Path, "/metadata/") {
-			parts := strings.Split(op.Path[len("/metadata/"):], "/")
-			key := deep.UnescapePathKey(parts[0])
-			if len(parts) == 1 && !op.Strict {
-				if op.Kind == deep.OpRemove {
-					delete(t.Metadata, key)
-					return true, nil
-				}
-				if v, ok := op.New.(string); ok && (op.Kind == deep.OpAdd || op.Kind == deep.OpReplace) {
-					if t.Metadata == nil {
-						t.Metadata = make(map[string]string)
-					}
-					t.Metadata[key] = v
-					return true, nil
-				}
-			}
-		}
 	}
 	return false, nil
 }
 
 // Diff compares t with other and returns a Patch.
-func (t *DocState) Diff(other *DocState) deep.Patch[DocState] {
-	p := deep.Patch[DocState]{}
+func (t *Listing) Diff(other *Listing) deep.Patch[Listing] {
+	p := deep.Patch[Listing]{}
+	if t.ID != other.ID {
+		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/id", Old: t.ID, New: other.ID})
+	}
 	if t.Title != other.Title {
 		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/title", Old: t.Title, New: other.Title})
 	}
-	if t.Content != other.Content {
-		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/content", Old: t.Content, New: other.Content})
+	if t.Price != other.Price {
+		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/price", Old: t.Price, New: other.Price})
 	}
-	if (t.Metadata == nil) != (other.Metadata == nil) {
-		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/metadata", Old: t.Metadata, New: other.Metadata})
-	} else {
-		if other.Metadata != nil {
-			for k, v := range other.Metadata {
-				if t.Metadata == nil {
-					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/metadata/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
-					continue
-				}
-				if oldV, ok := t.Metadata[k]; !ok || v != oldV {
-					kind := deep.OpReplace
-					if !ok {
-						kind = deep.OpAdd
-					}
-					p.Operations = append(p.Operations, deep.Operation{Kind: kind, Path: "/metadata/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: oldV, New: v})
-				}
-			}
-		}
-		if t.Metadata != nil {
-			for k, v := range t.Metadata {
-				if _, ok := other.Metadata[k]; !ok {
-					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: "/metadata/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: v})
-				}
-			}
-		}
+	if t.Stock != other.Stock {
+		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/stock", Old: t.Stock, New: other.Stock})
 	}
 
 	return p
 }
 
-func (t *DocState) evaluateCondition(c condition.Condition) (bool, error) {
+func (t *Listing) evaluateCondition(c condition.Condition) (bool, error) {
 	switch c.Op {
 	case "and":
 		for _, sub := range c.Sub {
@@ -230,6 +219,58 @@ func (t *DocState) evaluateCondition(c condition.Condition) (bool, error) {
 	}
 
 	switch c.Path {
+	case "/id", "/ID":
+		if c.Op == "exists" {
+			return true, nil
+		}
+		if c.Op == "type" {
+			tn, ok := c.Value.(string)
+			if !ok {
+				return false, fmt.Errorf("type requires string value")
+			}
+			return condition.CheckType(t.ID, tn), nil
+		}
+		if c.Op == "matches" {
+			pat, ok := c.Value.(string)
+			if !ok {
+				return false, fmt.Errorf("matches requires string pattern")
+			}
+			return regexp.MatchString(pat, fmt.Sprintf("%v", t.ID))
+		}
+		_sv, _ok := c.Value.(string)
+		if !_ok {
+			return false, fmt.Errorf("condition value type mismatch for field ID")
+		}
+		switch c.Op {
+		case "==":
+			return t.ID == _sv, nil
+		case "!=":
+			return t.ID != _sv, nil
+		case ">":
+			return t.ID > _sv, nil
+		case "<":
+			return t.ID < _sv, nil
+		case ">=":
+			return t.ID >= _sv, nil
+		case "<=":
+			return t.ID <= _sv, nil
+		case "in":
+			switch vals := c.Value.(type) {
+			case []string:
+				for _, v := range vals {
+					if t.ID == v {
+						return true, nil
+					}
+				}
+			case []any:
+				for _, v := range vals {
+					if sv, ok := v.(string); ok && t.ID == sv {
+						return true, nil
+					}
+				}
+			}
+			return false, nil
+		}
 	case "/title", "/Title":
 		if c.Op == "exists" {
 			return true, nil
@@ -282,7 +323,7 @@ func (t *DocState) evaluateCondition(c condition.Condition) (bool, error) {
 			}
 			return false, nil
 		}
-	case "/content", "/Content":
+	case "/price", "/Price":
 		if c.Op == "exists" {
 			return true, nil
 		}
@@ -291,44 +332,122 @@ func (t *DocState) evaluateCondition(c condition.Condition) (bool, error) {
 			if !ok {
 				return false, fmt.Errorf("type requires string value")
 			}
-			return condition.CheckType(t.Content, tn), nil
+			return condition.CheckType(t.Price, tn), nil
 		}
 		if c.Op == "matches" {
 			pat, ok := c.Value.(string)
 			if !ok {
 				return false, fmt.Errorf("matches requires string pattern")
 			}
-			return regexp.MatchString(pat, fmt.Sprintf("%v", t.Content))
+			return regexp.MatchString(pat, fmt.Sprintf("%v", t.Price))
 		}
-		_sv, _ok := c.Value.(string)
-		if !_ok {
-			return false, fmt.Errorf("condition value type mismatch for field Content")
+		var _cv float64
+		switch v := c.Value.(type) {
+		case int:
+			_cv = float64(v)
+		case float64:
+			_cv = v
+		default:
+			return false, fmt.Errorf("condition value type mismatch for field Price")
 		}
+		_fv := float64(t.Price)
 		switch c.Op {
 		case "==":
-			return t.Content == _sv, nil
+			return _fv == _cv, nil
 		case "!=":
-			return t.Content != _sv, nil
+			return _fv != _cv, nil
 		case ">":
-			return t.Content > _sv, nil
+			return _fv > _cv, nil
 		case "<":
-			return t.Content < _sv, nil
+			return _fv < _cv, nil
 		case ">=":
-			return t.Content >= _sv, nil
+			return _fv >= _cv, nil
 		case "<=":
-			return t.Content <= _sv, nil
+			return _fv <= _cv, nil
 		case "in":
 			switch vals := c.Value.(type) {
-			case []string:
+			case []int:
 				for _, v := range vals {
-					if t.Content == v {
+					if t.Price == v {
 						return true, nil
 					}
 				}
 			case []any:
 				for _, v := range vals {
-					if sv, ok := v.(string); ok && t.Content == sv {
+					switch iv := v.(type) {
+					case int:
+						if t.Price == iv {
+							return true, nil
+						}
+					case float64:
+						if float64(t.Price) == iv {
+							return true, nil
+						}
+					}
+				}
+			}
+			return false, nil
+		}
+	case "/stock", "/Stock":
+		if c.Op == "exists" {
+			return true, nil
+		}
+		if c.Op == "type" {
+			tn, ok := c.Value.(string)
+			if !ok {
+				return false, fmt.Errorf("type requires string value")
+			}
+			return condition.CheckType(t.Stock, tn), nil
+		}
+		if c.Op == "matches" {
+			pat, ok := c.Value.(string)
+			if !ok {
+				return false, fmt.Errorf("matches requires string pattern")
+			}
+			return regexp.MatchString(pat, fmt.Sprintf("%v", t.Stock))
+		}
+		var _cv float64
+		switch v := c.Value.(type) {
+		case int:
+			_cv = float64(v)
+		case float64:
+			_cv = v
+		default:
+			return false, fmt.Errorf("condition value type mismatch for field Stock")
+		}
+		_fv := float64(t.Stock)
+		switch c.Op {
+		case "==":
+			return _fv == _cv, nil
+		case "!=":
+			return _fv != _cv, nil
+		case ">":
+			return _fv > _cv, nil
+		case "<":
+			return _fv < _cv, nil
+		case ">=":
+			return _fv >= _cv, nil
+		case "<=":
+			return _fv <= _cv, nil
+		case "in":
+			switch vals := c.Value.(type) {
+			case []int:
+				for _, v := range vals {
+					if t.Stock == v {
 						return true, nil
+					}
+				}
+			case []any:
+				for _, v := range vals {
+					switch iv := v.(type) {
+					case int:
+						if t.Stock == iv {
+							return true, nil
+						}
+					case float64:
+						if float64(t.Stock) == iv {
+							return true, nil
+						}
 					}
 				}
 			}
@@ -342,39 +461,29 @@ func (t *DocState) evaluateCondition(c condition.Condition) (bool, error) {
 }
 
 // Equal returns true if t and other are deeply equal.
-func (t *DocState) Equal(other *DocState) bool {
+func (t *Listing) Equal(other *Listing) bool {
+	if t.ID != other.ID {
+		return false
+	}
 	if t.Title != other.Title {
 		return false
 	}
-	if t.Content != other.Content {
+	if t.Price != other.Price {
 		return false
 	}
-	if len(t.Metadata) != len(other.Metadata) {
+	if t.Stock != other.Stock {
 		return false
-	}
-	for k, v := range t.Metadata {
-		vOther, ok := other.Metadata[k]
-		if !ok {
-			return false
-		}
-		if v != vOther {
-			return false
-		}
 	}
 	return true
 }
 
 // Clone returns a deep copy of t.
-func (t *DocState) Clone() *DocState {
-	res := &DocState{
-		Title:   t.Title,
-		Content: t.Content,
-	}
-	if t.Metadata != nil {
-		res.Metadata = make(map[string]string)
-		for k, v := range t.Metadata {
-			res.Metadata[k] = v
-		}
+func (t *Listing) Clone() *Listing {
+	res := &Listing{
+		ID:    t.ID,
+		Title: t.Title,
+		Price: t.Price,
+		Stock: t.Stock,
 	}
 	return res
 }
