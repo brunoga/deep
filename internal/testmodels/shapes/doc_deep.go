@@ -69,9 +69,15 @@ func (t *Meta) applyOperation(op deep.Operation, logger *slog.Logger) (bool, err
 
 	switch op.Path {
 	case "/":
-		if op.Strict && (op.Kind == deep.OpReplace || op.Kind == deep.OpRemove) {
-			old, ok := op.Old.(Meta)
-			if !ok || !deep.Equal(*t, old) {
+		if op.Strict && op.Old != nil && (op.Kind == deep.OpReplace || op.Kind == deep.OpRemove) {
+			_match := false
+			if old, ok := op.Old.(Meta); ok {
+				_match = deep.Equal(*t, old)
+			}
+			if !_match {
+				_match = deep.EqualCoerced(*t, op.Old)
+			}
+			if !_match {
 				return true, fmt.Errorf("strict check failed at root: expected %v, got %v", op.Old, *t)
 			}
 		}
@@ -374,9 +380,15 @@ func (t *Entry) applyOperation(op deep.Operation, logger *slog.Logger) (bool, er
 
 	switch op.Path {
 	case "/":
-		if op.Strict && (op.Kind == deep.OpReplace || op.Kind == deep.OpRemove) {
-			old, ok := op.Old.(Entry)
-			if !ok || !deep.Equal(*t, old) {
+		if op.Strict && op.Old != nil && (op.Kind == deep.OpReplace || op.Kind == deep.OpRemove) {
+			_match := false
+			if old, ok := op.Old.(Entry); ok {
+				_match = deep.Equal(*t, old)
+			}
+			if !_match {
+				_match = deep.EqualCoerced(*t, op.Old)
+			}
+			if !_match {
 				return true, fmt.Errorf("strict check failed at root: expected %v, got %v", op.Old, *t)
 			}
 		}
@@ -679,9 +691,15 @@ func (t *Payload) applyOperation(op deep.Operation, logger *slog.Logger) (bool, 
 
 	switch op.Path {
 	case "/":
-		if op.Strict && (op.Kind == deep.OpReplace || op.Kind == deep.OpRemove) {
-			old, ok := op.Old.(Payload)
-			if !ok || !deep.Equal(*t, old) {
+		if op.Strict && op.Old != nil && (op.Kind == deep.OpReplace || op.Kind == deep.OpRemove) {
+			_match := false
+			if old, ok := op.Old.(Payload); ok {
+				_match = deep.Equal(*t, old)
+			}
+			if !_match {
+				_match = deep.EqualCoerced(*t, op.Old)
+			}
+			if !_match {
 				return true, fmt.Errorf("strict check failed at root: expected %v, got %v", op.Old, *t)
 			}
 		}
@@ -929,9 +947,15 @@ func (t *Doc) applyOperation(op deep.Operation, logger *slog.Logger) (bool, erro
 
 	switch op.Path {
 	case "/":
-		if op.Strict && (op.Kind == deep.OpReplace || op.Kind == deep.OpRemove) {
-			old, ok := op.Old.(Doc)
-			if !ok || !deep.Equal(*t, old) {
+		if op.Strict && op.Old != nil && (op.Kind == deep.OpReplace || op.Kind == deep.OpRemove) {
+			_match := false
+			if old, ok := op.Old.(Doc); ok {
+				_match = deep.Equal(*t, old)
+			}
+			if !_match {
+				_match = deep.EqualCoerced(*t, op.Old)
+			}
+			if !_match {
 				return true, fmt.Errorf("strict check failed at root: expected %v, got %v", op.Old, *t)
 			}
 		}
@@ -1119,17 +1143,19 @@ func (t *Doc) applyOperation(op deep.Operation, logger *slog.Logger) (bool, erro
 		if strings.HasPrefix(op.Path, "/stages/") {
 			parts := strings.Split(op.Path[len("/stages/"):], "/")
 			key := deep.UnescapePathKey(parts[0])
-			if len(parts) == 1 && !op.Strict {
-				if op.Kind == deep.OpRemove {
-					delete(t.Stages, key)
-					return true, nil
-				}
-				if v, ok := op.New.(*Meta); ok && (op.Kind == deep.OpAdd || op.Kind == deep.OpReplace) {
-					if t.Stages == nil {
-						t.Stages = make(map[string]*Meta)
+			if len(parts) == 1 {
+				if !op.Strict {
+					if op.Kind == deep.OpRemove {
+						delete(t.Stages, key)
+						return true, nil
 					}
-					t.Stages[key] = v
-					return true, nil
+					if v, ok := op.New.(*Meta); ok && (op.Kind == deep.OpAdd || op.Kind == deep.OpReplace) {
+						if t.Stages == nil {
+							t.Stages = make(map[string]*Meta)
+						}
+						t.Stages[key] = v
+						return true, nil
+					}
 				}
 			} else if val, ok := t.Stages[key]; ok && val != nil {
 				op.Path = "/" + strings.Join(parts[1:], "/")

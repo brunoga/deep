@@ -67,9 +67,15 @@ func (t *Fleet) applyOperation(op deep.Operation, logger *slog.Logger) (bool, er
 
 	switch op.Path {
 	case "/":
-		if op.Strict && (op.Kind == deep.OpReplace || op.Kind == deep.OpRemove) {
-			old, ok := op.Old.(Fleet)
-			if !ok || !deep.Equal(*t, old) {
+		if op.Strict && op.Old != nil && (op.Kind == deep.OpReplace || op.Kind == deep.OpRemove) {
+			_match := false
+			if old, ok := op.Old.(Fleet); ok {
+				_match = deep.Equal(*t, old)
+			}
+			if !_match {
+				_match = deep.EqualCoerced(*t, op.Old)
+			}
+			if !_match {
 				return true, fmt.Errorf("strict check failed at root: expected %v, got %v", op.Old, *t)
 			}
 		}

@@ -151,26 +151,44 @@ type ConflictResolver interface {
 }
 
 // Merge combines two patches into a single patch, resolving conflicts.
-// Operations are deduplicated by path. When both patches modify the same path,
-// r.Resolve is called if r is non-nil; otherwise other's operation wins over
-// base. The output operations are sorted by path for deterministic ordering.
+//
+// Operations are matched by path. When both patches write the same path,
+// r.Resolve decides the value if r is non-nil; otherwise other's operation
+// wins.
+//
+// Paths that are not equal can still collide: an operation on /user and one on
+// /user/name are not independent, and keeping both produced a patch that could
+// not be applied — removing /user and then writing /user/name fails on the
+// path that is no longer there. When the two sides disagree that way, the
+// operation from other wins and the one it encloses (or is enclosed by) is
+// dropped. r is not consulted for these, because there is no single path at
+// which to ask.
+//
+// An ancestor and a descendant from the *same* patch are left alone: writing
+// /user and then /user/name within one patch is a legitimate sequence, and the
+// path ordering below applies them in that order.
+//
+// The output is sorted by path, which makes the result deterministic and puts
+// an ancestor before its descendants.
 func Merge[T any](base, other Patch[T], r ConflictResolver) Patch[T] {
-	latest := make(map[string]Operation, len(base.Operations)+len(other.Operations))
+	type entry struct {
+		op      Operation
+		isOther bool
+	}
+	latest := make(map[string]entry, len(base.Operations)+len(other.Operations))
 
 	mergeOps := func(ops []Operation, isOther bool) {
 		for _, op := range ops {
 			existing, ok := latest[op.Path]
 			if !ok {
-				latest[op.Path] = op
+				latest[op.Path] = entry{op, isOther}
 				continue
 			}
 			if r != nil {
-				resolvedVal := r.Resolve(op.Path, existing.New, op.New)
-				op.New = resolvedVal
-				latest[op.Path] = op
+				op.New = r.Resolve(op.Path, existing.op.New, op.New)
+				latest[op.Path] = entry{op, isOther}
 			} else if isOther {
-				// other wins over base on conflict
-				latest[op.Path] = op
+				latest[op.Path] = entry{op, isOther}
 			}
 		}
 	}
@@ -178,15 +196,49 @@ func Merge[T any](base, other Patch[T], r ConflictResolver) Patch[T] {
 	mergeOps(base.Operations, false)
 	mergeOps(other.Operations, true)
 
+	// Drop whichever side of an ancestor/descendant collision did not come
+	// from other. Both directions matter: other may hold the ancestor or the
+	// descendant.
+	for path, e := range latest {
+		for otherPath, oe := range latest {
+			if path == otherPath || e.isOther == oe.isOther {
+				continue
+			}
+			if pathEncloses(path, otherPath) && !e.isOther {
+				// This operation is enclosed by one from the other side, or
+				// encloses it; the one from other survives.
+				delete(latest, path)
+				break
+			}
+			if pathEncloses(otherPath, path) && !e.isOther {
+				delete(latest, path)
+				break
+			}
+		}
+	}
+
 	res := Patch[T]{}
 	res.Operations = make([]Operation, 0, len(latest))
-	for _, op := range latest {
-		res.Operations = append(res.Operations, op)
+	for _, e := range latest {
+		res.Operations = append(res.Operations, e.op)
 	}
 	sort.Slice(res.Operations, func(i, j int) bool {
 		return res.Operations[i].Path < res.Operations[j].Path
 	})
 	return res
+}
+
+// pathEncloses reports whether ancestor contains descendant: the same path, or
+// a proper prefix of it at a segment boundary. "/a" encloses "/a/b" but not
+// "/ab".
+func pathEncloses(ancestor, descendant string) bool {
+	if ancestor == descendant {
+		return true
+	}
+	if ancestor == "" || ancestor == "/" {
+		return true
+	}
+	return strings.HasPrefix(descendant, strings.TrimSuffix(ancestor, "/")+"/")
 }
 
 // Equal returns true if a and b are deeply equal.

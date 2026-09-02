@@ -69,9 +69,15 @@ func (t *Person) applyOperation(op deep.Operation, logger *slog.Logger) (bool, e
 
 	switch op.Path {
 	case "/":
-		if op.Strict && (op.Kind == deep.OpReplace || op.Kind == deep.OpRemove) {
-			old, ok := op.Old.(Person)
-			if !ok || !deep.Equal(*t, old) {
+		if op.Strict && op.Old != nil && (op.Kind == deep.OpReplace || op.Kind == deep.OpRemove) {
+			_match := false
+			if old, ok := op.Old.(Person); ok {
+				_match = deep.Equal(*t, old)
+			}
+			if !_match {
+				_match = deep.EqualCoerced(*t, op.Old)
+			}
+			if !_match {
 				return true, fmt.Errorf("strict check failed at root: expected %v, got %v", op.Old, *t)
 			}
 		}
@@ -429,9 +435,15 @@ func (t *Team) applyOperation(op deep.Operation, logger *slog.Logger) (bool, err
 
 	switch op.Path {
 	case "/":
-		if op.Strict && (op.Kind == deep.OpReplace || op.Kind == deep.OpRemove) {
-			old, ok := op.Old.(Team)
-			if !ok || !deep.Equal(*t, old) {
+		if op.Strict && op.Old != nil && (op.Kind == deep.OpReplace || op.Kind == deep.OpRemove) {
+			_match := false
+			if old, ok := op.Old.(Team); ok {
+				_match = deep.Equal(*t, old)
+			}
+			if !_match {
+				_match = deep.EqualCoerced(*t, op.Old)
+			}
+			if !_match {
 				return true, fmt.Errorf("strict check failed at root: expected %v, got %v", op.Old, *t)
 			}
 		}
@@ -522,17 +534,19 @@ func (t *Team) applyOperation(op deep.Operation, logger *slog.Logger) (bool, err
 		if strings.HasPrefix(op.Path, "/byName/") {
 			parts := strings.Split(op.Path[len("/byName/"):], "/")
 			key := deep.UnescapePathKey(parts[0])
-			if len(parts) == 1 && !op.Strict {
-				if op.Kind == deep.OpRemove {
-					delete(t.ByName, key)
-					return true, nil
-				}
-				if v, ok := op.New.(*Person); ok && (op.Kind == deep.OpAdd || op.Kind == deep.OpReplace) {
-					if t.ByName == nil {
-						t.ByName = make(map[string]*Person)
+			if len(parts) == 1 {
+				if !op.Strict {
+					if op.Kind == deep.OpRemove {
+						delete(t.ByName, key)
+						return true, nil
 					}
-					t.ByName[key] = v
-					return true, nil
+					if v, ok := op.New.(*Person); ok && (op.Kind == deep.OpAdd || op.Kind == deep.OpReplace) {
+						if t.ByName == nil {
+							t.ByName = make(map[string]*Person)
+						}
+						t.ByName[key] = v
+						return true, nil
+					}
 				}
 			} else if val, ok := t.ByName[key]; ok && val != nil {
 				op.Path = "/" + strings.Join(parts[1:], "/")

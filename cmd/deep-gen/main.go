@@ -337,13 +337,18 @@ func delegateCase(f FieldInfo, p string) string {
 			// JSON-decoded New value) falls through to the reflection path.
 			// Strict entry-level ops take the reflection path, which verifies
 			// the Old value with full deep-equality semantics.
-			b.WriteString("\t\t\tif len(parts) == 1 && !op.Strict {\n")
+			//
+			// The entry-level test is separate from the delegation below
+			// rather than its if/else partner: a strict whole-entry operation
+			// belongs to reflection, and routing it into the element instead
+			// handed the element a path of "/", which it cannot remove at.
+			b.WriteString("\t\t\tif len(parts) == 1 {\n\t\t\tif !op.Strict {\n")
 			fmt.Fprintf(&b, "\t\t\t\tif op.Kind == %sOpRemove {\n", p)
 			fmt.Fprintf(&b, "\t\t\t\t\tdelete(t.%s, key)\n\t\t\t\t\treturn true, nil\n\t\t\t\t}\n", f.Name)
 			fmt.Fprintf(&b, "\t\t\t\tif v, ok := op.New.(%s); ok && (op.Kind == %sOpAdd || op.Kind == %sOpReplace) {\n", vt, p, p)
 			fmt.Fprintf(&b, "\t\t\t\t\tif t.%s == nil { t.%s = make(%s) }\n", f.Name, f.Name, f.Type)
 			fmt.Fprintf(&b, "\t\t\t\t\tt.%s[key] = v\n\t\t\t\t\treturn true, nil\n\t\t\t\t}\n", f.Name)
-			fmt.Fprintf(&b, "\t\t\t} else if val, ok := t.%s[key]; ok && val != nil {\n", f.Name)
+			b.WriteString("\t\t\t}\n\t\t\t} else if val, ok := t." + f.Name + "[key]; ok && val != nil {\n")
 			b.WriteString("\t\t\t\top.Path = \"/\" + strings.Join(parts[1:], \"/\")\n")
 			b.WriteString("\t\t\t\treturn val.applyOperation(op, logger)\n\t\t\t}\n")
 		} else {
@@ -1030,9 +1035,15 @@ var applyOpTmpl = template.Must(template.New("applyOp").Funcs(tmplFuncs).Parse(
 
 	switch op.Path {
 	case "/":
-		if op.Strict && (op.Kind == {{.P}}OpReplace || op.Kind == {{.P}}OpRemove) {
-			old, ok := op.Old.({{.TypeName}})
-			if !ok || !{{.P}}Equal(*t, old) {
+		if op.Strict && op.Old != nil && (op.Kind == {{.P}}OpReplace || op.Kind == {{.P}}OpRemove) {
+			_match := false
+			if old, ok := op.Old.({{.TypeName}}); ok {
+				_match = {{.P}}Equal(*t, old)
+			}
+			if !_match {
+				_match = {{.P}}EqualCoerced(*t, op.Old)
+			}
+			if !_match {
 				return true, fmt.Errorf("strict check failed at root: expected %v, got %v", op.Old, *t)
 			}
 		}

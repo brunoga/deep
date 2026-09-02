@@ -21,6 +21,21 @@ func ConvertValue(v reflect.Value, targetType reflect.Type) reflect.Value {
 		return v
 	}
 
+	// Before the general conversion: Go considers a string convertible to
+	// []byte, and would reinterpret the text as its own bytes. JSON has no
+	// byte-slice type and writes []byte as a base64 string, so a decoded
+	// operation carries exactly that string where the field wants bytes.
+	// Decoding it the way it was encoded recovers the value.
+	if v.Kind() == reflect.String && targetType.Kind() == reflect.Slice &&
+		targetType.Elem().Kind() == reflect.Uint8 {
+		if data, err := json.Marshal(v.String()); err == nil {
+			decoded := reflect.New(targetType)
+			if err := json.Unmarshal(data, decoded.Interface()); err == nil {
+				return decoded.Elem()
+			}
+		}
+	}
+
 	if v.Type().ConvertibleTo(targetType) {
 		return v.Convert(targetType)
 	}
@@ -72,7 +87,11 @@ func isJSONShape(k reflect.Kind) bool {
 // isJSONDecodable reports whether a composite value can be rebuilt into k by
 // decoding JSON into it.
 func isJSONDecodable(k reflect.Kind) bool {
-	return k == reflect.Struct || k == reflect.Slice || k == reflect.Array || k == reflect.Map
+	// Pointer is included so that an `add` of a pointer field survives the
+	// wire: a *Meta arrives as map[string]any, and json.Unmarshal into a
+	// **Meta allocates the pointee the same way it would for a value.
+	return k == reflect.Struct || k == reflect.Slice || k == reflect.Array ||
+		k == reflect.Map || k == reflect.Pointer
 }
 
 // ConvertValueChecked is ConvertValue with a verdict: it reports an error

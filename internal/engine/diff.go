@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	icore "github.com/brunoga/deep/v5/internal/core"
 	"github.com/brunoga/deep/v5/internal/unsafe"
@@ -37,10 +38,39 @@ type Keyer interface {
 	CanonicalKey() any
 }
 
+type customDiffFunc = func(a, b reflect.Value, ctx *diffContext) (diffPatch, error)
+
 // Differ is a stateless engine for calculating patches between two values.
 type Differ struct {
-	config      *diffConfig
-	customDiffs map[reflect.Type]func(a, b reflect.Value, ctx *diffContext) (diffPatch, error)
+	config *diffConfig
+	// customDiffs is replaced wholesale on registration rather than mutated,
+	// so that a diff already running keeps reading a map nobody is writing.
+	// Registering used to write the map directly with no lock held at all,
+	// which raced with every concurrent Diff.
+	customDiffs atomic.Pointer[map[reflect.Type]customDiffFunc]
+}
+
+// loadCustomDiffs returns the current registry, or nil if nothing is
+// registered.
+func (d *Differ) loadCustomDiffs() map[reflect.Type]customDiffFunc {
+	if m := d.customDiffs.Load(); m != nil {
+		return *m
+	}
+	return nil
+}
+
+// registerCustomDiff installs fn for typ, publishing a fresh map so readers
+// are never looking at one being written.
+func (d *Differ) registerCustomDiff(typ reflect.Type, fn customDiffFunc) {
+	mu.Lock()
+	defer mu.Unlock()
+
+	next := make(map[reflect.Type]customDiffFunc, len(d.loadCustomDiffs())+1)
+	for k, v := range d.loadCustomDiffs() {
+		next[k] = v
+	}
+	next[typ] = fn
+	d.customDiffs.Store(&next)
 }
 
 // NewDiffer creates a new Differ with the given options.
@@ -55,10 +85,7 @@ func NewDiffer(opts ...DiffOption) *Differ {
 			config.ignoredPaths[icore.NormalizePath(string(u))] = true
 		}
 	}
-	return &Differ{
-		config:      config,
-		customDiffs: make(map[reflect.Type]func(a, b reflect.Value, ctx *diffContext) (diffPatch, error)),
-	}
+	return &Differ{config: config}
 }
 
 // diffContext holds transient state for a single Diff execution.
@@ -136,13 +163,9 @@ var (
 
 // RegisterCustomDiff registers a custom diff function for a specific type globally.
 func RegisterCustomDiff[T any](fn func(a, b T) (Patch[T], error)) {
-	mu.Lock()
-	d := defaultDiffer
-	mu.Unlock()
-
 	var t T
 	typ := reflect.TypeOf(t)
-	d.customDiffs[typ] = func(a, b reflect.Value, ctx *diffContext) (diffPatch, error) {
+	defaultDiffer.registerCustomDiff(typ, func(a, b reflect.Value, ctx *diffContext) (diffPatch, error) {
 		p, err := fn(a.Interface().(T), b.Interface().(T))
 		if err != nil {
 			return nil, err
@@ -158,7 +181,7 @@ func RegisterCustomDiff[T any](fn func(a, b T) (Patch[T], error)) {
 			oldValue: icore.ValueToInterface(a),
 			newValue: icore.ValueToInterface(b),
 		}, nil
-	}
+	})
 }
 
 func (d *Differ) detectMovesRecursive(v reflect.Value, ctx *diffContext) {
@@ -464,7 +487,7 @@ func (d *Differ) diffRecursive(a, b reflect.Value, atomic bool, ctx *diffContext
 		// Basic types equality handled by Kind switch below.
 	}
 
-	if fn, ok := d.customDiffs[a.Type()]; ok {
+	if fn, ok := d.loadCustomDiffs()[a.Type()]; ok {
 		return fn(a, b, ctx)
 	}
 
