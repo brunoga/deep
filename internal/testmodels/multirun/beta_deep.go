@@ -5,6 +5,7 @@ import (
 	"fmt"
 	deep "github.com/brunoga/deep/v5"
 	"github.com/brunoga/deep/v5/condition"
+	gen "github.com/brunoga/deep/v5/gen"
 	"log/slog"
 	"reflect"
 	"strings"
@@ -31,7 +32,7 @@ func (t *Beta) Patch(p deep.Patch[Beta], logger *slog.Logger) error {
 		if err != nil {
 			errs = append(errs, err)
 		} else if !handled {
-			if err := deep.ApplyOpReflection(t, op, logger); err != nil {
+			if err := gen.ApplyOpReflection(t, op, logger); err != nil {
 				errs = append(errs, err)
 			}
 		}
@@ -135,7 +136,8 @@ func (t *Beta) Diff(other *Beta) deep.Patch[Beta] {
 		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/m", Old: t.M, New: other.M})
 	} else {
 		if other.M != nil {
-			for k, v := range other.M {
+			for _, k := range gen.SortedKeys(other.M) {
+				v := other.M[k]
 				if t.M == nil {
 					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/m/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
 					continue
@@ -150,7 +152,8 @@ func (t *Beta) Diff(other *Beta) deep.Patch[Beta] {
 			}
 		}
 		if t.M != nil {
-			for k, v := range t.M {
+			for _, k := range gen.SortedKeys(t.M) {
+				v := t.M[k]
 				if _, ok := other.M[k]; !ok {
 					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: "/m/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: v})
 				}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	deep "github.com/brunoga/deep/v5"
 	"github.com/brunoga/deep/v5/condition"
+	gen "github.com/brunoga/deep/v5/gen"
 	"log/slog"
 	"reflect"
 )
@@ -30,7 +31,7 @@ func (t *Fleet) Patch(p deep.Patch[Fleet], logger *slog.Logger) error {
 		if err != nil {
 			errs = append(errs, err)
 		} else if !handled {
-			if err := deep.ApplyOpReflection(t, op, logger); err != nil {
+			if err := gen.ApplyOpReflection(t, op, logger); err != nil {
 				errs = append(errs, err)
 			}
 		}
@@ -117,7 +118,8 @@ func (t *Fleet) Diff(other *Fleet) deep.Patch[Fleet] {
 		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/devices", Old: t.Devices, New: other.Devices})
 	} else {
 		if other.Devices != nil {
-			for k, v := range other.Devices {
+			for _, k := range gen.SortedKeys(other.Devices) {
+				v := other.Devices[k]
 				if t.Devices == nil {
 					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/devices/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
 					continue
@@ -132,7 +134,8 @@ func (t *Fleet) Diff(other *Fleet) deep.Patch[Fleet] {
 			}
 		}
 		if t.Devices != nil {
-			for k, v := range t.Devices {
+			for _, k := range gen.SortedKeys(t.Devices) {
+				v := t.Devices[k]
 				if _, ok := other.Devices[k]; !ok {
 					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: "/devices/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: v})
 				}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	deep "github.com/brunoga/deep/v5"
 	"github.com/brunoga/deep/v5/condition"
+	gen "github.com/brunoga/deep/v5/gen"
 	"log/slog"
 	"reflect"
 	"regexp"
@@ -31,7 +32,7 @@ func (t *StrictUser) Patch(p deep.Patch[StrictUser], logger *slog.Logger) error 
 		if err != nil {
 			errs = append(errs, err)
 		} else if !handled {
-			if err := deep.ApplyOpReflection(t, op, logger); err != nil {
+			if err := gen.ApplyOpReflection(t, op, logger); err != nil {
 				errs = append(errs, err)
 			}
 		}

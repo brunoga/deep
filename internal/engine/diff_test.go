@@ -505,8 +505,8 @@ func TestRegisterCustomDiff(t *testing.T) {
 		*/
 		return &typedPatch[Custom]{
 			inner: &structPatch{
-				fields: map[string]diffPatch{
-					"Val": &valuePatch{newVal: reflect.ValueOf("CUSTOM:" + b.Val)},
+				fields: []structField{
+					{"Val", &valuePatch{newVal: reflect.ValueOf("CUSTOM:" + b.Val)}},
 				},
 			},
 		}, nil

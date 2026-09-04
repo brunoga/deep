@@ -6,6 +6,7 @@ import (
 	deep "github.com/brunoga/deep/v5"
 	"github.com/brunoga/deep/v5/condition"
 	crdt "github.com/brunoga/deep/v5/crdt"
+	gen "github.com/brunoga/deep/v5/gen"
 	"log/slog"
 	"reflect"
 	"regexp"
@@ -33,7 +34,7 @@ func (t *User) Patch(p deep.Patch[User], logger *slog.Logger) error {
 		if err != nil {
 			errs = append(errs, err)
 		} else if !handled {
-			if err := deep.ApplyOpReflection(t, op, logger); err != nil {
+			if err := gen.ApplyOpReflection(t, op, logger); err != nil {
 				errs = append(errs, err)
 			}
 		}
@@ -283,7 +284,8 @@ func (t *User) Diff(other *User) deep.Patch[User] {
 		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/score", Old: t.Score, New: other.Score})
 	} else {
 		if other.Score != nil {
-			for k, v := range other.Score {
+			for _, k := range gen.SortedKeys(other.Score) {
+				v := other.Score[k]
 				if t.Score == nil {
 					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/score/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
 					continue
@@ -298,7 +300,8 @@ func (t *User) Diff(other *User) deep.Patch[User] {
 			}
 		}
 		if t.Score != nil {
-			for k, v := range t.Score {
+			for _, k := range gen.SortedKeys(t.Score) {
+				v := t.Score[k]
 				if _, ok := other.Score[k]; !ok {
 					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: "/score/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: v})
 				}
@@ -631,7 +634,7 @@ func (t *Detail) Patch(p deep.Patch[Detail], logger *slog.Logger) error {
 		if err != nil {
 			errs = append(errs, err)
 		} else if !handled {
-			if err := deep.ApplyOpReflection(t, op, logger); err != nil {
+			if err := gen.ApplyOpReflection(t, op, logger); err != nil {
 				errs = append(errs, err)
 			}
 		}

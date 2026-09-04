@@ -287,11 +287,11 @@ type customTestStruct struct {
 func TestCustomDiffPatch_ToJSONPatch(t *testing.T) {
 	patch := &typedPatch[customTestStruct]{
 		inner: &structPatch{
-			fields: map[string]diffPatch{
-				"V": &valuePatch{
+			fields: []structField{
+				{"V", &valuePatch{
 					oldVal: reflect.ValueOf(1),
 					newVal: reflect.ValueOf(2),
-				},
+				}},
 			},
 		},
 	}

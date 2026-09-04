@@ -373,9 +373,25 @@ func ParseJSONPatch[T any](data []byte) (Patch[T], error) {
 	return res, nil
 }
 
+// NewPatch returns a Builder for constructing a Patch[T].
+//
+//	p := deep.NewPatch[Listing]().
+//		With(deep.Set(pricePath, 2499).If(deep.Eq(pricePath, 1999))).
+//		Build()
+//
+// The builder produces a standalone patch, not a live view of anything.
+func NewPatch[T any]() *Builder[T] {
+	return &Builder[T]{}
+}
+
 // Edit returns a Builder for constructing a Patch[T]. The target argument is
 // used only for type inference and is not stored; the builder produces a
 // standalone Patch, not a live view of the target.
+//
+// Deprecated: use [NewPatch], which infers T from the type argument and does
+// not need a value to point at. Edit's parameter exists only so that T could be
+// inferred from a variable, which meant writing deep.Edit[Listing](nil) when
+// there was no variable to hand.
 func Edit[T any](_ *T) *Builder[T] {
 	return &Builder[T]{}
 }

@@ -33,7 +33,9 @@ func TestPatch_ReverseFormat_Exhaustive(t *testing.T) {
 	})
 	// structPatch
 	t.Run("structPatch", func(t *testing.T) {
-		p := &structPatch{fields: map[string]diffPatch{"A": &valuePatch{}}}
+		p := &structPatch{fields: []structField{
+			{"A", &valuePatch{}},
+		}}
 		p.reverse()
 		p.format(0)
 		p.toJSONPatch("/p")
@@ -116,7 +118,9 @@ func TestPatch_MiscCoverage(t *testing.T) {
 
 	// structPatch format/toJSONPatch
 	t.Run("structPatch", func(t *testing.T) {
-		p := &structPatch{fields: map[string]diffPatch{"A": &valuePatch{newVal: reflect.ValueOf(1)}}}
+		p := &structPatch{fields: []structField{
+			{"A", &valuePatch{newVal: reflect.ValueOf(1)}},
+		}}
 		p.format(0)
 		p.toJSONPatch("/path")
 	})
@@ -166,9 +170,9 @@ func TestDependencyResolution_Swap(t *testing.T) {
 	// Since A and B are both overwritten, deletion is implicit.
 
 	patch := &structPatch{
-		fields: map[string]diffPatch{
-			"A": &copyPatch{from: "/B"}, // A reads B
-			"B": &copyPatch{from: "/A"}, // B reads A
+		fields: []structField{
+			{"A", &copyPatch{from: "/B"}}, // A reads B
+			{"B", &copyPatch{from: "/A"}}, // B reads A
 		},
 	}
 
@@ -208,10 +212,10 @@ func TestDependencyResolution_Chain(t *testing.T) {
 	s := S{A: 1, B: 2, C: 3}
 
 	patch := &structPatch{
-		fields: map[string]diffPatch{
-			"A": &copyPatch{from: "/C"},
-			"B": &copyPatch{from: "/A"},
-			"C": &copyPatch{from: "/B"},
+		fields: []structField{
+			{"A", &copyPatch{from: "/C"}},
+			{"B", &copyPatch{from: "/A"}},
+			{"C", &copyPatch{from: "/B"}},
 		},
 	}
 	// Expected: A=3, B=1, C=2
@@ -242,8 +246,8 @@ func TestDependencyResolution_Move(t *testing.T) {
 	// Expected: A=2, B=0 (deleted)
 
 	patch := &structPatch{
-		fields: map[string]diffPatch{
-			"A": &movePatch{from: "/B", path: "/A"},
+		fields: []structField{
+			{"A", &movePatch{from: "/B", path: "/A"}},
 		},
 	}
 
@@ -270,9 +274,9 @@ func TestDependencyResolution_MoveSwap(t *testing.T) {
 	// Expected: A=2, B=1.
 
 	patch := &structPatch{
-		fields: map[string]diffPatch{
-			"A": &movePatch{from: "/B", path: "/A"},
-			"B": &movePatch{from: "/A", path: "/B"},
+		fields: []structField{
+			{"A", &movePatch{from: "/B", path: "/A"}},
+			{"B", &movePatch{from: "/A", path: "/B"}},
 		},
 	}
 
@@ -314,13 +318,13 @@ func TestDependencyResolution_Overlap(t *testing.T) {
 	// Read before Write -> A must run before B.
 
 	patch := &structPatch{
-		fields: map[string]diffPatch{
-			"A": &structPatch{
-				fields: map[string]diffPatch{
-					"X": &copyPatch{from: "/B/X", path: "/A/X"},
+		fields: []structField{
+			{"A", &structPatch{
+				fields: []structField{
+					{"X", &copyPatch{from: "/B/X", path: "/A/X"}},
 				},
-			},
-			"B": &valuePatch{oldVal: reflect.ValueOf(s.B)}, // Remove B
+			}},
+			{"B", &valuePatch{oldVal: reflect.ValueOf(s.B)}}, // Remove B
 		},
 	}
 

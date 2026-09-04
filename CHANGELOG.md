@@ -6,6 +6,80 @@ All notable changes to this project are documented here, newest first.
 > version's entry before tagging, so the tag, the GitHub release notes, and this
 > file always agree.
 
+## v5.14.0
+
+This is the additive half of the road to v6: everything new arrives alongside
+what it replaces, and nothing is removed. What v6 will do is delete the things
+marked deprecated here.
+
+### Added
+
+- **`deep/gen`** holds the bookkeeping that generated code threads through its
+  methods — `CloneMemo`, `VisitSet`, `DiffMemo`, `CloneShared`,
+  `ApplyOpReflection`, `SortedKeys`. None of it was ever meant to be called by
+  hand, but all of it had to be exported, so it sat in the deep package next to
+  `Diff` and `Clone` making the documentation harder to read than the library
+  is. The deep package keeps aliases, so generated code written against an
+  earlier version still compiles; regenerating picks up the new names.
+
+- **Presence.** `crdt.Awareness[T]` carries what the peers editing alongside
+  you are doing right now — cursor, selection, name, colour — deliberately
+  outside the document, because a cursor position is not an edit and should not
+  merge into the text, survive a reload, or appear in the history. State is
+  last-write-wins per peer, so updates may arrive twice or out of order; a peer
+  that goes quiet is dropped after a timeout with no coordination at all, which
+  is safe precisely because presence is ephemeral — one dropped too eagerly
+  reappears with its next update. See `examples/crdt_presence`.
+
+- **A compact wire format for CRDT sync.** `crdt.Update` and `crdt.StateVector`
+  implement `encoding.BinaryMarshaler` and `BinaryUnmarshaler`, so gob and
+  anything else that looks for those uses it without being asked.
+
+  An update is mostly identifiers, and identifiers are mostly repetition: every
+  run carries a clock, every clock carries the node id that issued it, and
+  neighbouring wall times differ by microseconds. JSON has no way to say "the
+  same node as before". This does: node ids are interned into a table and
+  referred to by index, wall times are stored as deltas.
+
+  | Runs | JSON | Binary | |
+  | ---: | ---: | ---: | ---: |
+  | 10 | 1,336 B | 201 B | 6.6× |
+  | 100 | 12,839 B | 1,480 B | 8.7× |
+  | 1,000 | 129,150 B | 14,605 B | 8.8× |
+
+- `NewPatch[T]()` replaces `Edit(nil)`. `Edit` took a pointer it never used, so
+  that T could be inferred from a variable — which meant writing
+  `deep.Edit[Listing](nil)` when there was no variable to point at.
+
+### Changed
+
+- **A diff now produces the same operations in the same order every time.** Go
+  randomises map iteration, and struct fields were collected in a map, so two
+  runs of one diff could disagree — which makes a patch impossible to log,
+  cache, compare or sign. Struct fields are now kept in declaration order and
+  map keys are visited in sorted order.
+
+  Sorting costs the generated diff about 20%. It is the one benchmark that went
+  backwards, and it buys a guarantee worth more than the nanoseconds.
+
+- **The reflection diff is about 25% faster** and allocates 20% less: the path
+  string for move detection was being built for every value visited, then handed
+  to a function that returns immediately unless detection is on — which it is
+  not by default. Struct field patches are a slice rather than a map, which
+  removes an allocation per struct.
+
+### Deprecated
+
+Each of these keeps working and will be removed in v6.
+
+- `deep.CloneMemo`, `deep.VisitSet`, `deep.DiffMemo`, `deep.NewCloneMemo`,
+  `deep.NewVisitSet`, `deep.NewDiffMemo`, `deep.CloneShared`,
+  `deep.ApplyOpReflection` — use the `deep/gen` equivalents. Regenerating
+  updates the generated code that refers to them.
+- `deep.Edit` — use `deep.NewPatch`.
+- `deep.Status` — use `deep.OpStatus`. It existed only so an embedded field
+  would be named Status; that field is now declared explicitly.
+
 ## v5.13.0
 
 ### Added

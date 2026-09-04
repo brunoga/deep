@@ -142,6 +142,7 @@ func (f FieldInfo) Generic() bool { return f.Type == "" || f.Opaque() }
 type Generator struct {
 	pkgName   string
 	pkgPrefix string // "deep." for non-deep packages, "" when generating inside the deep package
+	genPrefix string // "gen." — the package holding the generated-code bookkeeping
 	buf       bytes.Buffer
 	body      bytes.Buffer      // everything below the import block
 	typeKeys  map[string]string // typeName -> keyFieldName (from deep:"key" tag)
@@ -159,6 +160,7 @@ type headerData struct {
 	NeedsCondition bool
 	NeedsDeep      bool
 	NeedsCrdt      bool
+	NeedsGen       bool
 	Extra          []importSpec
 }
 
@@ -171,7 +173,8 @@ type importSpec struct {
 
 type typeData struct {
 	TypeName string
-	P        string // package prefix
+	P        string // package prefix for deep
+	G        string // package prefix for the generated-code bookkeeping
 	Fields   []FieldInfo
 	TypeKeys map[string]string
 	// Shared is true when values of the type can hold two references to the
@@ -376,8 +379,8 @@ func delegateCase(f FieldInfo, p string) string {
 // the enclosing type threads a DiffMemo; its diffShared emits absolute paths (a
 // variable `at` holds the type's own path), so every path this fragment builds
 // is prefixed with it on the way out — see diffFieldPaths.
-func diffFieldCode(f FieldInfo, p string, typeKeys map[string]string, shared bool) string {
-	code := diffFieldBody(f, p, typeKeys)
+func diffFieldCode(f FieldInfo, p, g string, typeKeys map[string]string, shared bool) string {
+	code := diffFieldBody(f, p, g, typeKeys)
 	if !shared {
 		return code
 	}
@@ -398,7 +401,7 @@ func diffFieldPaths(code string) string {
 }
 
 // diffFieldBody renders the diff fragment with paths relative to the type.
-func diffFieldBody(f FieldInfo, p string, typeKeys map[string]string) string {
+func diffFieldBody(f FieldInfo, p, g string, typeKeys map[string]string) string {
 	var b strings.Builder
 	if f.Ignore {
 		return ""
@@ -451,7 +454,11 @@ func diffFieldBody(f FieldInfo, p string, typeKeys map[string]string) string {
 			fmt.Fprintf(&b, "\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpReplace, Path: \"/%s\", Old: t.%s, New: other.%s})\n", p, p, f.JSONName, f.Name, f.Name)
 			b.WriteString("\t} else {\n")
 			fmt.Fprintf(&b, "\tif other.%s != nil {\n", f.Name)
-			fmt.Fprintf(&b, "\t\tfor k, v := range other.%s {\n", f.Name)
+			// Sorted rather than ranged over: Go randomises map iteration, and
+			// a patch whose operation order varies between runs cannot be
+			// logged, cached, compared or signed.
+			fmt.Fprintf(&b, "\t\tfor _, k := range %sSortedKeys(other.%s) {\n", g, f.Name)
+			fmt.Fprintf(&b, "\t\t\tv := other.%s[k]\n", f.Name)
 			fmt.Fprintf(&b, "\t\t\tif t.%s == nil {\n", f.Name)
 			fmt.Fprintf(&b, "\t\t\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpReplace, Path: \"/%s/\" + %sEscapePathKey(fmt.Sprintf(\"%%v\", k)), New: v})\n", p, p, f.JSONName, p)
 			b.WriteString("\t\t\t\tcontinue\n\t\t\t}\n")
@@ -487,7 +494,8 @@ func diffFieldBody(f FieldInfo, p string, typeKeys map[string]string) string {
 				b.WriteString("\t\t\t}\n\t\t}\n\t}\n")
 			}
 			fmt.Fprintf(&b, "\tif t.%s != nil {\n", f.Name)
-			fmt.Fprintf(&b, "\t\tfor k, v := range t.%s {\n", f.Name)
+			fmt.Fprintf(&b, "\t\tfor _, k := range %sSortedKeys(t.%s) {\n", g, f.Name)
+			fmt.Fprintf(&b, "\t\t\tv := t.%s[k]\n", f.Name)
 			fmt.Fprintf(&b, "\t\t\tif _, ok := other.%s[k]; !ok {\n", f.Name)
 			fmt.Fprintf(&b, "\t\t\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpRemove, Path: \"/%s/\" + %sEscapePathKey(fmt.Sprintf(\"%%v\", k)), Old: v})\n", p, p, f.JSONName, p)
 			b.WriteString("\t\t\t}\n\t\t}\n\t}\n")
@@ -778,9 +786,9 @@ func isComparableArray(t string) bool {
 // when the enclosing type threads a CloneMemo; then every pointer the field
 // holds goes through the memo, so a value reached by two routes is copied once
 // and both routes in the result point at that one copy. Fields the generator
-// cannot copy itself are handed to deep.CloneShared, which runs the reflection
+// cannot copy itself are handed to gen.CloneShared, which runs the reflection
 // engine against the same memo — one identity space across both.
-func copyFieldPost(f FieldInfo, p string, shared bool) string {
+func copyFieldPost(f FieldInfo, p, g string, shared bool) string {
 	var b strings.Builder
 	if f.Ignore {
 		return ""
@@ -789,7 +797,7 @@ func copyFieldPost(f FieldInfo, p string, shared bool) string {
 	// see inside.
 	genericClone := func(arg string) string {
 		if shared {
-			return fmt.Sprintf("%sCloneShared(%s, memo)", p, arg)
+			return fmt.Sprintf("%sCloneShared(%s, memo)", g, arg)
 		}
 		return fmt.Sprintf("%sClone(%s)", p, arg)
 	}
@@ -977,6 +985,9 @@ import (
 {{- if .NeedsCrdt}}
 	crdt "github.com/brunoga/deep/v5/crdt"
 {{- end}}
+{{- if .NeedsGen}}
+	gen "github.com/brunoga/deep/v5/gen"
+{{- end}}
 {{- range .Extra}}
 	{{if .Alias}}{{.Alias}} {{end}}"{{.Path}}"
 {{- end}}
@@ -1003,7 +1014,7 @@ func (t *{{.TypeName}}) Patch(p {{.P}}Patch[{{.TypeName}}], logger *slog.Logger)
 		if err != nil {
 			errs = append(errs, err)
 		} else if !handled {
-			if err := {{.P}}ApplyOpReflection(t, op, logger); err != nil {
+			if err := {{.G}}ApplyOpReflection(t, op, logger); err != nil {
 				errs = append(errs, err)
 			}
 		}
@@ -1073,7 +1084,7 @@ var diffTmpl = template.Must(template.New("diff").Funcs(tmplFuncs).Parse(
 // linear where listing every route could be exponential, and applying it
 // rebuilds the sharing whatever the target looked like before.
 func (t *{{.TypeName}}) Diff(other *{{.TypeName}}) {{.P}}Patch[{{.TypeName}}] {
-	seen := {{.P}}NewDiffMemo()
+	seen := {{.G}}NewDiffMemo()
 	defer seen.Release()
 	p := t.diffShared(other, seen, "")
 	p.Operations = append(p.Operations, seen.AliasOperations()...)
@@ -1082,12 +1093,12 @@ func (t *{{.TypeName}}) Diff(other *{{.TypeName}}) {{.P}}Patch[{{.TypeName}}] {
 
 // diffShared is Diff threaded with the pairs already visited and the absolute
 // path at which t sits.
-func (t *{{.TypeName}}) diffShared(other *{{.TypeName}}, seen *{{.P}}DiffMemo, at string) {{.P}}Patch[{{.TypeName}}] {
+func (t *{{.TypeName}}) diffShared(other *{{.TypeName}}, seen *{{.G}}DiffMemo, at string) {{.P}}Patch[{{.TypeName}}] {
 	p := {{.P}}Patch[{{.TypeName}}]{}
 	if t == other || !seen.Enter(t, other, at) {
 		return p
 	}
-{{range .Fields}}{{diffFieldCode . $.P $.TypeKeys $.Shared}}{{end}}
+{{range .Fields}}{{diffFieldCode . $.P $.G $.TypeKeys $.Shared}}{{end}}
 	seen.Leave(t, other, len(p.Operations))
 	return p
 }
@@ -1095,7 +1106,7 @@ func (t *{{.TypeName}}) diffShared(other *{{.TypeName}}, seen *{{.P}}DiffMemo, a
 {{else}}// Diff compares t with other and returns a Patch.
 func (t *{{.TypeName}}) Diff(other *{{.TypeName}}) {{.P}}Patch[{{.TypeName}}] {
 	p := {{.P}}Patch[{{.TypeName}}]{}
-{{range .Fields}}{{diffFieldCode . $.P $.TypeKeys $.Shared}}{{end}}
+{{range .Fields}}{{diffFieldCode . $.P $.G $.TypeKeys $.Shared}}{{end}}
 	return p
 }
 
@@ -1145,13 +1156,13 @@ var equalTmpl = template.Must(template.New("equal").Funcs(tmplFuncs).Parse(
 // values is compared once however many routes lead to it, and a cycle is
 // followed only until it repeats.
 func (t *{{.TypeName}}) Equal(other *{{.TypeName}}) bool {
-	seen := {{.P}}NewVisitSet()
+	seen := {{.G}}NewVisitSet()
 	defer seen.Release()
 	return t.equalShared(other, seen)
 }
 
 // equalShared is Equal threaded with the set of pairs already under comparison.
-func (t *{{.TypeName}}) equalShared(other *{{.TypeName}}, seen *{{.P}}VisitSet) bool {
+func (t *{{.TypeName}}) equalShared(other *{{.TypeName}}, seen *{{.G}}VisitSet) bool {
 	if t == other {
 		return true
 	}
@@ -1181,13 +1192,13 @@ var copyTmpl = template.Must(template.New("copy").Funcs(tmplFuncs).Parse(
 // reference to it in the result points at that one copy, and a reference cycle
 // is rebuilt rather than followed forever.
 func (t *{{.TypeName}}) Clone() *{{.TypeName}} {
-	memo := {{.P}}NewCloneMemo()
+	memo := {{.G}}NewCloneMemo()
 	defer memo.Release()
 	return t.cloneShared(memo)
 }
 
 // cloneShared is Clone threaded with the memo of copies already made.
-func (t *{{.TypeName}}) cloneShared(memo *{{.P}}CloneMemo) *{{.TypeName}} {
+func (t *{{.TypeName}}) cloneShared(memo *{{.G}}CloneMemo) *{{.TypeName}} {
 	if t == nil {
 		return nil
 	}
@@ -1202,7 +1213,7 @@ func (t *{{.TypeName}}) Clone() *{{.TypeName}} {
 {{if .Shared}}	// Recorded before the fields are copied, so a reference back to t from
 	// anywhere below resolves to res instead of starting the copy again.
 	memo.Store(t, res)
-{{end}}{{range .Fields}}{{if not .Ignore}}{{copyFieldPost . $.P $.Shared}}{{end}}{{end -}}
+{{end}}{{range .Fields}}{{if not .Ignore}}{{copyFieldPost . $.P $.G $.Shared}}{{end}}{{end -}}
 	return res
 }
 `))
@@ -1222,6 +1233,7 @@ func (g *Generator) writeHeader(body string) {
 		NeedsCondition: usesQualifier(body, "condition"),
 		NeedsDeep:      g.pkgName != "deep" && usesQualifier(body, "deep"),
 		NeedsCrdt:      g.pkgName != "deep" && usesQualifier(body, "crdt"),
+		NeedsGen:       usesQualifier(body, "gen"),
 		Extra:          g.extraImports(body),
 	}))
 }
@@ -1290,9 +1302,16 @@ func (g *Generator) writeType(typeName string, fields []FieldInfo) {
 	if g.pkgName != "deep" {
 		g.pkgPrefix = "deep."
 	}
+	// The bookkeeping types live in their own package, which the deep package
+	// itself also imports rather than declaring.
+	g.genPrefix = "gen."
+	if g.pkgName == "gen" {
+		g.genPrefix = ""
+	}
 	d := typeData{
 		TypeName: typeName,
 		P:        g.pkgPrefix,
+		G:        g.genPrefix,
 		Fields:   fields,
 		TypeKeys: g.typeKeys,
 		Shared:   g.idx.shared[typeName],

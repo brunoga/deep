@@ -5,6 +5,7 @@ import (
 	"fmt"
 	deep "github.com/brunoga/deep/v5"
 	"github.com/brunoga/deep/v5/condition"
+	gen "github.com/brunoga/deep/v5/gen"
 	"log/slog"
 	"reflect"
 	"regexp"
@@ -32,7 +33,7 @@ func (t *GameWorld) Patch(p deep.Patch[GameWorld], logger *slog.Logger) error {
 		if err != nil {
 			errs = append(errs, err)
 		} else if !handled {
-			if err := deep.ApplyOpReflection(t, op, logger); err != nil {
+			if err := gen.ApplyOpReflection(t, op, logger); err != nil {
 				errs = append(errs, err)
 			}
 		}
@@ -159,7 +160,8 @@ func (t *GameWorld) Diff(other *GameWorld) deep.Patch[GameWorld] {
 		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/players", Old: t.Players, New: other.Players})
 	} else {
 		if other.Players != nil {
-			for k, v := range other.Players {
+			for _, k := range gen.SortedKeys(other.Players) {
+				v := other.Players[k]
 				if t.Players == nil {
 					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/players/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
 					continue
@@ -174,7 +176,8 @@ func (t *GameWorld) Diff(other *GameWorld) deep.Patch[GameWorld] {
 			}
 		}
 		if t.Players != nil {
-			for k, v := range t.Players {
+			for _, k := range gen.SortedKeys(t.Players) {
+				v := t.Players[k]
 				if _, ok := other.Players[k]; !ok {
 					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: "/players/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: v})
 				}
@@ -345,7 +348,7 @@ func (t *Player) Patch(p deep.Patch[Player], logger *slog.Logger) error {
 		if err != nil {
 			errs = append(errs, err)
 		} else if !handled {
-			if err := deep.ApplyOpReflection(t, op, logger); err != nil {
+			if err := gen.ApplyOpReflection(t, op, logger); err != nil {
 				errs = append(errs, err)
 			}
 		}

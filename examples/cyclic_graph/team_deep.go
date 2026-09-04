@@ -5,6 +5,7 @@ import (
 	"fmt"
 	deep "github.com/brunoga/deep/v5"
 	"github.com/brunoga/deep/v5/condition"
+	gen "github.com/brunoga/deep/v5/gen"
 	"log/slog"
 	"reflect"
 	"regexp"
@@ -32,7 +33,7 @@ func (t *Person) Patch(p deep.Patch[Person], logger *slog.Logger) error {
 		if err != nil {
 			errs = append(errs, err)
 		} else if !handled {
-			if err := deep.ApplyOpReflection(t, op, logger); err != nil {
+			if err := gen.ApplyOpReflection(t, op, logger); err != nil {
 				errs = append(errs, err)
 			}
 		}
@@ -171,7 +172,7 @@ func (t *Person) applyOperation(op deep.Operation, logger *slog.Logger) (bool, e
 // linear where listing every route could be exponential, and applying it
 // rebuilds the sharing whatever the target looked like before.
 func (t *Person) Diff(other *Person) deep.Patch[Person] {
-	seen := deep.NewDiffMemo()
+	seen := gen.NewDiffMemo()
 	defer seen.Release()
 	p := t.diffShared(other, seen, "")
 	p.Operations = append(p.Operations, seen.AliasOperations()...)
@@ -180,7 +181,7 @@ func (t *Person) Diff(other *Person) deep.Patch[Person] {
 
 // diffShared is Diff threaded with the pairs already visited and the absolute
 // path at which t sits.
-func (t *Person) diffShared(other *Person, seen *deep.DiffMemo, at string) deep.Patch[Person] {
+func (t *Person) diffShared(other *Person, seen *gen.DiffMemo, at string) deep.Patch[Person] {
 	p := deep.Patch[Person]{}
 	if t == other || !seen.Enter(t, other, at) {
 		return p
@@ -304,13 +305,13 @@ func (t *Person) evaluateCondition(c condition.Condition) (bool, error) {
 // values is compared once however many routes lead to it, and a cycle is
 // followed only until it repeats.
 func (t *Person) Equal(other *Person) bool {
-	seen := deep.NewVisitSet()
+	seen := gen.NewVisitSet()
 	defer seen.Release()
 	return t.equalShared(other, seen)
 }
 
 // equalShared is Equal threaded with the set of pairs already under comparison.
-func (t *Person) equalShared(other *Person, seen *deep.VisitSet) bool {
+func (t *Person) equalShared(other *Person, seen *gen.VisitSet) bool {
 	if t == other {
 		return true
 	}
@@ -349,13 +350,13 @@ func (t *Person) equalShared(other *Person, seen *deep.VisitSet) bool {
 // reference to it in the result points at that one copy, and a reference cycle
 // is rebuilt rather than followed forever.
 func (t *Person) Clone() *Person {
-	memo := deep.NewCloneMemo()
+	memo := gen.NewCloneMemo()
 	defer memo.Release()
 	return t.cloneShared(memo)
 }
 
 // cloneShared is Clone threaded with the memo of copies already made.
-func (t *Person) cloneShared(memo *deep.CloneMemo) *Person {
+func (t *Person) cloneShared(memo *gen.CloneMemo) *Person {
 	if t == nil {
 		return nil
 	}
@@ -398,7 +399,7 @@ func (t *Team) Patch(p deep.Patch[Team], logger *slog.Logger) error {
 		if err != nil {
 			errs = append(errs, err)
 		} else if !handled {
-			if err := deep.ApplyOpReflection(t, op, logger); err != nil {
+			if err := gen.ApplyOpReflection(t, op, logger); err != nil {
 				errs = append(errs, err)
 			}
 		}
@@ -572,7 +573,7 @@ func (t *Team) applyOperation(op deep.Operation, logger *slog.Logger) (bool, err
 // linear where listing every route could be exponential, and applying it
 // rebuilds the sharing whatever the target looked like before.
 func (t *Team) Diff(other *Team) deep.Patch[Team] {
-	seen := deep.NewDiffMemo()
+	seen := gen.NewDiffMemo()
 	defer seen.Release()
 	p := t.diffShared(other, seen, "")
 	p.Operations = append(p.Operations, seen.AliasOperations()...)
@@ -581,7 +582,7 @@ func (t *Team) Diff(other *Team) deep.Patch[Team] {
 
 // diffShared is Diff threaded with the pairs already visited and the absolute
 // path at which t sits.
-func (t *Team) diffShared(other *Team, seen *deep.DiffMemo, at string) deep.Patch[Team] {
+func (t *Team) diffShared(other *Team, seen *gen.DiffMemo, at string) deep.Patch[Team] {
 	p := deep.Patch[Team]{}
 	if t == other || !seen.Enter(t, other, at) {
 		return p
@@ -605,7 +606,8 @@ func (t *Team) diffShared(other *Team, seen *deep.DiffMemo, at string) deep.Patc
 		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/byName", Old: t.ByName, New: other.ByName})
 	} else {
 		if other.ByName != nil {
-			for k, v := range other.ByName {
+			for _, k := range gen.SortedKeys(other.ByName) {
+				v := other.ByName[k]
 				if t.ByName == nil {
 					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/byName/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
 					continue
@@ -623,7 +625,8 @@ func (t *Team) diffShared(other *Team, seen *deep.DiffMemo, at string) deep.Patc
 			}
 		}
 		if t.ByName != nil {
-			for k, v := range t.ByName {
+			for _, k := range gen.SortedKeys(t.ByName) {
+				v := t.ByName[k]
 				if _, ok := other.ByName[k]; !ok {
 					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: at + "/byName/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: v})
 				}
@@ -738,13 +741,13 @@ func (t *Team) evaluateCondition(c condition.Condition) (bool, error) {
 // values is compared once however many routes lead to it, and a cycle is
 // followed only until it repeats.
 func (t *Team) Equal(other *Team) bool {
-	seen := deep.NewVisitSet()
+	seen := gen.NewVisitSet()
 	defer seen.Release()
 	return t.equalShared(other, seen)
 }
 
 // equalShared is Equal threaded with the set of pairs already under comparison.
-func (t *Team) equalShared(other *Team, seen *deep.VisitSet) bool {
+func (t *Team) equalShared(other *Team, seen *gen.VisitSet) bool {
 	if t == other {
 		return true
 	}
@@ -803,13 +806,13 @@ func (t *Team) equalShared(other *Team, seen *deep.VisitSet) bool {
 // reference to it in the result points at that one copy, and a reference cycle
 // is rebuilt rather than followed forever.
 func (t *Team) Clone() *Team {
-	memo := deep.NewCloneMemo()
+	memo := gen.NewCloneMemo()
 	defer memo.Release()
 	return t.cloneShared(memo)
 }
 
 // cloneShared is Clone threaded with the memo of copies already made.
-func (t *Team) cloneShared(memo *deep.CloneMemo) *Team {
+func (t *Team) cloneShared(memo *gen.CloneMemo) *Team {
 	if t == nil {
 		return nil
 	}

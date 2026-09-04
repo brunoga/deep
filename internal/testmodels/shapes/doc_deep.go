@@ -5,6 +5,7 @@ import (
 	"fmt"
 	deep "github.com/brunoga/deep/v5"
 	"github.com/brunoga/deep/v5/condition"
+	gen "github.com/brunoga/deep/v5/gen"
 	"log/slog"
 	"reflect"
 	"regexp"
@@ -32,7 +33,7 @@ func (t *Meta) Patch(p deep.Patch[Meta], logger *slog.Logger) error {
 		if err != nil {
 			errs = append(errs, err)
 		} else if !handled {
-			if err := deep.ApplyOpReflection(t, op, logger); err != nil {
+			if err := gen.ApplyOpReflection(t, op, logger); err != nil {
 				errs = append(errs, err)
 			}
 		}
@@ -343,7 +344,7 @@ func (t *Entry) Patch(p deep.Patch[Entry], logger *slog.Logger) error {
 		if err != nil {
 			errs = append(errs, err)
 		} else if !handled {
-			if err := deep.ApplyOpReflection(t, op, logger); err != nil {
+			if err := gen.ApplyOpReflection(t, op, logger); err != nil {
 				errs = append(errs, err)
 			}
 		}
@@ -654,7 +655,7 @@ func (t *Payload) Patch(p deep.Patch[Payload], logger *slog.Logger) error {
 		if err != nil {
 			errs = append(errs, err)
 		} else if !handled {
-			if err := deep.ApplyOpReflection(t, op, logger); err != nil {
+			if err := gen.ApplyOpReflection(t, op, logger); err != nil {
 				errs = append(errs, err)
 			}
 		}
@@ -910,7 +911,7 @@ func (t *Doc) Patch(p deep.Patch[Doc], logger *slog.Logger) error {
 		if err != nil {
 			errs = append(errs, err)
 		} else if !handled {
-			if err := deep.ApplyOpReflection(t, op, logger); err != nil {
+			if err := gen.ApplyOpReflection(t, op, logger); err != nil {
 				errs = append(errs, err)
 			}
 		}
@@ -1198,7 +1199,7 @@ func (t *Doc) applyOperation(op deep.Operation, logger *slog.Logger) (bool, erro
 // linear where listing every route could be exponential, and applying it
 // rebuilds the sharing whatever the target looked like before.
 func (t *Doc) Diff(other *Doc) deep.Patch[Doc] {
-	seen := deep.NewDiffMemo()
+	seen := gen.NewDiffMemo()
 	defer seen.Release()
 	p := t.diffShared(other, seen, "")
 	p.Operations = append(p.Operations, seen.AliasOperations()...)
@@ -1207,7 +1208,7 @@ func (t *Doc) Diff(other *Doc) deep.Patch[Doc] {
 
 // diffShared is Diff threaded with the pairs already visited and the absolute
 // path at which t sits.
-func (t *Doc) diffShared(other *Doc, seen *deep.DiffMemo, at string) deep.Patch[Doc] {
+func (t *Doc) diffShared(other *Doc, seen *gen.DiffMemo, at string) deep.Patch[Doc] {
 	p := deep.Patch[Doc]{}
 	if t == other || !seen.Enter(t, other, at) {
 		return p
@@ -1261,7 +1262,8 @@ func (t *Doc) diffShared(other *Doc, seen *deep.DiffMemo, at string) deep.Patch[
 		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/nested", Old: t.Nested, New: other.Nested})
 	} else {
 		if other.Nested != nil {
-			for k, v := range other.Nested {
+			for _, k := range gen.SortedKeys(other.Nested) {
+				v := other.Nested[k]
 				if t.Nested == nil {
 					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/nested/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
 					continue
@@ -1276,7 +1278,8 @@ func (t *Doc) diffShared(other *Doc, seen *deep.DiffMemo, at string) deep.Patch[
 			}
 		}
 		if t.Nested != nil {
-			for k, v := range t.Nested {
+			for _, k := range gen.SortedKeys(t.Nested) {
+				v := t.Nested[k]
 				if _, ok := other.Nested[k]; !ok {
 					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: at + "/nested/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: v})
 				}
@@ -1287,7 +1290,8 @@ func (t *Doc) diffShared(other *Doc, seen *deep.DiffMemo, at string) deep.Patch[
 		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/stages", Old: t.Stages, New: other.Stages})
 	} else {
 		if other.Stages != nil {
-			for k, v := range other.Stages {
+			for _, k := range gen.SortedKeys(other.Stages) {
+				v := other.Stages[k]
 				if t.Stages == nil {
 					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/stages/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
 					continue
@@ -1302,7 +1306,8 @@ func (t *Doc) diffShared(other *Doc, seen *deep.DiffMemo, at string) deep.Patch[
 			}
 		}
 		if t.Stages != nil {
-			for k, v := range t.Stages {
+			for _, k := range gen.SortedKeys(t.Stages) {
+				v := t.Stages[k]
 				if _, ok := other.Stages[k]; !ok {
 					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: at + "/stages/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: v})
 				}
@@ -1331,7 +1336,8 @@ func (t *Doc) diffShared(other *Doc, seen *deep.DiffMemo, at string) deep.Patch[
 		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/scores", Old: t.Scores, New: other.Scores})
 	} else {
 		if other.Scores != nil {
-			for k, v := range other.Scores {
+			for _, k := range gen.SortedKeys(other.Scores) {
+				v := other.Scores[k]
 				if t.Scores == nil {
 					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/scores/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
 					continue
@@ -1346,7 +1352,8 @@ func (t *Doc) diffShared(other *Doc, seen *deep.DiffMemo, at string) deep.Patch[
 			}
 		}
 		if t.Scores != nil {
-			for k, v := range t.Scores {
+			for _, k := range gen.SortedKeys(t.Scores) {
+				v := t.Scores[k]
 				if _, ok := other.Scores[k]; !ok {
 					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: at + "/scores/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: v})
 				}
@@ -1456,13 +1463,13 @@ func (t *Doc) evaluateCondition(c condition.Condition) (bool, error) {
 // values is compared once however many routes lead to it, and a cycle is
 // followed only until it repeats.
 func (t *Doc) Equal(other *Doc) bool {
-	seen := deep.NewVisitSet()
+	seen := gen.NewVisitSet()
 	defer seen.Release()
 	return t.equalShared(other, seen)
 }
 
 // equalShared is Equal threaded with the set of pairs already under comparison.
-func (t *Doc) equalShared(other *Doc, seen *deep.VisitSet) bool {
+func (t *Doc) equalShared(other *Doc, seen *gen.VisitSet) bool {
 	if t == other {
 		return true
 	}
@@ -1548,13 +1555,13 @@ func (t *Doc) equalShared(other *Doc, seen *deep.VisitSet) bool {
 // reference to it in the result points at that one copy, and a reference cycle
 // is rebuilt rather than followed forever.
 func (t *Doc) Clone() *Doc {
-	memo := deep.NewCloneMemo()
+	memo := gen.NewCloneMemo()
 	defer memo.Release()
 	return t.cloneShared(memo)
 }
 
 // cloneShared is Clone threaded with the memo of copies already made.
-func (t *Doc) cloneShared(memo *deep.CloneMemo) *Doc {
+func (t *Doc) cloneShared(memo *gen.CloneMemo) *Doc {
 	if t == nil {
 		return nil
 	}
@@ -1577,7 +1584,7 @@ func (t *Doc) cloneShared(memo *deep.CloneMemo) *Doc {
 	if t.Nested != nil {
 		res.Nested = make(map[string]map[string]int)
 		for k, v := range t.Nested {
-			res.Nested[k] = deep.CloneShared(v, memo)
+			res.Nested[k] = gen.CloneShared(v, memo)
 		}
 	}
 	if t.Stages != nil {

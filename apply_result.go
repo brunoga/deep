@@ -54,13 +54,11 @@ type OpOutcome struct {
 	Index int
 	Path  string
 	Kind  OpKind
-	Status
+	// Status is what became of the operation.
+	Status OpStatus
 	// Err is set when Status is StatusFailed.
 	Err error
 }
-
-// Status is embedded so an outcome reads as outcome.Status.
-type Status = OpStatus
 
 // ApplyResult reports what [ApplyWithResult] did, operation by operation.
 //
@@ -259,3 +257,10 @@ func applyOneOp[T any](target *T, op Operation, strict bool, logger *slog.Logger
 	op.Strict = strict
 	return engine.ApplyOpReflectionValue(reflect.ValueOf(target).Elem(), op, logger)
 }
+
+// Status is an alias for [OpStatus].
+//
+// Deprecated: use [OpStatus]. This existed only so that an embedded field in
+// [OpOutcome] would be named Status; that field is now declared explicitly, so
+// the alias has no remaining purpose.
+type Status = OpStatus

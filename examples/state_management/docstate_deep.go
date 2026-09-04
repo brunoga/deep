@@ -5,6 +5,7 @@ import (
 	"fmt"
 	deep "github.com/brunoga/deep/v5"
 	"github.com/brunoga/deep/v5/condition"
+	gen "github.com/brunoga/deep/v5/gen"
 	"log/slog"
 	"reflect"
 	"regexp"
@@ -32,7 +33,7 @@ func (t *DocState) Patch(p deep.Patch[DocState], logger *slog.Logger) error {
 		if err != nil {
 			errs = append(errs, err)
 		} else if !handled {
-			if err := deep.ApplyOpReflection(t, op, logger); err != nil {
+			if err := gen.ApplyOpReflection(t, op, logger); err != nil {
 				errs = append(errs, err)
 			}
 		}
@@ -180,7 +181,8 @@ func (t *DocState) Diff(other *DocState) deep.Patch[DocState] {
 		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/metadata", Old: t.Metadata, New: other.Metadata})
 	} else {
 		if other.Metadata != nil {
-			for k, v := range other.Metadata {
+			for _, k := range gen.SortedKeys(other.Metadata) {
+				v := other.Metadata[k]
 				if t.Metadata == nil {
 					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/metadata/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
 					continue
@@ -195,7 +197,8 @@ func (t *DocState) Diff(other *DocState) deep.Patch[DocState] {
 			}
 		}
 		if t.Metadata != nil {
-			for k, v := range t.Metadata {
+			for _, k := range gen.SortedKeys(t.Metadata) {
+				v := t.Metadata[k]
 				if _, ok := other.Metadata[k]; !ok {
 					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: "/metadata/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: v})
 				}
