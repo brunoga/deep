@@ -156,33 +156,35 @@ func (t *GameWorld) applyOperation(op deep.Operation, logger *slog.Logger) (bool
 // Diff compares t with other and returns a Patch.
 func (t *GameWorld) Diff(other *GameWorld) deep.Patch[GameWorld] {
 	p := deep.Patch[GameWorld]{}
-	if (t.Players == nil) != (other.Players == nil) {
-		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/players", Old: t.Players, New: other.Players})
-	} else {
-		if other.Players != nil {
-			for _, k := range gen.SortedKeys(other.Players) {
-				v := other.Players[k]
-				if t.Players == nil {
-					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/players/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
-					continue
-				}
-				if oldV, ok := t.Players[k]; !ok || !oldV.Equal(&v) {
-					kind := deep.OpReplace
-					if !ok {
-						kind = deep.OpAdd
+	{
+		_mapFrom := len(p.Operations)
+		if (t.Players == nil) != (other.Players == nil) {
+			p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/players", Old: t.Players, New: other.Players})
+		} else {
+			if other.Players != nil {
+				for k, v := range other.Players {
+					if t.Players == nil {
+						p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/players/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
+						continue
 					}
-					p.Operations = append(p.Operations, deep.Operation{Kind: kind, Path: "/players/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: oldV, New: v})
+					if oldV, ok := t.Players[k]; !ok || !oldV.Equal(&v) {
+						kind := deep.OpReplace
+						if !ok {
+							kind = deep.OpAdd
+						}
+						p.Operations = append(p.Operations, deep.Operation{Kind: kind, Path: "/players/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: oldV, New: v})
+					}
+				}
+			}
+			if t.Players != nil {
+				for k, v := range t.Players {
+					if _, ok := other.Players[k]; !ok {
+						p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: "/players/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: v})
+					}
 				}
 			}
 		}
-		if t.Players != nil {
-			for _, k := range gen.SortedKeys(t.Players) {
-				v := t.Players[k]
-				if _, ok := other.Players[k]; !ok {
-					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: "/players/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: v})
-				}
-			}
-		}
+		gen.SortOperations(p.Operations[_mapFrom:])
 	}
 	if t.Time != other.Time {
 		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/time", Old: t.Time, New: other.Time})

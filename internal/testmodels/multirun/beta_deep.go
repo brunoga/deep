@@ -132,33 +132,35 @@ func (t *Beta) applyOperation(op deep.Operation, logger *slog.Logger) (bool, err
 // Diff compares t with other and returns a Patch.
 func (t *Beta) Diff(other *Beta) deep.Patch[Beta] {
 	p := deep.Patch[Beta]{}
-	if (t.M == nil) != (other.M == nil) {
-		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/m", Old: t.M, New: other.M})
-	} else {
-		if other.M != nil {
-			for _, k := range gen.SortedKeys(other.M) {
-				v := other.M[k]
-				if t.M == nil {
-					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/m/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
-					continue
-				}
-				if oldV, ok := t.M[k]; !ok || v != oldV {
-					kind := deep.OpReplace
-					if !ok {
-						kind = deep.OpAdd
+	{
+		_mapFrom := len(p.Operations)
+		if (t.M == nil) != (other.M == nil) {
+			p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/m", Old: t.M, New: other.M})
+		} else {
+			if other.M != nil {
+				for k, v := range other.M {
+					if t.M == nil {
+						p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/m/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
+						continue
 					}
-					p.Operations = append(p.Operations, deep.Operation{Kind: kind, Path: "/m/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: oldV, New: v})
+					if oldV, ok := t.M[k]; !ok || v != oldV {
+						kind := deep.OpReplace
+						if !ok {
+							kind = deep.OpAdd
+						}
+						p.Operations = append(p.Operations, deep.Operation{Kind: kind, Path: "/m/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: oldV, New: v})
+					}
+				}
+			}
+			if t.M != nil {
+				for k, v := range t.M {
+					if _, ok := other.M[k]; !ok {
+						p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: "/m/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: v})
+					}
 				}
 			}
 		}
-		if t.M != nil {
-			for _, k := range gen.SortedKeys(t.M) {
-				v := t.M[k]
-				if _, ok := other.M[k]; !ok {
-					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: "/m/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: v})
-				}
-			}
-		}
+		gen.SortOperations(p.Operations[_mapFrom:])
 	}
 
 	return p

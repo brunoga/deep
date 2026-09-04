@@ -114,33 +114,35 @@ func (t *Fleet) applyOperation(op deep.Operation, logger *slog.Logger) (bool, er
 // Diff compares t with other and returns a Patch.
 func (t *Fleet) Diff(other *Fleet) deep.Patch[Fleet] {
 	p := deep.Patch[Fleet]{}
-	if (t.Devices == nil) != (other.Devices == nil) {
-		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/devices", Old: t.Devices, New: other.Devices})
-	} else {
-		if other.Devices != nil {
-			for _, k := range gen.SortedKeys(other.Devices) {
-				v := other.Devices[k]
-				if t.Devices == nil {
-					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/devices/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
-					continue
-				}
-				if oldV, ok := t.Devices[k]; !ok || v != oldV {
-					kind := deep.OpReplace
-					if !ok {
-						kind = deep.OpAdd
+	{
+		_mapFrom := len(p.Operations)
+		if (t.Devices == nil) != (other.Devices == nil) {
+			p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/devices", Old: t.Devices, New: other.Devices})
+		} else {
+			if other.Devices != nil {
+				for k, v := range other.Devices {
+					if t.Devices == nil {
+						p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/devices/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
+						continue
 					}
-					p.Operations = append(p.Operations, deep.Operation{Kind: kind, Path: "/devices/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: oldV, New: v})
+					if oldV, ok := t.Devices[k]; !ok || v != oldV {
+						kind := deep.OpReplace
+						if !ok {
+							kind = deep.OpAdd
+						}
+						p.Operations = append(p.Operations, deep.Operation{Kind: kind, Path: "/devices/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: oldV, New: v})
+					}
+				}
+			}
+			if t.Devices != nil {
+				for k, v := range t.Devices {
+					if _, ok := other.Devices[k]; !ok {
+						p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: "/devices/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: v})
+					}
 				}
 			}
 		}
-		if t.Devices != nil {
-			for _, k := range gen.SortedKeys(t.Devices) {
-				v := t.Devices[k]
-				if _, ok := other.Devices[k]; !ok {
-					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: "/devices/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: v})
-				}
-			}
-		}
+		gen.SortOperations(p.Operations[_mapFrom:])
 	}
 
 	return p
