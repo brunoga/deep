@@ -395,3 +395,31 @@ func BenchmarkApplyReflection(b *testing.B) {
 		deep.Apply(&u3, p)
 	}
 }
+
+// benchLargeMapUsers returns two users whose Score map holds size entries and
+// differs in exactly one of them.
+func benchLargeMapUsers(size int) (testmodels.User, testmodels.User) {
+	u1 := testmodels.User{Name: "Alice", Score: make(map[string]int, size)}
+	for i := 0; i < size; i++ {
+		u1.Score[fmt.Sprintf("k%05d", i)] = i
+	}
+	u2 := deep.Clone(u1)
+	u2.Score["k00000"] = -1
+	return u1, u2
+}
+
+// BenchmarkDiffGeneratedLargeMap shows what ordering the emitted operations
+// buys over ordering the map's keys. The work is proportional to the entries
+// that changed — one, at every size — rather than to the size of the map.
+func BenchmarkDiffGeneratedLargeMap(b *testing.B) {
+	for _, size := range []int{10, 100, 1000, 10000} {
+		b.Run(fmt.Sprintf("entries=%d", size), func(b *testing.B) {
+			u1, u2 := benchLargeMapUsers(size)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				deep.Diff(u1, u2)
+			}
+		})
+	}
+}

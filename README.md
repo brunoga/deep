@@ -70,16 +70,20 @@ Generated code vs the reflection engine, on the same five-field struct (nested s
 
 | Operation | Reflection | Generated | Speedup |
 | :--- | ---: | ---: | ---: |
-| **Diff** | 2,492 ns/op (63 allocs) | **629 ns/op** (18 allocs) | **4.0×** |
-| **Apply** | 1,252 ns/op (42 allocs) | **87 ns/op** (2 allocs) | **14.4×** |
-| **Equal** | 245 ns/op (5 allocs) | **102 ns/op** (2 allocs) | **2.4×** |
-| **Clone** | 1,039 ns/op (15 allocs) | **189 ns/op** (5 allocs) | **5.5×** |
+| **Diff** | 2,455 ns/op (63 allocs) | **573 ns/op** (16 allocs) | **4.3×** |
+| **Apply** | 1,193 ns/op (42 allocs) | **86 ns/op** (2 allocs) | **13.9×** |
+| **Equal** | 249 ns/op (5 allocs) | **103 ns/op** (2 allocs) | **2.4×** |
+| **Clone** | 1,019 ns/op (15 allocs) | **192 ns/op** (5 allocs) | **5.3×** |
 
-Diff now produces the same operations in the same order every time. Go
-randomises map iteration, so it previously did not, and a patch whose order
-varies between runs cannot be logged, cached, compared or signed. Sorting map
-keys costs the generated path about 20%; it is the one place where this table
-went backwards, and the guarantee is worth more than the nanoseconds.
+Diff produces the same operations in the same order every time. Go randomises
+map iteration, so something has to impose an order, and a patch whose order
+varies between runs cannot be logged, cached, compared or signed.
+
+That order costs nothing measurable, because it is applied to the operations a
+map field produced rather than to the map's keys. The keys are all of them; the
+operations are only the entries that changed, which is usually a handful
+whatever the map holds. A diff of a map with one changed entry allocates the
+same 368 bytes whether the map has ten entries or ten thousand.
 
 Deep copy compared with other clone libraries, same struct:
 

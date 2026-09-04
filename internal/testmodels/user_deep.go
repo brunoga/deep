@@ -280,33 +280,35 @@ func (t *User) Diff(other *User) deep.Patch[User] {
 			}
 		}
 	}
-	if (t.Score == nil) != (other.Score == nil) {
-		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/score", Old: t.Score, New: other.Score})
-	} else {
-		if other.Score != nil {
-			for _, k := range gen.SortedKeys(other.Score) {
-				v := other.Score[k]
-				if t.Score == nil {
-					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/score/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
-					continue
-				}
-				if oldV, ok := t.Score[k]; !ok || v != oldV {
-					kind := deep.OpReplace
-					if !ok {
-						kind = deep.OpAdd
+	{
+		_mapFrom := len(p.Operations)
+		if (t.Score == nil) != (other.Score == nil) {
+			p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/score", Old: t.Score, New: other.Score})
+		} else {
+			if other.Score != nil {
+				for k, v := range other.Score {
+					if t.Score == nil {
+						p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/score/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
+						continue
 					}
-					p.Operations = append(p.Operations, deep.Operation{Kind: kind, Path: "/score/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: oldV, New: v})
+					if oldV, ok := t.Score[k]; !ok || v != oldV {
+						kind := deep.OpReplace
+						if !ok {
+							kind = deep.OpAdd
+						}
+						p.Operations = append(p.Operations, deep.Operation{Kind: kind, Path: "/score/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: oldV, New: v})
+					}
+				}
+			}
+			if t.Score != nil {
+				for k, v := range t.Score {
+					if _, ok := other.Score[k]; !ok {
+						p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: "/score/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: v})
+					}
 				}
 			}
 		}
-		if t.Score != nil {
-			for _, k := range gen.SortedKeys(t.Score) {
-				v := t.Score[k]
-				if _, ok := other.Score[k]; !ok {
-					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: "/score/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: v})
-				}
-			}
-		}
+		gen.SortOperations(p.Operations[_mapFrom:])
 	}
 	subBio := (&t.Bio).Diff(other.Bio)
 	for _, op := range subBio.Operations {

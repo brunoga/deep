@@ -686,33 +686,35 @@ func (t *Job) diffShared(other *Job, seen *gen.DiffMemo, at string) deep.Patch[J
 			}
 		}
 	}
-	if (t.Retries == nil) != (other.Retries == nil) {
-		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/retries", Old: t.Retries, New: other.Retries})
-	} else {
-		if other.Retries != nil {
-			for _, k := range gen.SortedKeys(other.Retries) {
-				v := other.Retries[k]
-				if t.Retries == nil {
-					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/retries/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
-					continue
-				}
-				if oldV, ok := t.Retries[k]; !ok || !deep.Equal(oldV, v) {
-					kind := deep.OpReplace
-					if !ok {
-						kind = deep.OpAdd
+	{
+		_mapFrom := len(p.Operations)
+		if (t.Retries == nil) != (other.Retries == nil) {
+			p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/retries", Old: t.Retries, New: other.Retries})
+		} else {
+			if other.Retries != nil {
+				for k, v := range other.Retries {
+					if t.Retries == nil {
+						p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/retries/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
+						continue
 					}
-					p.Operations = append(p.Operations, deep.Operation{Kind: kind, Path: at + "/retries/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: oldV, New: v})
+					if oldV, ok := t.Retries[k]; !ok || !deep.Equal(oldV, v) {
+						kind := deep.OpReplace
+						if !ok {
+							kind = deep.OpAdd
+						}
+						p.Operations = append(p.Operations, deep.Operation{Kind: kind, Path: at + "/retries/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: oldV, New: v})
+					}
+				}
+			}
+			if t.Retries != nil {
+				for k, v := range t.Retries {
+					if _, ok := other.Retries[k]; !ok {
+						p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: at + "/retries/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: v})
+					}
 				}
 			}
 		}
-		if t.Retries != nil {
-			for _, k := range gen.SortedKeys(t.Retries) {
-				v := t.Retries[k]
-				if _, ok := other.Retries[k]; !ok {
-					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: at + "/retries/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: v})
-				}
-			}
-		}
+		gen.SortOperations(p.Operations[_mapFrom:])
 	}
 	if len(t.Stages) != len(other.Stages) || (t.Stages == nil) != (other.Stages == nil) {
 		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/stages", Old: t.Stages, New: other.Stages})
@@ -723,33 +725,35 @@ func (t *Job) diffShared(other *Job, seen *gen.DiffMemo, at string) deep.Patch[J
 			}
 		}
 	}
-	if (t.Owners == nil) != (other.Owners == nil) {
-		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/owners", Old: t.Owners, New: other.Owners})
-	} else {
-		if other.Owners != nil {
-			for _, k := range gen.SortedKeys(other.Owners) {
-				v := other.Owners[k]
-				if t.Owners == nil {
-					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/owners/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
-					continue
-				}
-				if oldV, ok := t.Owners[k]; !ok || !oldV.Equal(v) {
-					kind := deep.OpReplace
-					if !ok {
-						kind = deep.OpAdd
+	{
+		_mapFrom := len(p.Operations)
+		if (t.Owners == nil) != (other.Owners == nil) {
+			p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/owners", Old: t.Owners, New: other.Owners})
+		} else {
+			if other.Owners != nil {
+				for k, v := range other.Owners {
+					if t.Owners == nil {
+						p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/owners/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
+						continue
 					}
-					p.Operations = append(p.Operations, deep.Operation{Kind: kind, Path: at + "/owners/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: oldV, New: v})
+					if oldV, ok := t.Owners[k]; !ok || !oldV.Equal(v) {
+						kind := deep.OpReplace
+						if !ok {
+							kind = deep.OpAdd
+						}
+						p.Operations = append(p.Operations, deep.Operation{Kind: kind, Path: at + "/owners/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: oldV, New: v})
+					}
+				}
+			}
+			if t.Owners != nil {
+				for k, v := range t.Owners {
+					if _, ok := other.Owners[k]; !ok {
+						p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: at + "/owners/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: v})
+					}
 				}
 			}
 		}
-		if t.Owners != nil {
-			for _, k := range gen.SortedKeys(t.Owners) {
-				v := t.Owners[k]
-				if _, ok := other.Owners[k]; !ok {
-					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: at + "/owners/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: v})
-				}
-			}
-		}
+		gen.SortOperations(p.Operations[_mapFrom:])
 	}
 	if t.Priority != other.Priority {
 		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/priority", Old: t.Priority, New: other.Priority})

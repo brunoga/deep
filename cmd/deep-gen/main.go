@@ -446,19 +446,20 @@ func diffFieldBody(f FieldInfo, p, g string, typeKeys map[string]string) string 
 		if strings.HasPrefix(f.Type, "map[") {
 			vt := mapVal(f.Type)
 			ptrVal := isPtr(vt)
-			// A nil map and an empty one are different values, and per-key
-			// operations cannot turn one into the other: removing the last key
-			// leaves an empty map, not a nil one. Replace the whole field
-			// instead, which is what the reflection engine does.
+			// Everything this field emits is bracketed so the range can be
+			// put in a fixed order at the end. Go randomises map iteration,
+			// and a patch whose operation order varies between runs cannot be
+			// logged, cached, compared or signed. Ordering the operations
+			// costs one sort over the entries that changed; ordering the keys
+			// first would cost a slice, a sort and an extra lookup for every
+			// entry in the map, changed or not.
+			b.WriteString("\t{\n")
+			b.WriteString("\t_mapFrom := len(p.Operations)\n")
 			fmt.Fprintf(&b, "\tif (t.%s == nil) != (other.%s == nil) {\n", f.Name, f.Name)
 			fmt.Fprintf(&b, "\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpReplace, Path: \"/%s\", Old: t.%s, New: other.%s})\n", p, p, f.JSONName, f.Name, f.Name)
 			b.WriteString("\t} else {\n")
 			fmt.Fprintf(&b, "\tif other.%s != nil {\n", f.Name)
-			// Sorted rather than ranged over: Go randomises map iteration, and
-			// a patch whose operation order varies between runs cannot be
-			// logged, cached, compared or signed.
-			fmt.Fprintf(&b, "\t\tfor _, k := range %sSortedKeys(other.%s) {\n", g, f.Name)
-			fmt.Fprintf(&b, "\t\t\tv := other.%s[k]\n", f.Name)
+			fmt.Fprintf(&b, "\t\tfor k, v := range other.%s {\n", f.Name)
 			fmt.Fprintf(&b, "\t\t\tif t.%s == nil {\n", f.Name)
 			fmt.Fprintf(&b, "\t\t\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpReplace, Path: \"/%s/\" + %sEscapePathKey(fmt.Sprintf(\"%%v\", k)), New: v})\n", p, p, f.JSONName, p)
 			b.WriteString("\t\t\t\tcontinue\n\t\t\t}\n")
@@ -494,11 +495,12 @@ func diffFieldBody(f FieldInfo, p, g string, typeKeys map[string]string) string 
 				b.WriteString("\t\t\t}\n\t\t}\n\t}\n")
 			}
 			fmt.Fprintf(&b, "\tif t.%s != nil {\n", f.Name)
-			fmt.Fprintf(&b, "\t\tfor _, k := range %sSortedKeys(t.%s) {\n", g, f.Name)
-			fmt.Fprintf(&b, "\t\t\tv := t.%s[k]\n", f.Name)
+			fmt.Fprintf(&b, "\t\tfor k, v := range t.%s {\n", f.Name)
 			fmt.Fprintf(&b, "\t\t\tif _, ok := other.%s[k]; !ok {\n", f.Name)
 			fmt.Fprintf(&b, "\t\t\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpRemove, Path: \"/%s/\" + %sEscapePathKey(fmt.Sprintf(\"%%v\", k)), Old: v})\n", p, p, f.JSONName, p)
 			b.WriteString("\t\t\t}\n\t\t}\n\t}\n")
+			b.WriteString("\t}\n")
+			fmt.Fprintf(&b, "\t%sSortOperations(p.Operations[_mapFrom:])\n", g)
 			b.WriteString("\t}\n")
 		} else {
 			// Slice
