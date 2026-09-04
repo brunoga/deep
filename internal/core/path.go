@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/brunoga/deep/v5/internal/unsafe"
+	"github.com/brunoga/deep/v6/internal/unsafe"
 )
 
 // DeepPath represents a path to a field or element within a structure.

@@ -1,4 +1,4 @@
-//go:generate go run github.com/brunoga/deep/v5/cmd/deep-gen -type=Playlist -output playlist_deep.go .
+//go:generate go run github.com/brunoga/deep/v6/cmd/deep-gen -type=Playlist -output playlist_deep.go .
 
 package main
 
@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/brunoga/deep/v5"
+	"github.com/brunoga/deep/v6"
 )
 
 // At extends a slice-field selector to a specific element, so a patch can
@@ -33,7 +33,7 @@ func main() {
 	fmt.Printf("%v\n", pl.Tracks)
 
 	// Replace one element by position; append by targeting the end index.
-	edits := deep.Edit(&pl).
+	edits := deep.NewPatch[Playlist]().
 		With(deep.Set(deep.At(tracksPath, 1), "Deeper Work")).
 		With(deep.Add(deep.At(tracksPath, len(pl.Tracks)), "Encore")).
 		Build()
@@ -46,7 +46,7 @@ func main() {
 	fmt.Printf("%v\n", pl.Tracks)
 
 	// Remove by position.
-	drop := deep.Edit(&pl).With(deep.Remove(deep.At(tracksPath, 0))).Build()
+	drop := deep.NewPatch[Playlist]().With(deep.Remove(deep.At(tracksPath, 0))).Build()
 
 	fmt.Println("\n--- REMOVE /tracks/0 ---")
 	if err := deep.Apply(&pl, drop); err != nil {

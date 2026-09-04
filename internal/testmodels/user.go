@@ -1,9 +1,9 @@
 package testmodels
 
-//go:generate go run github.com/brunoga/deep/v5/cmd/deep-gen -type=User,Detail -output user_deep.go .
+//go:generate go run github.com/brunoga/deep/v6/cmd/deep-gen -type=User,Detail -output user_deep.go .
 
 import (
-	"github.com/brunoga/deep/v5/crdt"
+	"github.com/brunoga/deep/v6/crdt"
 )
 
 type User struct {

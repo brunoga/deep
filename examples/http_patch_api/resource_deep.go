@@ -3,9 +3,9 @@ package main
 
 import (
 	"fmt"
-	deep "github.com/brunoga/deep/v5"
-	"github.com/brunoga/deep/v5/condition"
-	gen "github.com/brunoga/deep/v5/gen"
+	deep "github.com/brunoga/deep/v6"
+	"github.com/brunoga/deep/v6/condition"
+	gen "github.com/brunoga/deep/v6/gen"
 	"log/slog"
 	"reflect"
 	"regexp"
@@ -82,7 +82,7 @@ func (t *Resource) applyOperation(op deep.Operation, logger *slog.Logger) (bool,
 			}
 		}
 		if op.Kind == deep.OpReplace {
-			if v, ok := op.New.(Resource); ok {
+			if v, ok := deep.ValueAs[Resource](op.New); ok {
 				*t = v
 				return true, nil
 			}
@@ -102,7 +102,7 @@ func (t *Resource) applyOperation(op deep.Operation, logger *slog.Logger) (bool,
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(string); ok {
+			if v, ok := deep.ValueAs[string](op.New); ok {
 				t.ID = v
 				return true, nil
 			}
@@ -121,7 +121,7 @@ func (t *Resource) applyOperation(op deep.Operation, logger *slog.Logger) (bool,
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(string); ok {
+			if v, ok := deep.ValueAs[string](op.New); ok {
 				t.Data = v
 				return true, nil
 			}
@@ -140,12 +140,8 @@ func (t *Resource) applyOperation(op deep.Operation, logger *slog.Logger) (bool,
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(int); ok {
+			if v, ok := deep.ValueAs[int](op.New); ok {
 				t.Value = v
-				return true, nil
-			}
-			if f, ok := op.New.(float64); ok {
-				t.Value = int(f)
 				return true, nil
 			}
 		}

@@ -1,3 +1,3 @@
-module github.com/brunoga/deep/v5
+module github.com/brunoga/deep/v6
 
-go 1.21
+go 1.27

@@ -6,8 +6,8 @@ import (
 	"strings"
 	"sync/atomic"
 
-	deep "github.com/brunoga/deep/v5"
-	"github.com/brunoga/deep/v5/crdt/hlc"
+	deep "github.com/brunoga/deep/v6"
+	"github.com/brunoga/deep/v6/crdt/hlc"
 )
 
 // Document is a collaborative text document, holding the same runs as [Text]
@@ -531,15 +531,19 @@ func (d *Document) applyOperation(op deep.Operation, _ *slog.Logger) (bool, erro
 	case *Document:
 		d.MergeFrom(v)
 		return true, nil
-	case map[string]any:
-		// An update that has been through JSON arrives as the decoder's generic
-		// shape; re-decode it into what it was.
-		data, err := json.Marshal(v)
-		if err != nil {
-			return false, err
+	case deep.RawValue:
+		// A delta that arrived over the wire is still encoded; decode it as
+		// what it is. An Update is a JSON object, a Text a JSON array.
+		if len(v.JSON) > 0 && v.JSON[0] == '[' {
+			var t Text
+			if err := json.Unmarshal(v.JSON, &t); err != nil {
+				return false, err
+			}
+			d.MergeFrom(t)
+			return true, nil
 		}
 		var u Update
-		if err := json.Unmarshal(data, &u); err != nil {
+		if err := json.Unmarshal(v.JSON, &u); err != nil {
 			return false, err
 		}
 		d.Apply(u)

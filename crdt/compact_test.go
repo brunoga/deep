@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	deep "github.com/brunoga/deep/v5"
-	"github.com/brunoga/deep/v5/crdt/hlc"
+	deep "github.com/brunoga/deep/v6"
+	"github.com/brunoga/deep/v6/crdt/hlc"
 )
 
 type compactDoc struct {

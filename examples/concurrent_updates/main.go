@@ -1,4 +1,4 @@
-//go:generate go run github.com/brunoga/deep/v5/cmd/deep-gen -type=Stock -output stock_deep.go .
+//go:generate go run github.com/brunoga/deep/v6/cmd/deep-gen -type=Stock -output stock_deep.go .
 
 package main
 
@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/brunoga/deep/v5"
+	"github.com/brunoga/deep/v6"
 )
 
 type Stock struct {

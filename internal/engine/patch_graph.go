@@ -3,10 +3,10 @@ package engine
 import (
 	"fmt"
 	"reflect"
-	"sort"
+	"slices"
 	"strings"
 
-	icore "github.com/brunoga/deep/v5/internal/core"
+	icore "github.com/brunoga/deep/v6/internal/core"
 )
 
 // dependencyNode represents a node in the dependency graph.
@@ -58,7 +58,7 @@ func resolveStructDependencies(p *structPatch, basePath string, root reflect.Val
 	for name := range nodes {
 		nodeNames = append(nodeNames, name)
 	}
-	sort.Strings(nodeNames) // Deterministic order for iteration
+	slices.Sort(nodeNames) // Deterministic order for iteration
 
 	for _, nameA := range nodeNames {
 		nodeA := nodes[nameA]
@@ -100,7 +100,7 @@ func resolveStructDependencies(p *structPatch, basePath string, root reflect.Val
 		}
 	}
 	// Sort queue for determinism
-	sort.Strings(queue)
+	slices.Sort(queue)
 
 	processedCount := 0
 	for len(queue) > 0 {
@@ -115,7 +115,7 @@ func resolveStructDependencies(p *structPatch, basePath string, root reflect.Val
 				queue = append(queue, v)
 			}
 		}
-		sort.Strings(queue)
+		slices.Sort(queue)
 	}
 
 	if processedCount == len(nodes) {
@@ -129,7 +129,7 @@ func resolveStructDependencies(p *structPatch, basePath string, root reflect.Val
 			cycleNodes = append(cycleNodes, name)
 		}
 	}
-	sort.Strings(cycleNodes)
+	slices.Sort(cycleNodes)
 
 	for _, name := range cycleNodes {
 		node := nodes[name]

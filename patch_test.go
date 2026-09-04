@@ -7,11 +7,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/brunoga/deep/v5"
-	"github.com/brunoga/deep/v5/condition"
-	"github.com/brunoga/deep/v5/crdt"
-	"github.com/brunoga/deep/v5/crdt/hlc"
-	"github.com/brunoga/deep/v5/internal/testmodels"
+	"github.com/brunoga/deep/v6"
+	"github.com/brunoga/deep/v6/condition"
+	"github.com/brunoga/deep/v6/crdt"
+	"github.com/brunoga/deep/v6/crdt/hlc"
+	"github.com/brunoga/deep/v6/internal/testmodels"
 )
 
 func TestGobSerialization(t *testing.T) {
@@ -309,7 +309,7 @@ func TestParseJSONPatchRoundTrip(t *testing.T) {
 	aliasPath := deep.Field[Doc, string](func(d *Doc) *string { return &d.Alias })
 	agePath := deep.Field[Doc, int](func(d *Doc) *int { return &d.Age })
 
-	original := deep.Edit(&Doc{}).
+	original := deep.NewPatch[Doc]().
 		With(
 			deep.Set(namePath, "Alice"),
 			deep.Add(agePath, 30),
@@ -347,7 +347,7 @@ func TestGeLeConditions(t *testing.T) {
 	xPath := deep.Field[S, int](func(s *S) *int { return &s.X })
 
 	s := S{X: 5}
-	if err := deep.Apply(&s, deep.Edit(&s).With(deep.Set(xPath, 10).Unless(deep.Ge(xPath, 5))).Build()); err != nil {
+	if err := deep.Apply(&s, deep.NewPatch[S]().With(deep.Set(xPath, 10).Unless(deep.Ge(xPath, 5))).Build()); err != nil {
 		t.Fatal(err)
 	}
 	// Ge(X, 5) is true when X==5, so Unless fires and op is skipped → X stays 5.
@@ -355,7 +355,7 @@ func TestGeLeConditions(t *testing.T) {
 		t.Errorf("Ge condition: got %d, want 5", s.X)
 	}
 
-	if err := deep.Apply(&s, deep.Edit(&s).With(deep.Set(xPath, 10).Unless(deep.Le(xPath, 4))).Build()); err != nil {
+	if err := deep.Apply(&s, deep.NewPatch[S]().With(deep.Set(xPath, 10).Unless(deep.Le(xPath, 4))).Build()); err != nil {
 		t.Fatal(err)
 	}
 	// Le(X, 4) is false when X==5, so Unless does not fire → X becomes 10.
@@ -372,7 +372,7 @@ func TestBuilderMoveCopy(t *testing.T) {
 	aPath := deep.Field[S, string](func(s *S) *string { return &s.A })
 	bPath := deep.Field[S, string](func(s *S) *string { return &s.B })
 
-	p := deep.Edit(&S{}).With(deep.Move(aPath, bPath)).Build()
+	p := deep.NewPatch[S]().With(deep.Move(aPath, bPath)).Build()
 	if len(p.Operations) != 1 || p.Operations[0].Kind != deep.OpMove {
 		t.Error("Move not added correctly")
 	}
@@ -380,7 +380,7 @@ func TestBuilderMoveCopy(t *testing.T) {
 		t.Errorf("Move paths wrong: from=%v to=%v", p.Operations[0].From, p.Operations[0].Path)
 	}
 
-	p2 := deep.Edit(&S{}).With(deep.Copy(aPath, bPath)).Build()
+	p2 := deep.NewPatch[S]().With(deep.Copy(aPath, bPath)).Build()
 	if len(p2.Operations) != 1 || p2.Operations[0].Kind != deep.OpCopy {
 		t.Error("Copy not added correctly")
 	}
@@ -433,10 +433,12 @@ func TestJSONPatchStrictRoundTrip(t *testing.T) {
 	if len(got.Operations) != 2 {
 		t.Fatalf("got %d operations, want 2: %s", len(got.Operations), data)
 	}
-	if got.Operations[0].Old != "dark" {
+	// Parsed values stay encoded until apply time; ValueAs decodes them
+	// against the type the caller knows them to be.
+	if old, ok := deep.ValueAs[string](got.Operations[0].Old); !ok || old != "dark" {
 		t.Errorf("Old[0] = %v, want dark", got.Operations[0].Old)
 	}
-	if old, ok := got.Operations[1].Old.(float64); !ok || old != 12 {
+	if old, ok := deep.ValueAs[int](got.Operations[1].Old); !ok || old != 12 {
 		t.Errorf("Old[1] = %v, want 12", got.Operations[1].Old)
 	}
 }

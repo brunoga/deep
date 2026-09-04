@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/brunoga/deep/v5/internal/unsafe"
+	"github.com/brunoga/deep/v6/internal/unsafe"
 )
 
 func ConvertValue(v reflect.Value, targetType reflect.Type) reflect.Value {
@@ -15,6 +15,17 @@ func ConvertValue(v reflect.Value, targetType reflect.Type) reflect.Value {
 
 	if v.Type() == targetType {
 		return v
+	}
+
+	// A value still in its encoded form decodes straight into the target type,
+	// which is the point of keeping it encoded: the decoder produces an int
+	// for an int field and a struct for a struct field, instead of this
+	// function guessing its way back from float64 and map[string]any.
+	if v.Type() == rawValueType {
+		if decoded, err := v.Interface().(RawValue).Decode(targetType); err == nil {
+			return decoded
+		}
+		return reflect.Value{}
 	}
 
 	if v.Type().AssignableTo(targetType) {
@@ -152,3 +163,44 @@ func ExtractKey(v reflect.Value, fieldIdx int) any {
 	}
 	return v.Field(fieldIdx).Interface()
 }
+
+// RawValue holds a value that arrived over the wire and has not been decoded
+// yet, because the right type to decode it into is not known until the
+// operation carrying it reaches its target field.
+//
+// This is what removes a whole class of coercion bugs. Decoding an untyped
+// value produces whatever the decoder's defaults are — every JSON number a
+// float64, every object a map[string]any, every []byte a base64 string — and
+// the library then had to guess its way back to the field's real type,
+// verified conversion by verified conversion, each one a place to be wrong.
+// Decoding into the field's actual type instead makes the decoder itself do
+// the right thing by construction.
+type RawValue struct {
+	JSON []byte
+}
+
+// MarshalJSON emits the still-encoded bytes as they are, so a re-serialized
+// operation is byte-identical to the one that arrived.
+func (r RawValue) MarshalJSON() ([]byte, error) {
+	if len(r.JSON) == 0 {
+		return []byte("null"), nil
+	}
+	return r.JSON, nil
+}
+
+// UnmarshalJSON captures the encoded bytes without interpreting them.
+func (r *RawValue) UnmarshalJSON(data []byte) error {
+	r.JSON = append(r.JSON[:0], data...)
+	return nil
+}
+
+// Decode unmarshals the value into t, returning the decoded value.
+func (r RawValue) Decode(t reflect.Type) (reflect.Value, error) {
+	out := reflect.New(t)
+	if err := json.Unmarshal(r.JSON, out.Interface()); err != nil {
+		return reflect.Value{}, err
+	}
+	return out.Elem(), nil
+}
+
+var rawValueType = reflect.TypeOf(RawValue{})

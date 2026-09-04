@@ -1,4 +1,4 @@
-//go:generate go run github.com/brunoga/deep/v5/cmd/deep-gen -type=Server,Meta,Limits -output server_deep.go .
+//go:generate go run github.com/brunoga/deep/v6/cmd/deep-gen -type=Server,Meta,Limits -output server_deep.go .
 
 package main
 
@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/brunoga/deep/v5"
+	"github.com/brunoga/deep/v6"
 )
 
 // Nested structs are addressed by path, so a diff pinpoints the field that
@@ -56,7 +56,7 @@ func main() {
 
 	// Patches can also be written directly against a nested path.
 	cpuPath := deep.Field(func(s *Server) *int { return &s.Limits.CPU })
-	scale := deep.Edit(&before).With(deep.Set(cpuPath, 8)).Build()
+	scale := deep.NewPatch[Server]().With(deep.Set(cpuPath, 8)).Build()
 
 	fmt.Println("\n--- TARGETED UPDATE ---")
 	fmt.Printf("selector path: %s\n", cpuPath.String())

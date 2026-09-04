@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"strings"
 
-	icore "github.com/brunoga/deep/v5/internal/core"
-	"github.com/brunoga/deep/v5/internal/unsafe"
+	icore "github.com/brunoga/deep/v6/internal/core"
+	"github.com/brunoga/deep/v6/internal/unsafe"
 )
 
 // diffPatch is the internal recursive interface for all patch types.

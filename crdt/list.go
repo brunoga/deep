@@ -5,8 +5,8 @@ import (
 	"log/slog"
 	"sort"
 
-	deep "github.com/brunoga/deep/v5"
-	"github.com/brunoga/deep/v5/crdt/hlc"
+	deep "github.com/brunoga/deep/v6"
+	"github.com/brunoga/deep/v6/crdt/hlc"
 )
 
 // ListEntry is one element of a [List] together with the metadata that places

@@ -1,4 +1,4 @@
-//go:generate go run github.com/brunoga/deep/v5/cmd/deep-gen -type=Listing -output listing_deep.go .
+//go:generate go run github.com/brunoga/deep/v6/cmd/deep-gen -type=Listing -output listing_deep.go .
 
 package main
 
@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/brunoga/deep/v5"
+	"github.com/brunoga/deep/v6"
 )
 
 // A store keeps rows as serialized blobs, the way most databases end up being
@@ -115,10 +115,10 @@ func main() {
 	pricePath := deep.Field(func(l *Listing) *int { return &l.Price })
 	stockPath := deep.Field(func(l *Listing) *int { return &l.Stock })
 
-	inventoryPatch := deep.Edit[Listing](nil).
+	inventoryPatch := deep.NewPatch[Listing]().
 		With(deep.Set(stockPath, 11).If(deep.Eq(stockPath, 12))).
 		Build()
-	pricingPatch := deep.Edit[Listing](nil).
+	pricingPatch := deep.NewPatch[Listing]().
 		With(deep.Set(pricePath, 2499).If(deep.Eq(pricePath, 1999))).
 		Build()
 
@@ -134,7 +134,7 @@ func main() {
 	// same field still conflict, because the second one's condition names the
 	// value the first one changed.
 	fmt.Println("\n== a genuine conflict still conflicts ==")
-	stale := deep.Edit[Listing](nil).
+	stale := deep.NewPatch[Listing]().
 		With(deep.Set(stockPath, 10).If(deep.Eq(stockPath, 12))). // read 12, but it is 11 now
 		Build()
 	report(s, "a writer working from a stale read", stale)
@@ -145,7 +145,7 @@ func main() {
 
 	// ── 4. per-operation reporting ───────────────────────────────────────────
 	fmt.Println("\n== which operations landed ==")
-	mixed := deep.Edit[Listing](nil).
+	mixed := deep.NewPatch[Listing]().
 		With(deep.Set(deep.Field(func(l *Listing) *string { return &l.Title }), "Electric Kettle")).
 		With(deep.Set(pricePath, 2999).If(deep.Eq(pricePath, 1999))). // no longer 1999
 		Build()

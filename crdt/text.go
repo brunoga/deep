@@ -3,12 +3,13 @@ package crdt
 import (
 	"encoding/json"
 	"log/slog"
+	"slices"
 	"sort"
 	"strings"
 	"unicode/utf8"
 
-	"github.com/brunoga/deep/v5"
-	"github.com/brunoga/deep/v5/crdt/hlc"
+	"github.com/brunoga/deep/v6"
+	"github.com/brunoga/deep/v6/crdt/hlc"
 )
 
 // Positions and lengths throughout this file are counted in runes, not bytes.
@@ -579,7 +580,7 @@ func MergeTextRuns(a, b Text) Text {
 				relevantSplits = append(relevantSplits, s)
 			}
 		}
-		sort.Slice(relevantSplits, func(i, j int) bool { return relevantSplits[i] < relevantSplits[j] })
+		slices.Sort(relevantSplits)
 		currentLogical := run.ID.Logical
 		currentValue := run.Value
 		currentPrev := run.Prev

@@ -19,7 +19,7 @@
 ## Quick Start
 
 ```bash
-go get github.com/brunoga/deep/v5
+go get github.com/brunoga/deep/v6
 ```
 
 ### 1. Define your model
@@ -36,7 +36,7 @@ type User struct {
 ### 2. Generate the fast path (optional but recommended)
 
 ```go
-//go:generate go run github.com/brunoga/deep/v5/cmd/deep-gen -type=User .
+//go:generate go run github.com/brunoga/deep/v6/cmd/deep-gen -type=User .
 ```
 
 ```bash
@@ -48,7 +48,7 @@ This writes `user_deep.go` next to your source. Commit it. Everything works with
 ### 3. Use the API
 
 ```go
-import deep "github.com/brunoga/deep/v5"
+import deep "github.com/brunoga/deep/v6"
 
 u1 := User{ID: 1, Name: "Alice", Roles: []string{"user"}}
 u2 := User{ID: 1, Name: "Bob", Roles: []string{"user", "admin"}}
@@ -70,10 +70,14 @@ Generated code vs the reflection engine, on the same five-field struct (nested s
 
 | Operation | Reflection | Generated | Speedup |
 | :--- | ---: | ---: | ---: |
-| **Diff** | 2,455 ns/op (63 allocs) | **573 ns/op** (16 allocs) | **4.3×** |
-| **Apply** | 1,193 ns/op (42 allocs) | **86 ns/op** (2 allocs) | **13.9×** |
-| **Equal** | 249 ns/op (5 allocs) | **103 ns/op** (2 allocs) | **2.4×** |
-| **Clone** | 1,019 ns/op (15 allocs) | **192 ns/op** (5 allocs) | **5.3×** |
+| **Diff** | 2,576 ns/op (63 allocs) | **562 ns/op** (16 allocs) | **4.6×** |
+| **Apply** | 1,162 ns/op (42 allocs) | **90 ns/op** (2 allocs) | **12.9×** |
+| **Equal** | 261 ns/op (5 allocs) | **100 ns/op** (2 allocs) | **2.6×** |
+| **Clone** | 1,115 ns/op (17 allocs) | **187 ns/op** (5 allocs) | **6.0×** |
+
+A patch that has been through JSON — a server applying client patches — stays on
+the generated path too, decoding each value against its field's type as it
+lands: 529 ns/op where falling through to reflection costs over a microsecond.
 
 Diff produces the same operations in the same order every time. Go randomises
 map iteration, so something has to impose an order, and a patch whose order
@@ -128,7 +132,7 @@ Map keys are RFC 6901-escaped automatically (`/` → `~1`, `~` → `~0`). Buildi
 `Diff` derives patches from state; the builder constructs them explicitly:
 
 ```go
-patch := deep.Edit(&user).
+patch := deep.NewPatch[User]().
     With(
         deep.Set(namePath, "Alice Smith"),            // replace
         deep.Add(deep.MapKey(scorePath, "power"), 100),
@@ -152,7 +156,7 @@ Comparisons: `Eq`, `Ne`, `Gt`, `Ge`, `Lt`, `Le` • Membership: `In` • Structu
 **Patch-level guard** — all-or-nothing, for state-machine transitions:
 
 ```go
-patch := deep.Edit(&order).
+patch := deep.NewPatch[Order]().
     With(deep.Set(statusPath, "shipped")).
     Guard(deep.Eq(statusPath, "paid")).
     Build()
@@ -161,7 +165,7 @@ patch := deep.Edit(&order).
 **Per-operation conditions** — individual ops skip independently:
 
 ```go
-patch := deep.Edit(&invoice).
+patch := deep.NewPatch[Invoice]().
     With(deep.Set(paidAtPath, time.Now())).
     With(deep.Set(feePath, 25.0).If(deep.Gt(balancePath, 0.0))).
     With(deep.Set(notePath, "").Unless(deep.Exists(notePath))).
@@ -223,7 +227,7 @@ if !res.AllApplied() {
 commit(row)
 ```
 
-[`ApplyWithResult`](https://pkg.go.dev/github.com/brunoga/deep/v5#ApplyWithResult)
+[`ApplyWithResult`](https://pkg.go.dev/github.com/brunoga/deep/v6#ApplyWithResult)
 behaves exactly as `Apply` — operations in order, each condition seeing what the
 ones before it left — but returns an `*ApplyResult` with one outcome per
 operation: `StatusApplied`, `StatusSkipped` or `StatusFailed`. The distinction
@@ -287,34 +291,37 @@ go test -run=XXX -bench=Contention -benchtime=2000x
 
 ## What Survives the Wire
 
-`Operation.Old` and `Operation.New` are declared `any`, so what a decoder
-returns is whatever it produces for an untyped value, not the type the patch
-was built from. JSON has one number type and no notion of a struct, so an `int`
-arrives as a `float64` and a struct as a `map[string]any`.
-
-The library reconciles that on the way in — a decoded value is converted to the
-field's type, and a strict check's recorded `Old` is compared the same way,
-with the conversion verified so `float64(5.7)` does not match an `int` field
-holding `5`. What that leaves is:
+Everything, checked. `TestWireFidelity` is a matrix of operation kind × field
+type × encoding — native JSON, gob, RFC 6902 — and every mutation survives
+every encoding, strict checks included:
 
 | | native JSON | gob | RFC 6902 |
 | :--- | :---: | :---: | :---: |
 | Every operation kind and field type round-trips | ✅ | ✅ | ✅ |
 | Strict `Old` checks survive | ✅ | ✅ | as `test` ops |
-| nil distinguished from empty | ✅ | — (¹) | ✅ |
-| Clearing a pointer field | ✅ | — (²) | ✅ |
+| nil distinguished from empty | ✅ | ✅ | ✅ |
+| Clearing a pointer field | ✅ | ✅ | ✅ |
 | Reference sharing (`alias`) | ✅ | ✅ | downgraded to `copy` |
+| `gob.Register` calls required | — | **none** | — |
 
-¹ `encoding/gob` does not distinguish a nil slice or map from an empty one.
-² `encoding/gob` cannot encode a nil pointer inside an interface, which is what
-clearing a pointer field means.
+The mechanism is that a decoded operation does not decode its values. `Old` and
+`New` arrive as [`RawValue`] — the encoded bytes, kept — and are decoded at
+apply time against the type of the field the operation actually addresses, so
+an int field receives an int and a struct field a struct rather than the
+float64 and `map[string]any` a blind decode produces. Inspecting an operation
+yourself, use [`ValueAs`]:
 
-Both are properties of `gob` rather than of the patch, and are recorded as such
-in `TestWireFidelity` — a matrix of operation kind × field type × encoding — so
-the answer stays a checked property rather than something rediscovered.
+```go
+if price, ok := deep.ValueAs[int](op.New); ok { ... }
+```
 
-Types carried inside an `any` need registering with `gob.Register` before a
-patch containing them can be encoded, as gob requires everywhere.
+Gob carries operations as their JSON form, which is why it needs no
+registrations and has none of gob's interface-field constraints. Operation
+kinds are strings on the wire (`"k":"replace"`); patches stored by v5, which
+wrote integers, are still read.
+
+[`RawValue`]: https://pkg.go.dev/github.com/brunoga/deep/v6#RawValue
+[`ValueAs`]: https://pkg.go.dev/github.com/brunoga/deep/v6#ValueAs
 
 ## Merging Patches
 
@@ -365,7 +372,7 @@ Deep extensions: a leading `test` op on `/` with an `"if"` key carries the patch
 Embed `log` operations to emit structured trace messages during `Apply` — request-scoped loggers, test capture, tracing, all without touching your model types:
 
 ```go
-patch := deep.Edit(&u).
+patch := deep.NewPatch[User]().
     Log("starting update").
     With(deep.Set(namePath, "Alice Smith")).
     Log("update complete").
@@ -704,6 +711,24 @@ Every directory under [`examples/`](examples/) is a runnable program (`go run ./
 | [`crdt_custom_type`](examples/crdt_custom_type) | `Convergent` and `Compactable`: making your own type merge instead of losing a writer |
 | [`lww_fields`](examples/lww_fields) | Per-field `LWW[T]` registers resolving a write conflict |
 | [`text_sync`](examples/text_sync) | Collaborative text with `crdt.Text` |
+
+## Migrating from v5
+
+- **Import path**: `github.com/brunoga/deep/v6`. Regenerate with deep-gen —
+  required, since generated code imports the module by path.
+- **Serialized patches**: v6 writes operation kinds as strings and keeps values
+  encoded until apply. v6 reads patches stored by v5; v5 cannot read patches
+  written by v6.
+- `deep.Edit(nil)` → `deep.NewPatch[T]()`.
+- `deep.Status` → `deep.OpStatus`.
+- The generator bookkeeping (`CloneMemo`, `VisitSet`, `DiffMemo`,
+  `CloneShared`, `ApplyOpReflection`, …) moved to `deep/gen`; regenerating is
+  the whole migration.
+- An operation decoded from the wire now carries `RawValue` in `Old`/`New`
+  rather than float64s and `map[string]any`; use `deep.ValueAs[T]` to read one.
+- `deep.Clone` of a value containing a non-nil chan or func now clones it as
+  nil, as always documented — previously the whole result was silently zero.
+- Requires Go 1.27.
 
 ## License
 

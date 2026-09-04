@@ -3,9 +3,9 @@ package main
 
 import (
 	"fmt"
-	deep "github.com/brunoga/deep/v5"
-	"github.com/brunoga/deep/v5/condition"
-	gen "github.com/brunoga/deep/v5/gen"
+	deep "github.com/brunoga/deep/v6"
+	"github.com/brunoga/deep/v6/condition"
+	gen "github.com/brunoga/deep/v6/gen"
 	"log/slog"
 	"reflect"
 	"regexp"
@@ -83,7 +83,7 @@ func (t *SystemConfig) applyOperation(op deep.Operation, logger *slog.Logger) (b
 			}
 		}
 		if op.Kind == deep.OpReplace {
-			if v, ok := op.New.(SystemConfig); ok {
+			if v, ok := deep.ValueAs[SystemConfig](op.New); ok {
 				*t = v
 				return true, nil
 			}
@@ -103,7 +103,7 @@ func (t *SystemConfig) applyOperation(op deep.Operation, logger *slog.Logger) (b
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(string); ok {
+			if v, ok := deep.ValueAs[string](op.New); ok {
 				t.AppName = v
 				return true, nil
 			}
@@ -122,12 +122,8 @@ func (t *SystemConfig) applyOperation(op deep.Operation, logger *slog.Logger) (b
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(int); ok {
+			if v, ok := deep.ValueAs[int](op.New); ok {
 				t.MaxThreads = v
-				return true, nil
-			}
-			if f, ok := op.New.(float64); ok {
-				t.MaxThreads = int(f)
 				return true, nil
 			}
 		}
@@ -145,7 +141,7 @@ func (t *SystemConfig) applyOperation(op deep.Operation, logger *slog.Logger) (b
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(map[string]string); ok {
+			if v, ok := deep.ValueAs[map[string]string](op.New); ok {
 				t.Endpoints = v
 				return true, nil
 			}
@@ -159,7 +155,7 @@ func (t *SystemConfig) applyOperation(op deep.Operation, logger *slog.Logger) (b
 					delete(t.Endpoints, key)
 					return true, nil
 				}
-				if v, ok := op.New.(string); ok && (op.Kind == deep.OpAdd || op.Kind == deep.OpReplace) {
+				if v, ok := deep.ValueAs[string](op.New); ok && (op.Kind == deep.OpAdd || op.Kind == deep.OpReplace) {
 					if t.Endpoints == nil {
 						t.Endpoints = make(map[string]string)
 					}

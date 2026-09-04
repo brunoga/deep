@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/brunoga/deep/v5/crdt"
+	"github.com/brunoga/deep/v6/crdt"
 )
 
 // Counter, Set and Map are standalone convergent containers. Each replica edits

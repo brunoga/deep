@@ -6,6 +6,67 @@ All notable changes to this project are documented here, newest first.
 > version's entry before tagging, so the tag, the GitHub release notes, and this
 > file always agree.
 
+## v6.0.0
+
+The deletion half of the road that v5.14 paved: everything marked deprecated
+there is gone, and the two changes that genuinely needed a major version — the
+wire format and the module path — land together with it. The migration is
+mostly regeneration; see the README's "Migrating from v5".
+
+### Changed
+
+- **Module path is `github.com/brunoga/deep/v6`**, and the minimum Go version
+  is 1.27. Regenerate with deep-gen after updating — generated code imports the
+  module by path, so this is required, and it is also most of the migration.
+
+- **A decoded operation keeps its values encoded.** `Operation.Old` and `New`
+  arrive from the wire as `RawValue` — the encoded bytes, kept — and are
+  decoded at apply time against the type of the field the operation actually
+  addresses. Before this, they were decoded blind, into whatever the decoder's
+  untyped defaults are: every number a float64, every struct a
+  `map[string]any`, every []byte a base64 string. The library then had to
+  guess its way back to the field's real type, verified conversion by verified
+  conversion — the source of six separate bugs across v5.12 and v5.13.
+  Decoding into the field's actual type makes the decoder do the right thing
+  by construction. `ValueAs[T]` reads one by hand; Apply does it
+  automatically, on the generated fast path: a JSON-decoded patch applies in
+  529 ns where falling through to reflection cost over a microsecond.
+
+- **Operation kinds are strings on the wire.** `"k":"replace"` instead of
+  `"k":2` — the serialized form no longer depends on the order the kinds were
+  declared in, and the zero value is invalid rather than silently meaning add.
+  Patches stored by v5, with integer kinds, are still read; v5 cannot read
+  patches written by v6.
+
+- **Gob carries operations as their JSON form.** Gob's own encoding of an
+  `any` field needs every concrete type registered, cannot encode a nil
+  pointer inside an interface, and does not distinguish a nil slice from an
+  empty one. All three limitations are gone from the wire-fidelity matrix, and
+  the matrix now runs without a single `gob.Register` call.
+
+### Fixed
+
+- **`Clone` of a value containing a non-nil chan or func returned the zero
+  value.** The copy error was swallowed and the whole result discarded with
+  it — `Name` gone because a channel two fields over could not be copied. Such
+  fields now clone as nil, which is what the documentation always said.
+
+### Added
+
+- `MustDiff`, for tests and examples.
+- `ResolverFunc`, so a one-off merge resolver does not need a named type.
+- `PathString`, a Path for paths chosen at run time, where no selector
+  function can be written — deliberately unchecked, and documented as such.
+- `ValueAs[T]` and `RawValue`, described above.
+
+### Removed
+
+All of it deprecated in v5.14, all of it with a replacement already in place:
+the generator bookkeeping aliases (`CloneMemo`, `VisitSet`, `DiffMemo`,
+`NewCloneMemo`, `NewVisitSet`, `NewDiffMemo`, `CloneShared`,
+`ApplyOpReflection` — now in `deep/gen`), `Edit` (use `NewPatch`), `Status`
+(use `OpStatus`), and `gen.SortedKeys` (regeneration removes its callers).
+
 ## v5.15.0
 
 ### Changed

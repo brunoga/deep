@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/brunoga/deep/v5/crdt"
+	"github.com/brunoga/deep/v6/crdt"
 )
 
 // Cursor is what each editor broadcasts about itself. It is not part of the

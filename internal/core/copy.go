@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/brunoga/deep/v5/internal/unsafe"
+	"github.com/brunoga/deep/v6/internal/unsafe"
 )
 
 // Copier is an interface that types can implement to provide their own

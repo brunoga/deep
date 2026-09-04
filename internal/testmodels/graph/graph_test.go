@@ -3,7 +3,7 @@ package graph
 import (
 	"testing"
 
-	deep "github.com/brunoga/deep/v5"
+	deep "github.com/brunoga/deep/v6"
 )
 
 // The parity tests in the parent package check that these types behave the same

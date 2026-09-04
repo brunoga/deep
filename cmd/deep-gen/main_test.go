@@ -90,7 +90,7 @@ func TestGeneratedCodeHasNoInternalImports(t *testing.T) {
 				t.Fatalf("parse generated file: %v", err)
 			}
 
-			const modulePrefix = "github.com/brunoga/deep/v5/"
+			const modulePrefix = "github.com/brunoga/deep/v6/"
 			for _, imp := range file.Imports {
 				path, err := strconv.Unquote(imp.Path.Value)
 				if err != nil {
@@ -118,7 +118,7 @@ import (
 	clock "time"
 	"time"
 
-	"github.com/brunoga/deep/v5/crdt"
+	"github.com/brunoga/deep/v6/crdt"
 )
 
 type Detail struct{ A int }

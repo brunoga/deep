@@ -4,7 +4,7 @@ import (
 	"sync"
 	"testing"
 
-	deep "github.com/brunoga/deep/v5"
+	deep "github.com/brunoga/deep/v6"
 )
 
 type obsDoc struct {

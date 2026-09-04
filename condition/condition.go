@@ -1,11 +1,12 @@
 package condition
 
 import (
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"regexp"
 
-	icore "github.com/brunoga/deep/v5/internal/core"
+	icore "github.com/brunoga/deep/v6/internal/core"
 )
 
 // Condition operator constants.
@@ -257,4 +258,23 @@ func CheckType(v any, typeName string) bool {
 		return (rv.Kind() == reflect.Pointer || rv.Kind() == reflect.Interface || rv.Kind() == reflect.Slice || rv.Kind() == reflect.Map) && rv.IsNil()
 	}
 	return false
+}
+
+// GobEncode carries the condition as its JSON form, for the same reason
+// Operation does: gob's own encoding of the Value field would need every
+// concrete type registered, and the JSON form has no such requirement.
+func (c Condition) GobEncode() ([]byte, error) {
+	type wire Condition // avoid recursing into this method
+	return json.Marshal(wire(c))
+}
+
+// GobDecode is the inverse of GobEncode.
+func (c *Condition) GobDecode(data []byte) error {
+	type wire Condition
+	var w wire
+	if err := json.Unmarshal(data, &w); err != nil {
+		return err
+	}
+	*c = Condition(w)
+	return nil
 }

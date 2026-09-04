@@ -3,9 +3,9 @@ package graph
 
 import (
 	"fmt"
-	deep "github.com/brunoga/deep/v5"
-	"github.com/brunoga/deep/v5/condition"
-	gen "github.com/brunoga/deep/v5/gen"
+	deep "github.com/brunoga/deep/v6"
+	"github.com/brunoga/deep/v6/condition"
+	gen "github.com/brunoga/deep/v6/gen"
 	"log/slog"
 	"reflect"
 	"regexp"
@@ -83,7 +83,7 @@ func (t *Label) applyOperation(op deep.Operation, logger *slog.Logger) (bool, er
 			}
 		}
 		if op.Kind == deep.OpReplace {
-			if v, ok := op.New.(Label); ok {
+			if v, ok := deep.ValueAs[Label](op.New); ok {
 				*t = v
 				return true, nil
 			}
@@ -103,7 +103,7 @@ func (t *Label) applyOperation(op deep.Operation, logger *slog.Logger) (bool, er
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(string); ok {
+			if v, ok := deep.ValueAs[string](op.New); ok {
 				t.Text = v
 				return true, nil
 			}
@@ -122,12 +122,8 @@ func (t *Label) applyOperation(op deep.Operation, logger *slog.Logger) (bool, er
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(int); ok {
+			if v, ok := deep.ValueAs[int](op.New); ok {
 				t.Rank = v
-				return true, nil
-			}
-			if f, ok := op.New.(float64); ok {
-				t.Rank = int(f)
 				return true, nil
 			}
 		}
@@ -394,7 +390,7 @@ func (t *Edge) applyOperation(op deep.Operation, logger *slog.Logger) (bool, err
 			}
 		}
 		if op.Kind == deep.OpReplace {
-			if v, ok := op.New.(Edge); ok {
+			if v, ok := deep.ValueAs[Edge](op.New); ok {
 				*t = v
 				return true, nil
 			}
@@ -414,12 +410,8 @@ func (t *Edge) applyOperation(op deep.Operation, logger *slog.Logger) (bool, err
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(int); ok {
+			if v, ok := deep.ValueAs[int](op.New); ok {
 				t.Weight = v
-				return true, nil
-			}
-			if f, ok := op.New.(float64); ok {
-				t.Weight = int(f)
 				return true, nil
 			}
 		}
@@ -437,7 +429,7 @@ func (t *Edge) applyOperation(op deep.Operation, logger *slog.Logger) (bool, err
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(*Node); ok {
+			if v, ok := deep.ValueAs[*Node](op.New); ok {
 				t.To = v
 				return true, nil
 			}
@@ -735,7 +727,7 @@ func (t *Node) applyOperation(op deep.Operation, logger *slog.Logger) (bool, err
 			}
 		}
 		if op.Kind == deep.OpReplace {
-			if v, ok := op.New.(Node); ok {
+			if v, ok := deep.ValueAs[Node](op.New); ok {
 				*t = v
 				return true, nil
 			}
@@ -755,7 +747,7 @@ func (t *Node) applyOperation(op deep.Operation, logger *slog.Logger) (bool, err
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(string); ok {
+			if v, ok := deep.ValueAs[string](op.New); ok {
 				t.Name = v
 				return true, nil
 			}
@@ -774,7 +766,7 @@ func (t *Node) applyOperation(op deep.Operation, logger *slog.Logger) (bool, err
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(Label); ok {
+			if v, ok := deep.ValueAs[Label](op.New); ok {
 				t.Label = v
 				return true, nil
 			}
@@ -793,7 +785,7 @@ func (t *Node) applyOperation(op deep.Operation, logger *slog.Logger) (bool, err
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(*Node); ok {
+			if v, ok := deep.ValueAs[*Node](op.New); ok {
 				t.Next = v
 				return true, nil
 			}
@@ -812,7 +804,7 @@ func (t *Node) applyOperation(op deep.Operation, logger *slog.Logger) (bool, err
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.([]*Node); ok {
+			if v, ok := deep.ValueAs[[]*Node](op.New); ok {
 				t.Peers = v
 				return true, nil
 			}
@@ -831,7 +823,7 @@ func (t *Node) applyOperation(op deep.Operation, logger *slog.Logger) (bool, err
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(map[string]*Node); ok {
+			if v, ok := deep.ValueAs[map[string]*Node](op.New); ok {
 				t.Children = v
 				return true, nil
 			}
@@ -850,7 +842,7 @@ func (t *Node) applyOperation(op deep.Operation, logger *slog.Logger) (bool, err
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.([]Edge); ok {
+			if v, ok := deep.ValueAs[[]Edge](op.New); ok {
 				t.Edges = v
 				return true, nil
 			}
@@ -869,7 +861,7 @@ func (t *Node) applyOperation(op deep.Operation, logger *slog.Logger) (bool, err
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(map[string]Edge); ok {
+			if v, ok := deep.ValueAs[map[string]Edge](op.New); ok {
 				t.Links = v
 				return true, nil
 			}
@@ -888,7 +880,7 @@ func (t *Node) applyOperation(op deep.Operation, logger *slog.Logger) (bool, err
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(map[string]string); ok {
+			if v, ok := deep.ValueAs[map[string]string](op.New); ok {
 				t.Tags = v
 				return true, nil
 			}
@@ -907,7 +899,7 @@ func (t *Node) applyOperation(op deep.Operation, logger *slog.Logger) (bool, err
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.([]int); ok {
+			if v, ok := deep.ValueAs[[]int](op.New); ok {
 				t.Scores = v
 				return true, nil
 			}
@@ -932,7 +924,7 @@ func (t *Node) applyOperation(op deep.Operation, logger *slog.Logger) (bool, err
 						delete(t.Children, key)
 						return true, nil
 					}
-					if v, ok := op.New.(*Node); ok && (op.Kind == deep.OpAdd || op.Kind == deep.OpReplace) {
+					if v, ok := deep.ValueAs[*Node](op.New); ok && (op.Kind == deep.OpAdd || op.Kind == deep.OpReplace) {
 						if t.Children == nil {
 							t.Children = make(map[string]*Node)
 						}
@@ -953,7 +945,7 @@ func (t *Node) applyOperation(op deep.Operation, logger *slog.Logger) (bool, err
 					delete(t.Links, key)
 					return true, nil
 				}
-				if v, ok := op.New.(Edge); ok && (op.Kind == deep.OpAdd || op.Kind == deep.OpReplace) {
+				if v, ok := deep.ValueAs[Edge](op.New); ok && (op.Kind == deep.OpAdd || op.Kind == deep.OpReplace) {
 					if t.Links == nil {
 						t.Links = make(map[string]Edge)
 					}
@@ -970,7 +962,7 @@ func (t *Node) applyOperation(op deep.Operation, logger *slog.Logger) (bool, err
 					delete(t.Tags, key)
 					return true, nil
 				}
-				if v, ok := op.New.(string); ok && (op.Kind == deep.OpAdd || op.Kind == deep.OpReplace) {
+				if v, ok := deep.ValueAs[string](op.New); ok && (op.Kind == deep.OpAdd || op.Kind == deep.OpReplace) {
 					if t.Tags == nil {
 						t.Tags = make(map[string]string)
 					}
@@ -1322,8 +1314,7 @@ func (t *Node) equalShared(other *Node, seen *gen.VisitSet) bool {
 		if !ok {
 			return false
 		}
-		_e, _o := v, vOther
-		if !_e.equalShared(&_o, seen) {
+		if !v.equalShared(&vOther, seen) {
 			return false
 		}
 	}
@@ -1406,8 +1397,7 @@ func (t *Node) cloneShared(memo *gen.CloneMemo) *Node {
 	if t.Links != nil {
 		res.Links = make(map[string]Edge)
 		for k, v := range t.Links {
-			_e := v
-			res.Links[k] = *_e.cloneShared(memo)
+			res.Links[k] = *v.cloneShared(memo)
 		}
 	}
 	if t.Tags != nil {

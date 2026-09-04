@@ -17,7 +17,7 @@
 // For production use, run deep-gen to generate reflection-free implementations
 // of all four operations for your types:
 //
-//	//go:generate go run github.com/brunoga/deep/v5/cmd/deep-gen -type=MyType .
+//	//go:generate go run github.com/brunoga/deep/v6/cmd/deep-gen -type=MyType .
 //
 // Generated code is 4–14x faster than the reflection fallback and is used
 // automatically — no API changes required. The reflection engine remains as a
@@ -25,11 +25,11 @@
 //
 // # Patch Construction
 //
-// Patches can be computed via [Diff] or built manually with [Edit].
+// Patches can be computed via [Diff] or built manually with [NewPatch].
 // Typed operation constructors ([Set], [Add], [Remove], [Move], [Copy]) return
 // an [Op] value that can be passed to [Builder.With] for a fluent, type-safe chain:
 //
-//	patch := deep.Edit(&user).
+//	patch := deep.NewPatch[User]().
 //	    With(
 //	        deep.Set(nameField, "Alice"),
 //	        deep.Set(ageField, 30).If(deep.Gt(ageField, 0)),

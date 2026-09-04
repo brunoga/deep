@@ -3,8 +3,8 @@ package main
 import (
 	"fmt"
 
-	"github.com/brunoga/deep/v5"
-	"github.com/brunoga/deep/v5/crdt"
+	"github.com/brunoga/deep/v6"
+	"github.com/brunoga/deep/v6/crdt"
 )
 
 // Undoing an edit in a distributed setting cannot just rewind local state: the

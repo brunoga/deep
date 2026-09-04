@@ -1,4 +1,4 @@
-//go:generate go run github.com/brunoga/deep/v5/cmd/deep-gen -type=StrictUser -output strictuser_deep.go .
+//go:generate go run github.com/brunoga/deep/v6/cmd/deep-gen -type=StrictUser -output strictuser_deep.go .
 
 package main
 
@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/brunoga/deep/v5"
+	"github.com/brunoga/deep/v6"
 )
 
 type StrictUser struct {

@@ -3,9 +3,9 @@ package multirun
 
 import (
 	"fmt"
-	deep "github.com/brunoga/deep/v5"
-	"github.com/brunoga/deep/v5/condition"
-	gen "github.com/brunoga/deep/v5/gen"
+	deep "github.com/brunoga/deep/v6"
+	"github.com/brunoga/deep/v6/condition"
+	gen "github.com/brunoga/deep/v6/gen"
 	"log/slog"
 	"reflect"
 	"strings"
@@ -82,7 +82,7 @@ func (t *Alpha) applyOperation(op deep.Operation, logger *slog.Logger) (bool, er
 			}
 		}
 		if op.Kind == deep.OpReplace {
-			if v, ok := op.New.(Alpha); ok {
+			if v, ok := deep.ValueAs[Alpha](op.New); ok {
 				*t = v
 				return true, nil
 			}
@@ -102,7 +102,7 @@ func (t *Alpha) applyOperation(op deep.Operation, logger *slog.Logger) (bool, er
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(map[string]int); ok {
+			if v, ok := deep.ValueAs[map[string]int](op.New); ok {
 				t.M = v
 				return true, nil
 			}
@@ -116,7 +116,7 @@ func (t *Alpha) applyOperation(op deep.Operation, logger *slog.Logger) (bool, er
 					delete(t.M, key)
 					return true, nil
 				}
-				if v, ok := op.New.(int); ok && (op.Kind == deep.OpAdd || op.Kind == deep.OpReplace) {
+				if v, ok := deep.ValueAs[int](op.New); ok && (op.Kind == deep.OpAdd || op.Kind == deep.OpReplace) {
 					if t.M == nil {
 						t.M = make(map[string]int)
 					}

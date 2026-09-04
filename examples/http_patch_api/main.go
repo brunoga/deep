@@ -1,4 +1,4 @@
-//go:generate go run github.com/brunoga/deep/v5/cmd/deep-gen -type=Resource -output resource_deep.go .
+//go:generate go run github.com/brunoga/deep/v6/cmd/deep-gen -type=Resource -output resource_deep.go .
 
 package main
 
@@ -11,7 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 
-	"github.com/brunoga/deep/v5"
+	"github.com/brunoga/deep/v6"
 )
 
 type Resource struct {

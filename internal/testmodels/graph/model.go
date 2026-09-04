@@ -9,7 +9,7 @@
 // is possible: it must still generate the plain, memo-free code.
 package graph
 
-//go:generate go run github.com/brunoga/deep/v5/cmd/deep-gen -type=Node,Edge,Label -output node_deep.go .
+//go:generate go run github.com/brunoga/deep/v6/cmd/deep-gen -type=Node,Edge,Label -output node_deep.go .
 
 // Label cannot reach a cycle: nothing it holds leads back to a Label. Its
 // generated methods take no memo.

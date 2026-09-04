@@ -2,7 +2,7 @@ package deep
 
 import (
 	"fmt"
-	"github.com/brunoga/deep/v5/internal/engine"
+	"github.com/brunoga/deep/v6/internal/engine"
 )
 
 // Diff compares two values and returns a Patch describing the changes from a to b.
@@ -64,4 +64,15 @@ func Diff[T any](a, b T) (Patch[T], error) {
 	})
 
 	return res, nil
+}
+
+// MustDiff is [Diff] that panics on error. The error covers values the
+// reflection engine cannot process at all; for ordinary types it does not
+// happen, which makes this the comfortable form in tests and examples.
+func MustDiff[T any](a, b T) Patch[T] {
+	p, err := Diff(a, b)
+	if err != nil {
+		panic(err)
+	}
+	return p
 }

@@ -5,8 +5,8 @@ import (
 	"log/slog"
 	"reflect"
 
-	"github.com/brunoga/deep/v5/condition"
-	icore "github.com/brunoga/deep/v5/internal/core"
+	"github.com/brunoga/deep/v6/condition"
+	icore "github.com/brunoga/deep/v6/internal/core"
 )
 
 // ApplyOpReflection applies a single operation to target using reflection.

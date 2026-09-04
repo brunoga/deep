@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	deep "github.com/brunoga/deep/v5"
+	deep "github.com/brunoga/deep/v6"
 )
 
 // What survives a patch being serialized, and in which format.
@@ -18,11 +18,11 @@ import (
 // a struct, so an int arrives as a float64 and a struct as a map[string]any;
 // gob preserves types but only for types that were registered.
 //
-// That one fact has produced a run of separate-looking bugs: strict checks
-// rejecting state they matched, an `add` of a pointer field failing to assign,
-// values needing to be re-decoded on the way in. This table is here so the
-// answer is a property of the library that is checked, rather than something
-// rediscovered each time someone hits it.
+// Since v6, a decoded operation keeps its values encoded (RawValue) and
+// decodes them at apply time against the target field's real type, and gob
+// carries operations as their JSON form — so every mutation below survives
+// every encoding, strict checks included, with no gob.Register calls anywhere
+// in this file. This table is what checks that.
 
 type wireInner struct {
 	N     int    `json:"n"`
@@ -99,11 +99,6 @@ var wireEncodings = []struct {
 	// verifies Operation.Old against the target, so it only works where the
 	// decoded Old can still be compared with the value it describes.
 	strict bool
-	// limitation names the mutations the format itself cannot carry, with the
-	// reason. These are properties of the encoding rather than defects in the
-	// patch, and they are recorded here rather than worked around: a patch
-	// representation bent to suit one codec would cost every other caller.
-	limitation map[string]string
 }{
 	{
 		name:      "in process",
@@ -134,8 +129,7 @@ var wireEncodings = []struct {
 			err := gob.NewDecoder(&buf).Decode(&back)
 			return back, err
 		},
-		strict:     true,
-		limitation: gobLimitations,
+		strict: true,
 	},
 	{
 		name: "RFC 6902",
@@ -153,36 +147,11 @@ var wireEncodings = []struct {
 	},
 }
 
-// gobLimitations are encoding/gob's, not this library's.
-var gobLimitations = map[string]string{
-	"pointer field cleared": "gob cannot encode a nil pointer inside an interface, " +
-		"and Operation.New is an interface holding the typed nil that clearing a pointer means",
-	"slice emptied": "gob does not distinguish a nil slice from an empty one, " +
-		"so an operation that sets a slice to empty arrives setting it to nil",
-}
-
-func init() {
-	// gob needs to be told the concrete types it will find behind an `any`.
-	// gob flattens pointers, so registering wireInner covers *wireInner too;
-	// registering both is a duplicate-name panic.
-	gob.Register(wireInner{})
-	gob.Register(time.Time{})
-	gob.Register(wirePriority(0))
-	gob.Register([]int(nil))
-	gob.Register([]byte(nil))
-	gob.Register(map[string]int(nil))
-	gob.Register(map[string]string(nil))
-	gob.Register(wireDoc{})
-}
-
 func TestWireFidelity(t *testing.T) {
 	for _, enc := range wireEncodings {
 		t.Run(enc.name, func(t *testing.T) {
 			for _, m := range wireMutations {
 				t.Run(m.name, func(t *testing.T) {
-					if why, ok := enc.limitation[m.name]; ok {
-						t.Skip(why)
-					}
 					before := wireBase()
 					after := wireBase()
 					m.apply(&after)
@@ -220,9 +189,6 @@ func TestWireFidelityStrict(t *testing.T) {
 		t.Run(enc.name, func(t *testing.T) {
 			for _, m := range wireMutations {
 				t.Run(m.name, func(t *testing.T) {
-					if why, ok := enc.limitation[m.name]; ok {
-						t.Skip(why)
-					}
 					before := wireBase()
 					after := wireBase()
 					m.apply(&after)
@@ -278,5 +244,25 @@ func TestWireStrictStillCatchesDrift(t *testing.T) {
 				t.Error("strict apply succeeded against a value that had drifted")
 			}
 		})
+	}
+}
+
+func TestV5IntegerKindsStillParse(t *testing.T) {
+	// v5 wrote operation kinds as small integers in declaration order. v6
+	// writes strings, but a patch stored by v5 should still be readable.
+	v5 := []byte(`{"ops":[{"k":2,"p":"/int","o":1,"n":42}],"strict":true}`)
+	var p deep.Patch[wireDoc]
+	if err := json.Unmarshal(v5, &p); err != nil {
+		t.Fatalf("unmarshal v5 patch: %v", err)
+	}
+	if p.Operations[0].Kind != deep.OpReplace {
+		t.Fatalf("kind = %q, want replace", p.Operations[0].Kind)
+	}
+	target := wireBase()
+	if err := deep.Apply(&target, p); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if target.Int != 42 {
+		t.Errorf("Int = %d, want 42", target.Int)
 	}
 }

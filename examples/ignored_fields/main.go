@@ -1,4 +1,4 @@
-//go:generate go run github.com/brunoga/deep/v5/cmd/deep-gen -type=User -output user_deep.go .
+//go:generate go run github.com/brunoga/deep/v6/cmd/deep-gen -type=User -output user_deep.go .
 
 package main
 
@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/brunoga/deep/v5"
+	"github.com/brunoga/deep/v6"
 )
 
 // Fields tagged json:"-" or deep:"-" are invisible to deep: they never appear

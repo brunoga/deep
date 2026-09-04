@@ -293,12 +293,12 @@ func fieldApplyCase(f FieldInfo, p string) string {
 	}
 	// Only add and replace assign; remove, move and copy fall through to the
 	// reflection path, which owns their semantics.
+	// ValueAs takes the value whether it is already a T (built in-process),
+	// still encoded (arrived over the wire), or losslessly convertible — which
+	// is what keeps a wire patch on this fast path instead of falling through
+	// to reflection.
 	fmt.Fprintf(&b, "\t\tif op.Kind == %sOpAdd || op.Kind == %sOpReplace {\n", p, p)
-	fmt.Fprintf(&b, "\t\t\tif v, ok := op.New.(%s); ok {\n\t\t\t\tt.%s = v\n\t\t\t\treturn true, nil\n\t\t\t}\n", f.Type, f.Name)
-	// Numeric float64 fallback (JSON deserialises numbers as float64)
-	if f.Type == "int" || f.Type == "int64" || f.Type == "float64" {
-		fmt.Fprintf(&b, "\t\t\tif f, ok := op.New.(float64); ok {\n\t\t\t\tt.%s = %s(f)\n\t\t\t\treturn true, nil\n\t\t\t}\n", f.Name, f.Type)
-	}
+	fmt.Fprintf(&b, "\t\t\tif v, ok := %sValueAs[%s](op.New); ok {\n\t\t\t\tt.%s = v\n\t\t\t\treturn true, nil\n\t\t\t}\n", p, f.Type, f.Name)
 	b.WriteString("\t\t}\n")
 	return b.String()
 }
@@ -348,7 +348,7 @@ func delegateCase(f FieldInfo, p string) string {
 			b.WriteString("\t\t\tif len(parts) == 1 {\n\t\t\tif !op.Strict {\n")
 			fmt.Fprintf(&b, "\t\t\t\tif op.Kind == %sOpRemove {\n", p)
 			fmt.Fprintf(&b, "\t\t\t\t\tdelete(t.%s, key)\n\t\t\t\t\treturn true, nil\n\t\t\t\t}\n", f.Name)
-			fmt.Fprintf(&b, "\t\t\t\tif v, ok := op.New.(%s); ok && (op.Kind == %sOpAdd || op.Kind == %sOpReplace) {\n", vt, p, p)
+			fmt.Fprintf(&b, "\t\t\t\tif v, ok := %sValueAs[%s](op.New); ok && (op.Kind == %sOpAdd || op.Kind == %sOpReplace) {\n", p, vt, p, p)
 			fmt.Fprintf(&b, "\t\t\t\t\tif t.%s == nil { t.%s = make(%s) }\n", f.Name, f.Name, f.Type)
 			fmt.Fprintf(&b, "\t\t\t\t\tt.%s[key] = v\n\t\t\t\t\treturn true, nil\n\t\t\t\t}\n", f.Name)
 			b.WriteString("\t\t\t}\n\t\t\t} else if val, ok := t." + f.Name + "[key]; ok && val != nil {\n")
@@ -365,7 +365,7 @@ func delegateCase(f FieldInfo, p string) string {
 			b.WriteString("\t\t\tif len(parts) == 1 && !op.Strict {\n")
 			fmt.Fprintf(&b, "\t\t\t\tif op.Kind == %sOpRemove {\n", p)
 			fmt.Fprintf(&b, "\t\t\t\t\tdelete(t.%s, key)\n\t\t\t\t\treturn true, nil\n\t\t\t\t}\n", f.Name)
-			fmt.Fprintf(&b, "\t\t\t\tif v, ok := op.New.(%s); ok && (op.Kind == %sOpAdd || op.Kind == %sOpReplace) {\n", vt, p, p)
+			fmt.Fprintf(&b, "\t\t\t\tif v, ok := %sValueAs[%s](op.New); ok && (op.Kind == %sOpAdd || op.Kind == %sOpReplace) {\n", p, vt, p, p)
 			fmt.Fprintf(&b, "\t\t\t\t\tif t.%s == nil { t.%s = make(%s) }\n", f.Name, f.Name, f.Type)
 			fmt.Fprintf(&b, "\t\t\t\t\tt.%s[key] = v\n\t\t\t\t\treturn true, nil\n\t\t\t\t}\n", f.Name)
 			b.WriteString("\t\t\t}\n")
@@ -723,16 +723,10 @@ func equalFieldCode(f FieldInfo, p string) string {
 				b.WriteString("\t\tif (v == nil) != (vOther == nil) { return false }\n")
 				fmt.Fprintf(&b, "\t\tif v != nil && !%s { return false }\n", equalCall("v", "vOther", f.ElemShared))
 			case f.ElemGenerated:
-				if f.ElemShared {
-					// Map values are not addressable, so the visited set would
-					// otherwise key on the range variable. Copying into
-					// variables declared inside the loop body gives each
-					// iteration its own, in every language version.
-					b.WriteString("\t\t_e, _o := v, vOther\n")
-					fmt.Fprintf(&b, "\t\tif !%s { return false }\n", equalCall("_e", "&_o", f.ElemShared))
-				} else {
-					b.WriteString("\t\tif !v.Equal(&vOther) { return false }\n")
-				}
+				// Range variables are per-iteration since Go 1.22, so v is a
+				// fresh addressable variable each time and the visited set can
+				// key on it directly.
+				fmt.Fprintf(&b, "\t\tif !%s { return false }\n", equalCall("v", "&vOther", f.ElemShared))
 			case f.ElemComparable:
 				b.WriteString("\t\tif v != vOther { return false }\n")
 			default:
@@ -928,15 +922,9 @@ func copyFieldPost(f FieldInfo, p, g string, shared bool) string {
 			case isPtr(vt):
 				fmt.Fprintf(&b, "\t\t\tres.%s[k] = %s\n", f.Name, genericClone("v"))
 			case f.ElemGenerated:
-				if f.ElemShared {
-					// See equalFieldCode: a map value has no stable address, so
-					// it is copied into a variable declared inside the loop
-					// body before the memo keys on it.
-					b.WriteString("\t\t\t_e := v\n")
-					fmt.Fprintf(&b, "\t\t\tres.%s[k] = *%s\n", f.Name, cloneCall("_e", true))
-				} else {
-					fmt.Fprintf(&b, "\t\t\tres.%s[k] = *v.Clone()\n", f.Name)
-				}
+				// v is per-iteration and addressable (Go 1.22), so the memo
+				// can key on it directly.
+				fmt.Fprintf(&b, "\t\t\tres.%s[k] = *%s\n", f.Name, cloneCall("v", f.ElemShared))
 			case elemNeedsCopy(f, vt):
 				// Reference-typed or opaque values are deep-copied one by one.
 				fmt.Fprintf(&b, "\t\t\tres.%s[k] = %s\n", f.Name, genericClone("v"))
@@ -979,16 +967,16 @@ import (
 	"strings"
 {{- end}}
 {{- if .NeedsCondition}}
-	"github.com/brunoga/deep/v5/condition"
+	"github.com/brunoga/deep/v6/condition"
 {{- end}}
 {{- if .NeedsDeep}}
-	deep "github.com/brunoga/deep/v5"
+	deep "github.com/brunoga/deep/v6"
 {{- end}}
 {{- if .NeedsCrdt}}
-	crdt "github.com/brunoga/deep/v5/crdt"
+	crdt "github.com/brunoga/deep/v6/crdt"
 {{- end}}
 {{- if .NeedsGen}}
-	gen "github.com/brunoga/deep/v5/gen"
+	gen "github.com/brunoga/deep/v6/gen"
 {{- end}}
 {{- range .Extra}}
 	{{if .Alias}}{{.Alias}} {{end}}"{{.Path}}"
@@ -1061,7 +1049,7 @@ var applyOpTmpl = template.Must(template.New("applyOp").Funcs(tmplFuncs).Parse(
 			}
 		}
 		if op.Kind == {{.P}}OpReplace {
-			if v, ok := op.New.({{.TypeName}}); ok {
+			if v, ok := {{.P}}ValueAs[{{.TypeName}}](op.New); ok {
 				*t = v
 				return true, nil
 			}
@@ -1278,14 +1266,14 @@ var fixedImports = map[string]string{
 	"reflect":   "reflect",
 	"regexp":    "regexp",
 	"strings":   "strings",
-	"condition": "github.com/brunoga/deep/v5/condition",
+	"condition": "github.com/brunoga/deep/v6/condition",
 	"deep":      deepPkgPath,
 	"crdt":      crdtPkgPath,
 }
 
 const (
-	deepPkgPath = "github.com/brunoga/deep/v5"
-	crdtPkgPath = "github.com/brunoga/deep/v5/crdt"
+	deepPkgPath = "github.com/brunoga/deep/v6"
+	crdtPkgPath = "github.com/brunoga/deep/v6/crdt"
 )
 
 var qualifierRes = map[string]*regexp.Regexp{}

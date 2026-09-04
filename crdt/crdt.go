@@ -95,9 +95,9 @@ import (
 	"strings"
 	"sync"
 
-	deep "github.com/brunoga/deep/v5"
-	"github.com/brunoga/deep/v5/crdt/hlc"
-	icore "github.com/brunoga/deep/v5/internal/core"
+	deep "github.com/brunoga/deep/v6"
+	"github.com/brunoga/deep/v6/crdt/hlc"
+	icore "github.com/brunoga/deep/v6/internal/core"
 )
 
 // LWW represents a Last-Write-Wins register for type T.

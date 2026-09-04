@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/brunoga/deep/v5/internal/unsafe"
+	"github.com/brunoga/deep/v6/internal/unsafe"
 )
 
 // EqualOption allows configuring the behavior of the Equal function.
@@ -275,25 +275,19 @@ func EqualCoercedValue(current, ev reflect.Value) bool {
 		return ValueEqual(current, ev, nil)
 	}
 
-	conv := ConvertValue(ev, current.Type())
-	if !conv.IsValid() || conv.Type() != current.Type() {
-		return false
-	}
-
-	// Only a numeric conversion needs verifying, and it needs it badly:
-	// float64(5.7) converts to int(5), which would otherwise match a field
-	// holding 5. Converting back has to reproduce what was given.
-	//
-	// The other conversions this relies on are not reversible and do not need
-	// to be. A map[string]any decoding into a struct — what a value looks like
-	// after JSON — has no meaningful conversion back, and no truncation to
-	// hide: the decode either produced the value or it did not, and the
-	// comparison below settles that.
-	if isNumericKind(current.Kind()) && isNumericKind(ev.Kind()) {
-		back := ConvertValue(conv, ev.Type())
-		if !back.IsValid() || back.Type() != ev.Type() || !ValueEqual(back, ev, nil) {
+	// A still-encoded value is decoded into the current value's own type
+	// before comparing, so the comparison is exact rather than coerced.
+	if ev.Type() == rawValueType {
+		decoded, err := ev.Interface().(RawValue).Decode(current.Type())
+		if err != nil {
 			return false
 		}
+		return ValueEqual(current, decoded, nil)
+	}
+
+	conv, ok := ConvertValueVerified(ev, current.Type())
+	if !ok {
+		return false
 	}
 	return ValueEqual(current, conv, nil)
 }
@@ -307,4 +301,27 @@ func isNilLike(v reflect.Value) bool {
 		return v.IsNil()
 	}
 	return false
+}
+
+// ConvertValueVerified converts v to targetType, refusing conversions that
+// lose information.
+//
+// Only a numeric conversion needs verifying, and it needs it badly:
+// float64(5.7) converts to int(5), which would otherwise pass for a field
+// holding 5. Converting back has to reproduce what was given. The other
+// conversions this performs are not reversible and do not need to be — a
+// map[string]any decoding into a struct has no meaningful conversion back, and
+// no truncation to hide: the decode either produces the value or it fails.
+func ConvertValueVerified(v reflect.Value, targetType reflect.Type) (reflect.Value, bool) {
+	conv := ConvertValue(v, targetType)
+	if !conv.IsValid() || conv.Type() != targetType {
+		return reflect.Value{}, false
+	}
+	if isNumericKind(targetType.Kind()) && isNumericKind(v.Kind()) {
+		back := ConvertValue(conv, v.Type())
+		if !back.IsValid() || back.Type() != v.Type() || !ValueEqual(back, v, nil) {
+			return reflect.Value{}, false
+		}
+	}
+	return conv, true
 }

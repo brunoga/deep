@@ -1,4 +1,4 @@
-//go:generate go run github.com/brunoga/deep/v5/cmd/deep-gen -type=Account -output account_deep.go .
+//go:generate go run github.com/brunoga/deep/v6/cmd/deep-gen -type=Account -output account_deep.go .
 
 package main
 
@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/brunoga/deep/v5"
+	"github.com/brunoga/deep/v6"
 )
 
 // A patch-level Guard is all-or-nothing: if it fails, nothing applies (see the
@@ -31,7 +31,7 @@ func main() {
 	//   - always stamp the last-seen date
 	//   - charge a late fee only if a balance is outstanding
 	//   - suspend only if the debt is serious
-	nightly := deep.Edit(&Account{}).
+	nightly := deep.NewPatch[Account]().
 		With(deep.Set(seenPath, "2026-09-01")).
 		With(deep.Set(feePath, 25.0).If(deep.Gt(balancePath, 0.0))).
 		With(deep.Set(statusPath, "suspended").If(deep.Gt(balancePath, 500.0))).

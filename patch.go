@@ -3,10 +3,12 @@ package deep
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 
-	"github.com/brunoga/deep/v5/condition"
-	"github.com/brunoga/deep/v5/internal/engine"
+	"github.com/brunoga/deep/v6/condition"
+	icore "github.com/brunoga/deep/v6/internal/core"
+	"github.com/brunoga/deep/v6/internal/engine"
 )
 
 // ApplyError represents one or more errors that occurred during patch application.
@@ -69,8 +71,17 @@ type Patch[T any] struct {
 
 // Operation is an alias for the internal engine operation type.
 //
-// Note: after JSON round-trip, numeric Old/New values become float64.
+// An operation decoded from the wire carries its Old and New still encoded, as
+// [RawValue]; they are decoded at apply time against the type of the field the
+// operation addresses, so an int field receives an int and a struct field a
+// struct — not the float64 and map[string]any a blind decode would produce.
 type Operation = engine.Operation
+
+// RawValue is a value that arrived over the wire and has not been decoded yet,
+// because the right type to decode it into is not known until the operation
+// carrying it reaches its target field. [ValueAs] decodes one; Apply does so
+// automatically.
+type RawValue = engine.RawValue
 
 // IsEmpty reports whether the patch contains no operations.
 func (p Patch[T]) IsEmpty() bool {
@@ -297,74 +308,82 @@ func (p Patch[T]) ToJSONPatch() ([]byte, error) {
 //   - Any other test op — and any unknown op — is dropped: the operation model
 //     has no general test kind.
 func ParseJSONPatch[T any](data []byte) (Patch[T], error) {
-	var ops []map[string]any
+	// Values are captured still encoded, the way Operation's own UnmarshalJSON
+	// captures them: they decode at apply time against the target field's real
+	// type.
+	type rfcOp struct {
+		Op     string          `json:"op"`
+		Path   string          `json:"path"`
+		From   string          `json:"from"`
+		Value  json.RawMessage `json:"value"`
+		If     map[string]any  `json:"if"`
+		Unless map[string]any  `json:"unless"`
+	}
+	var ops []rfcOp
 	if err := json.Unmarshal(data, &ops); err != nil {
 		return Patch[T]{}, fmt.Errorf("ParseJSONPatch: %w", err)
 	}
-	res := Patch[T]{}
-	var pendingTest map[string]any // last test-with-value entry, awaiting its op
-	for i, m := range ops {
-		opStr, _ := m["op"].(string)
-		path, _ := m["path"].(string)
 
+	rawOf := func(v json.RawMessage) any {
+		if len(v) == 0 || string(v) == "null" {
+			return nil
+		}
+		return RawValue{JSON: v}
+	}
+
+	res := Patch[T]{}
+	var pendingTest *rfcOp // last test-with-value entry, awaiting its op
+	for i, m := range ops {
 		// Global condition encoding: ONLY the leading entry (matched as
 		// op==test, path=="/", "if" present) is lifted into Guard.
-		if i == 0 && opStr == "test" && path == "/" {
-			if ifPred, ok := m["if"].(map[string]any); ok {
-				res.Guard = condition.FromPredicate(ifPred)
-				continue
-			}
+		if i == 0 && m.Op == "test" && m.Path == "/" && m.If != nil {
+			res.Guard = condition.FromPredicate(m.If)
+			continue
 		}
 
 		// Strict Old-value encoding: remember a test-with-value entry and
 		// attach it to the operation that follows at the same path.
-		if opStr == "test" {
-			if _, ok := m["value"]; ok {
-				pendingTest = m
-				continue
-			}
+		if m.Op == "test" && len(m.Value) > 0 {
+			pendingTest = &m
+			continue
 		}
 		test := pendingTest
 		pendingTest = nil
 
-		op := Operation{Path: path}
-
-		// Per-op conditions
-		if ifPred, ok := m["if"].(map[string]any); ok {
-			op.If = condition.FromPredicate(ifPred)
+		op := Operation{Path: m.Path, From: m.From}
+		if m.If != nil {
+			op.If = condition.FromPredicate(m.If)
 		}
-		if unlessPred, ok := m["unless"].(map[string]any); ok {
-			op.Unless = condition.FromPredicate(unlessPred)
+		if m.Unless != nil {
+			op.Unless = condition.FromPredicate(m.Unless)
 		}
 
-		switch opStr {
+		switch m.Op {
 		case "add":
 			op.Kind = OpAdd
-			op.New = m["value"]
+			op.New = rawOf(m.Value)
 		case "remove":
 			op.Kind = OpRemove
+			op.From = ""
 		case "replace":
 			op.Kind = OpReplace
-			op.New = m["value"]
+			op.New = rawOf(m.Value)
 		case "move":
 			op.Kind = OpMove
-			if s, ok := m["from"].(string); ok {
-				op.From = s
-			}
 		case "copy":
 			op.Kind = OpCopy
-			if s, ok := m["from"].(string); ok {
-				op.From = s
-			}
 		case "log":
 			op.Kind = OpLog
-			op.New = m["value"]
+			op.New = rawOf(m.Value)
 		default:
 			continue // unknown op, skip
 		}
+		if op.Kind != OpMove && op.Kind != OpCopy {
+			op.From = ""
+		}
 
-		if test != nil && path == test["path"] && (op.Kind == OpReplace || op.Kind == OpRemove) {
-			op.Old = test["value"]
+		if test != nil && m.Path == test.Path && (op.Kind == OpReplace || op.Kind == OpRemove) {
+			op.Old = rawOf(test.Value)
 			res.Strict = true
 		}
 
@@ -381,18 +400,6 @@ func ParseJSONPatch[T any](data []byte) (Patch[T], error) {
 //
 // The builder produces a standalone patch, not a live view of anything.
 func NewPatch[T any]() *Builder[T] {
-	return &Builder[T]{}
-}
-
-// Edit returns a Builder for constructing a Patch[T]. The target argument is
-// used only for type inference and is not stored; the builder produces a
-// standalone Patch, not a live view of the target.
-//
-// Deprecated: use [NewPatch], which infers T from the type argument and does
-// not need a value to point at. Edit's parameter exists only so that T could be
-// inferred from a variable, which meant writing deep.Edit[Listing](nil) when
-// there was no variable to hand.
-func Edit[T any](_ *T) *Builder[T] {
 	return &Builder[T]{}
 }
 
@@ -552,4 +559,43 @@ func Or(conds ...*condition.Condition) *condition.Condition {
 // Not inverts a condition.
 func Not(c *condition.Condition) *condition.Condition {
 	return &condition.Condition{Op: condition.Not, Sub: []*condition.Condition{c}}
+}
+
+// ValueAs extracts an operation's Old or New as a T.
+//
+// The value may be exactly a T — a patch built in this process — or a
+// still-encoded [RawValue] from a patch that arrived over the wire, which is
+// decoded directly into T. A value of a different but losslessly convertible
+// type is converted; a lossy conversion is refused, so float64(5.7) does not
+// pass for an int.
+//
+// Generated code applies operations through this, which is what keeps a wire
+// patch on the fast path; it is exported for callers that inspect operations
+// themselves.
+func ValueAs[T any](v any) (T, bool) {
+	if t, ok := v.(T); ok {
+		return t, true
+	}
+	var zero T
+	if v == nil {
+		return zero, false
+	}
+	if raw, ok := v.(RawValue); ok {
+		var out T
+		if err := json.Unmarshal(raw.JSON, &out); err != nil {
+			return zero, false
+		}
+		return out, true
+	}
+	target := reflect.TypeOf(zero)
+	if target == nil {
+		// T is an interface type other than the value's own; the assertion
+		// above already answered that.
+		return zero, false
+	}
+	conv, ok := icore.ConvertValueVerified(reflect.ValueOf(v), target)
+	if !ok {
+		return zero, false
+	}
+	return conv.Interface().(T), true
 }

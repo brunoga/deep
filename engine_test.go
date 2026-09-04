@@ -1,14 +1,15 @@
 package deep_test
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
 
-	"github.com/brunoga/deep/v5"
-	"github.com/brunoga/deep/v5/crdt"
-	"github.com/brunoga/deep/v5/crdt/hlc"
-	"github.com/brunoga/deep/v5/internal/testmodels"
+	"github.com/brunoga/deep/v6"
+	"github.com/brunoga/deep/v6/crdt"
+	"github.com/brunoga/deep/v6/crdt/hlc"
+	"github.com/brunoga/deep/v6/internal/testmodels"
 )
 
 func TestCausality(t *testing.T) {
@@ -214,8 +215,11 @@ func TestEngineFailures(t *testing.T) {
 
 func TestFinalPush(t *testing.T) {
 	// 1. All deep.OpKinds
-	for i := 0; i < 10; i++ {
-		_ = deep.OpKind(i).String()
+	for _, k := range []deep.OpKind{
+		deep.OpAdd, deep.OpRemove, deep.OpReplace, deep.OpMove,
+		deep.OpCopy, deep.OpLog, deep.OpAlias, "",
+	} {
+		_ = k.String()
 	}
 
 	// 2. Nested delegation failure (nil field)
@@ -421,5 +425,35 @@ func BenchmarkDiffGeneratedLargeMap(b *testing.B) {
 				deep.Diff(u1, u2)
 			}
 		})
+	}
+}
+
+// BenchmarkApplyGeneratedWirePatch applies a patch that has been through JSON,
+// as a server applying client patches does on every request. Its values arrive
+// still encoded (RawValue) and are decoded against the target field's type by
+// the same generated fast path that handles in-process patches — this is what
+// ValueAs buys over falling through to the reflection engine, which is what a
+// failed type assertion used to mean.
+func BenchmarkApplyGeneratedWirePatch(b *testing.B) {
+	u1, u2 := benchUsers()
+	p, err := deep.Diff(u1, u2)
+	if err != nil {
+		b.Fatal(err)
+	}
+	data, err := json.Marshal(p)
+	if err != nil {
+		b.Fatal(err)
+	}
+	var wire deep.Patch[testmodels.User]
+	if err := json.Unmarshal(data, &wire); err != nil {
+		b.Fatal(err)
+	}
+
+	b.ReportAllocs()
+	for b.Loop() {
+		target := u1
+		if err := deep.Apply(&target, wire); err != nil {
+			b.Fatal(err)
+		}
 	}
 }

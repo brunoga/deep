@@ -7,9 +7,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/brunoga/deep/v5/condition"
-	icore "github.com/brunoga/deep/v5/internal/core"
-	"github.com/brunoga/deep/v5/internal/engine"
+	"github.com/brunoga/deep/v6/condition"
+	icore "github.com/brunoga/deep/v6/internal/core"
+	"github.com/brunoga/deep/v6/internal/engine"
 )
 
 type applyConfig struct {
@@ -140,6 +140,19 @@ type ConflictResolver interface {
 	Resolve(path string, local, remote any) any
 }
 
+// ResolverFunc adapts a function to the [ConflictResolver] interface, so a
+// one-off resolver does not need a named type:
+//
+//	deep.Merge(a, b, deep.ResolverFunc(func(path string, local, remote any) any {
+//		return local // ours wins
+//	}))
+type ResolverFunc func(path string, local, remote any) any
+
+// Resolve calls f.
+func (f ResolverFunc) Resolve(path string, local, remote any) any {
+	return f(path, local, remote)
+}
+
 // Merge combines two patches into a single patch, resolving conflicts.
 //
 // Operations are matched by path. When both patches write the same path,
@@ -263,7 +276,13 @@ func EqualCoerced(current, expected any) bool {
 	return icore.EqualCoerced(reflect.ValueOf(current), expected)
 }
 
-// Clone returns a deep copy of v.
+// Clone returns a deep copy of v. Non-nil chan, func and unsafe.Pointer
+// values, which have no meaningful deep copy, come back nil; everything else
+// is copied.
+//
+// Before v6 a value containing a non-nil chan came back as the zero value of
+// T — the copy error was swallowed and the whole result discarded with it,
+// which is the worst possible reading of "cannot copy this field".
 func Clone[T any](v T) T {
 	if copyable, ok := any(&v).(interface {
 		Clone() *T
@@ -271,6 +290,10 @@ func Clone[T any](v T) T {
 		return *copyable.Clone()
 	}
 
-	res, _ := engine.Copy(v)
+	res, err := engine.Copy(v, engine.SkipUnsupported())
+	if err != nil {
+		var zero T
+		return zero
+	}
 	return res
 }

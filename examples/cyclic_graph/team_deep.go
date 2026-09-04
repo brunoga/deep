@@ -3,9 +3,9 @@ package main
 
 import (
 	"fmt"
-	deep "github.com/brunoga/deep/v5"
-	"github.com/brunoga/deep/v5/condition"
-	gen "github.com/brunoga/deep/v5/gen"
+	deep "github.com/brunoga/deep/v6"
+	"github.com/brunoga/deep/v6/condition"
+	gen "github.com/brunoga/deep/v6/gen"
 	"log/slog"
 	"reflect"
 	"regexp"
@@ -83,7 +83,7 @@ func (t *Person) applyOperation(op deep.Operation, logger *slog.Logger) (bool, e
 			}
 		}
 		if op.Kind == deep.OpReplace {
-			if v, ok := op.New.(Person); ok {
+			if v, ok := deep.ValueAs[Person](op.New); ok {
 				*t = v
 				return true, nil
 			}
@@ -103,7 +103,7 @@ func (t *Person) applyOperation(op deep.Operation, logger *slog.Logger) (bool, e
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(string); ok {
+			if v, ok := deep.ValueAs[string](op.New); ok {
 				t.Name = v
 				return true, nil
 			}
@@ -122,7 +122,7 @@ func (t *Person) applyOperation(op deep.Operation, logger *slog.Logger) (bool, e
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(*Team); ok {
+			if v, ok := deep.ValueAs[*Team](op.New); ok {
 				t.Team = v
 				return true, nil
 			}
@@ -141,7 +141,7 @@ func (t *Person) applyOperation(op deep.Operation, logger *slog.Logger) (bool, e
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(*Person); ok {
+			if v, ok := deep.ValueAs[*Person](op.New); ok {
 				t.Manager = v
 				return true, nil
 			}
@@ -449,7 +449,7 @@ func (t *Team) applyOperation(op deep.Operation, logger *slog.Logger) (bool, err
 			}
 		}
 		if op.Kind == deep.OpReplace {
-			if v, ok := op.New.(Team); ok {
+			if v, ok := deep.ValueAs[Team](op.New); ok {
 				*t = v
 				return true, nil
 			}
@@ -469,7 +469,7 @@ func (t *Team) applyOperation(op deep.Operation, logger *slog.Logger) (bool, err
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(string); ok {
+			if v, ok := deep.ValueAs[string](op.New); ok {
 				t.Name = v
 				return true, nil
 			}
@@ -488,7 +488,7 @@ func (t *Team) applyOperation(op deep.Operation, logger *slog.Logger) (bool, err
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.([]*Person); ok {
+			if v, ok := deep.ValueAs[[]*Person](op.New); ok {
 				t.Members = v
 				return true, nil
 			}
@@ -507,7 +507,7 @@ func (t *Team) applyOperation(op deep.Operation, logger *slog.Logger) (bool, err
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(map[string]*Person); ok {
+			if v, ok := deep.ValueAs[map[string]*Person](op.New); ok {
 				t.ByName = v
 				return true, nil
 			}
@@ -526,7 +526,7 @@ func (t *Team) applyOperation(op deep.Operation, logger *slog.Logger) (bool, err
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(*Person); ok {
+			if v, ok := deep.ValueAs[*Person](op.New); ok {
 				t.Lead = v
 				return true, nil
 			}
@@ -541,7 +541,7 @@ func (t *Team) applyOperation(op deep.Operation, logger *slog.Logger) (bool, err
 						delete(t.ByName, key)
 						return true, nil
 					}
-					if v, ok := op.New.(*Person); ok && (op.Kind == deep.OpAdd || op.Kind == deep.OpReplace) {
+					if v, ok := deep.ValueAs[*Person](op.New); ok && (op.Kind == deep.OpAdd || op.Kind == deep.OpReplace) {
 						if t.ByName == nil {
 							t.ByName = make(map[string]*Person)
 						}

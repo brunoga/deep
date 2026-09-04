@@ -9,7 +9,7 @@
 // measures.
 package record
 
-//go:generate go run github.com/brunoga/deep/v5/cmd/deep-gen -type=Record -output record_deep.go .
+//go:generate go run github.com/brunoga/deep/v6/cmd/deep-gen -type=Record -output record_deep.go .
 
 // Record is an inventory row. Version is what a compare-and-swap writer checks;
 // the rest are owned one apiece by the services that update them.

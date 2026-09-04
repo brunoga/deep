@@ -3,7 +3,7 @@ package crdt
 import (
 	"strconv"
 
-	"github.com/brunoga/deep/v5/crdt/hlc"
+	"github.com/brunoga/deep/v6/crdt/hlc"
 )
 
 // StateVector says how much of each origin's output a replica already holds.
