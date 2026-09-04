@@ -311,3 +311,35 @@ func FuzzDiffApply(f *testing.F) {
 		}
 	})
 }
+
+func TestPropertyDiffIsDeterministic(t *testing.T) {
+	// The same pair of values must produce the same operations in the same
+	// order every time. Struct fields used to be collected in a map, so the
+	// order followed map iteration and two runs of one diff could disagree —
+	// which makes a patch hard to log, cache, compare or sign.
+	for seed := 0; seed < propertySeeds; seed++ {
+		rng := rand.New(rand.NewSource(int64(seed)))
+		a, b := genDoc(rng), genDoc(rng)
+
+		first, err := deep.Diff(a, b)
+		if err != nil {
+			t.Fatalf("seed %d: diff: %v", seed, err)
+		}
+		for i := 0; i < 4; i++ {
+			again, err := deep.Diff(a, b)
+			if err != nil {
+				t.Fatalf("seed %d: diff: %v", seed, err)
+			}
+			if len(again.Operations) != len(first.Operations) {
+				t.Fatalf("seed %d: operation count varies between runs: %d then %d",
+					seed, len(first.Operations), len(again.Operations))
+			}
+			for k := range first.Operations {
+				if again.Operations[k].Path != first.Operations[k].Path {
+					t.Fatalf("seed %d: operation %d is %q on one run and %q on another",
+						seed, k, first.Operations[k].Path, again.Operations[k].Path)
+				}
+			}
+		}
+	}
+}

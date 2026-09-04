@@ -5,6 +5,7 @@ import (
 	"fmt"
 	deep "github.com/brunoga/deep/v5"
 	"github.com/brunoga/deep/v5/condition"
+	gen "github.com/brunoga/deep/v5/gen"
 	"log/slog"
 	"reflect"
 	"regexp"
@@ -32,7 +33,7 @@ func (t *User) Patch(p deep.Patch[User], logger *slog.Logger) error {
 		if err != nil {
 			errs = append(errs, err)
 		} else if !handled {
-			if err := deep.ApplyOpReflection(t, op, logger); err != nil {
+			if err := gen.ApplyOpReflection(t, op, logger); err != nil {
 				errs = append(errs, err)
 			}
 		}
@@ -180,7 +181,8 @@ func (t *User) Diff(other *User) deep.Patch[User] {
 		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/tags", Old: t.Tags, New: other.Tags})
 	} else {
 		if other.Tags != nil {
-			for k, v := range other.Tags {
+			for _, k := range gen.SortedKeys(other.Tags) {
+				v := other.Tags[k]
 				if t.Tags == nil {
 					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/tags/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
 					continue
@@ -195,7 +197,8 @@ func (t *User) Diff(other *User) deep.Patch[User] {
 			}
 		}
 		if t.Tags != nil {
-			for k, v := range t.Tags {
+			for _, k := range gen.SortedKeys(t.Tags) {
+				v := t.Tags[k]
 				if _, ok := other.Tags[k]; !ok {
 					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: "/tags/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: v})
 				}

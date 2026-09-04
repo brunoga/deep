@@ -25,23 +25,23 @@ func resolveStructDependencies(p *structPatch, basePath string, root reflect.Val
 	effectivePatches := make(map[string]diffPatch)
 
 	// 1. Build nodes
-	for name, patch := range p.fields {
+	for _, sf := range p.fields {
 		fullPath := basePath
 		if fullPath == "/" {
 			fullPath = ""
 		} else if fullPath != "" && !strings.HasPrefix(fullPath, "/") {
 			fullPath = "/" + fullPath
 		}
-		fieldPath := fullPath + "/" + name
+		fieldPath := fullPath + "/" + sf.name
 
-		reads, writes := patch.dependencies(fieldPath)
-		nodes[name] = &dependencyNode{
-			name:   name,
-			patch:  patch,
+		reads, writes := sf.patch.dependencies(fieldPath)
+		nodes[sf.name] = &dependencyNode{
+			name:   sf.name,
+			patch:  sf.patch,
 			reads:  reads,
 			writes: writes,
 		}
-		effectivePatches[name] = patch
+		effectivePatches[sf.name] = sf.patch
 	}
 
 	// 2. Build Adjacency List (Edges A -> B means A must run before B)
@@ -164,8 +164,15 @@ func resolveStructDependencies(p *structPatch, basePath string, root reflect.Val
 		}
 	}
 
-	// 5. Re-sort with broken cycles
-	newStructPatch := &structPatch{fields: effectivePatches}
+	// 5. Re-sort with broken cycles. Field order is taken from the original
+	// patch so the rebuilt one keeps it.
+	rebuilt := make([]structField, 0, len(effectivePatches))
+	for _, sf := range p.fields {
+		if patch, ok := effectivePatches[sf.name]; ok {
+			rebuilt = append(rebuilt, structField{sf.name, patch})
+		}
+	}
+	newStructPatch := &structPatch{fields: rebuilt}
 	_, newResult, err := resolveStructDependencies(newStructPatch, basePath, root)
 	return effectivePatches, newResult, err
 }

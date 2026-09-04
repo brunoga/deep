@@ -70,6 +70,7 @@ If you are new to the library, these four cover the shape of everything else:
 | [`crdt_observers`](crdt_observers) | `OnChange`: the operations actually applied, for redrawing only what moved |
 | [`crdt_compaction`](crdt_compaction) | `Compact`: reclaiming the bookkeeping and tombstones a long-lived replica accumulates, and the watermark that makes it safe |
 | [`crdt_document`](crdt_document) | `Document`: the same text CRDT as `Text` but indexed by position, so an edit costs the same however fragmented the document |
+| [`crdt_presence`](crdt_presence) | Awareness: cursors and selections that live beside the document rather than in it, and expire when their owner goes quiet |
 | [`crdt_sync_incremental`](crdt_sync_incremental) | `StateVector`, `Since` and `Apply`: exchanging only what a peer is missing rather than whole documents |
 | [`crdt_custom_type`](crdt_custom_type) | `Convergent` and `Compactable`: a type of your own that merges rather than losing one writer, and that drops its own history when told |
 | [`lww_fields`](lww_fields) | Per-field `LWW[T]` registers resolving a genuine write conflict |

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	deep "github.com/brunoga/deep/v5"
 	"github.com/brunoga/deep/v5/condition"
+	gen "github.com/brunoga/deep/v5/gen"
 	"log/slog"
 	"reflect"
 	"regexp"
@@ -32,7 +33,7 @@ func (t *SystemConfig) Patch(p deep.Patch[SystemConfig], logger *slog.Logger) er
 		if err != nil {
 			errs = append(errs, err)
 		} else if !handled {
-			if err := deep.ApplyOpReflection(t, op, logger); err != nil {
+			if err := gen.ApplyOpReflection(t, op, logger); err != nil {
 				errs = append(errs, err)
 			}
 		}
@@ -184,7 +185,8 @@ func (t *SystemConfig) Diff(other *SystemConfig) deep.Patch[SystemConfig] {
 		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/endpoints", Old: t.Endpoints, New: other.Endpoints})
 	} else {
 		if other.Endpoints != nil {
-			for k, v := range other.Endpoints {
+			for _, k := range gen.SortedKeys(other.Endpoints) {
+				v := other.Endpoints[k]
 				if t.Endpoints == nil {
 					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/endpoints/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
 					continue
@@ -199,7 +201,8 @@ func (t *SystemConfig) Diff(other *SystemConfig) deep.Patch[SystemConfig] {
 			}
 		}
 		if t.Endpoints != nil {
-			for k, v := range t.Endpoints {
+			for _, k := range gen.SortedKeys(t.Endpoints) {
+				v := t.Endpoints[k]
 				if _, ok := other.Endpoints[k]; !ok {
 					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: "/endpoints/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: v})
 				}

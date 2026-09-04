@@ -491,12 +491,17 @@ func (d *Differ) diffRecursive(a, b reflect.Value, atomic bool, ctx *diffContext
 		return fn(a, b, ctx)
 	}
 
-	// Move/Copy Detection
-	if fromPath, isMove, ok := d.tryDetectMove(b, ctx.buildPath(), ctx); ok {
-		if isMove {
-			return &movePatch{from: fromPath, path: ctx.buildPath()}, nil
+	// Move/Copy Detection. The path is built inside the guard: detection is
+	// off by default, and building it first meant assembling a string for
+	// every value visited only to hand it to a function that returns
+	// immediately.
+	if d.config.detectMoves {
+		if fromPath, isMove, ok := d.tryDetectMove(b, ctx.buildPath(), ctx); ok {
+			if isMove {
+				return &movePatch{from: fromPath, path: ctx.buildPath()}, nil
+			}
+			return &copyPatch{from: fromPath}, nil
 		}
-		return &copyPatch{from: fromPath}, nil
 	}
 
 	if a.CanInterface() {
@@ -650,7 +655,7 @@ func (d *Differ) diffInterface(a, b reflect.Value, ctx *diffContext) (diffPatch,
 }
 
 func (d *Differ) diffStruct(a, b reflect.Value, ctx *diffContext) (diffPatch, error) {
-	var fields map[string]diffPatch
+	var fields []structField
 	info := icore.GetTypeInfo(b.Type())
 
 	for _, fInfo := range info.Fields {
@@ -681,20 +686,17 @@ func (d *Differ) diffStruct(a, b reflect.Value, ctx *diffContext) (diffPatch, er
 			if fInfo.Tag.ReadOnly {
 				patch = &readOnlyPatch{inner: patch}
 			}
-			if fields == nil {
-				fields = make(map[string]diffPatch)
-			}
-			fields[fInfo.Name] = patch
+			fields = append(fields, structField{fInfo.Name, patch})
 		}
 	}
 
-	if fields == nil {
+	if len(fields) == 0 {
 		return nil, nil
 	}
 
 	sp := newStructPatch()
-	for k, v := range fields {
-		sp.fields[k] = v
+	for _, f := range fields {
+		sp.set(f.name, f.patch)
 	}
 	return sp, nil
 }

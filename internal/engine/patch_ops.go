@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -376,9 +377,28 @@ func newPtrPatch(elemPatch diffPatch) *ptrPatch {
 }
 
 func newStructPatch() *structPatch {
-	return &structPatch{
-		fields: make(map[string]diffPatch),
+	return &structPatch{}
+}
+
+// field returns the patch recorded for one field, or nil.
+func (p *structPatch) field(name string) diffPatch {
+	for _, f := range p.fields {
+		if f.name == name {
+			return f.patch
+		}
 	}
+	return nil
+}
+
+// set records the patch for one field, replacing any patch already there.
+func (p *structPatch) set(name string, patch diffPatch) {
+	for i := range p.fields {
+		if p.fields[i].name == name {
+			p.fields[i].patch = patch
+			return
+		}
+	}
+	p.fields = append(p.fields, structField{name, patch})
 }
 
 func newMapPatch(keyType reflect.Type) *mapPatch {
@@ -516,9 +536,19 @@ func (p *interfacePatch) summary(path string) string {
 	return p.elemPatch.summary(path)
 }
 
+// structField is one field's patch, kept alongside its name.
+type structField struct {
+	name  string
+	patch diffPatch
+}
+
 // structPatch handles field-level modifications in a struct.
 type structPatch struct {
-	fields map[string]diffPatch
+	// fields is a slice rather than a map: a struct has few of them, so the
+	// linear scan is cheaper than a map allocation per struct, and keeping
+	// them in declaration order makes the operations a diff produces
+	// reproducible instead of following map iteration order.
+	fields []structField
 }
 
 func (p *structPatch) apply(root, v reflect.Value, path string) {
@@ -629,7 +659,8 @@ func (p *structPatch) applyResolved(root, v reflect.Value, path string, resolver
 }
 
 func (p *structPatch) dependencies(path string) (reads []string, writes []string) {
-	for name, patch := range p.fields {
+	for _, sf := range p.fields {
+		name, patch := sf.name, sf.patch
 		fieldPath := icore.JoinPath(path, name)
 
 		r, w := patch.dependencies(fieldPath)
@@ -640,19 +671,17 @@ func (p *structPatch) dependencies(path string) (reads []string, writes []string
 }
 
 func (p *structPatch) reverse() diffPatch {
-	newFields := make(map[string]diffPatch)
-	for k, v := range p.fields {
-		newFields[k] = v.reverse()
+	newFields := make([]structField, len(p.fields))
+	for i, f := range p.fields {
+		newFields[i] = structField{f.name, f.patch.reverse()}
 	}
-	return &structPatch{
-		fields: newFields,
-	}
+	return &structPatch{fields: newFields}
 }
 
 func (p *structPatch) walk(path string, fn func(path string, op OpKind, old, new any) error) error {
-	for name, patch := range p.fields {
-		fullPath := path + "/" + name
-		if err := patch.walk(fullPath, fn); err != nil {
+	for _, f := range p.fields {
+		fullPath := path + "/" + f.name
+		if err := f.patch.walk(fullPath, fn); err != nil {
 			return err
 		}
 	}
@@ -663,7 +692,8 @@ func (p *structPatch) format(indent int) string {
 	var b strings.Builder
 	b.WriteString("Struct{\n")
 	prefix := strings.Repeat("  ", indent+1)
-	for name, patch := range p.fields {
+	for _, sf := range p.fields {
+		name, patch := sf.name, sf.patch
 		b.WriteString(fmt.Sprintf("%s%s: %s\n", prefix, name, patch.format(indent+1)))
 	}
 	b.WriteString(strings.Repeat("  ", indent) + "}")
@@ -672,7 +702,8 @@ func (p *structPatch) format(indent int) string {
 
 func (p *structPatch) toJSONPatch(path string) []map[string]any {
 	var ops []map[string]any
-	for name, patch := range p.fields {
+	for _, sf := range p.fields {
+		name, patch := sf.name, sf.patch
 		fullPath := path + "/" + name
 		subOps := patch.toJSONPatch(fullPath)
 		ops = append(ops, subOps...)
@@ -682,7 +713,8 @@ func (p *structPatch) toJSONPatch(path string) []map[string]any {
 
 func (p *structPatch) summary(path string) string {
 	var summaries []string
-	for name, patch := range p.fields {
+	for _, sf := range p.fields {
+		name, patch := sf.name, sf.patch
 		subPath := path
 		if !strings.HasSuffix(subPath, "/") {
 			subPath += "/"
@@ -1055,25 +1087,42 @@ func keyPath(path string, k any) string {
 }
 
 func (p *mapPatch) walk(path string, fn func(path string, op OpKind, old, new any) error) error {
-	for k, val := range p.added {
-		fullPath := keyPath(path, k)
-		if err := fn(fullPath, OpAdd, nil, icore.ValueToInterface(val)); err != nil {
+	// Keys are visited in a fixed order rather than the map's own, so that
+	// diffing the same pair of values twice produces the same operations in
+	// the same order — which is what makes a patch worth logging, caching,
+	// comparing or signing.
+	for _, k := range sortedMapKeys(p.added) {
+		if err := fn(keyPath(path, k), OpAdd, nil, icore.ValueToInterface(p.added[k])); err != nil {
 			return err
 		}
 	}
-	for k, oldVal := range p.removed {
-		fullPath := keyPath(path, k)
-		if err := fn(fullPath, OpRemove, icore.ValueToInterface(oldVal), nil); err != nil {
+	for _, k := range sortedMapKeys(p.removed) {
+		if err := fn(keyPath(path, k), OpRemove, icore.ValueToInterface(p.removed[k]), nil); err != nil {
 			return err
 		}
 	}
-	for k, patch := range p.modified {
-		fullPath := keyPath(path, k)
-		if err := patch.walk(fullPath, fn); err != nil {
+	for _, k := range sortedMapKeys(p.modified) {
+		if err := p.modified[k].walk(keyPath(path, k), fn); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// sortedMapKeys returns a map's keys ordered by their rendered form, which is
+// also the form they take in a path.
+func sortedMapKeys[V any](m map[any]V) []any {
+	if len(m) == 0 {
+		return nil
+	}
+	keys := make([]any, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		return fmt.Sprintf("%v", keys[i]) < fmt.Sprintf("%v", keys[j])
+	})
+	return keys
 }
 
 func (p *mapPatch) format(indent int) string {

@@ -100,12 +100,12 @@ func TestTags_MustDiff(t *testing.T) {
 	// Check if Atomic was indeed atomic (no inner field patches)
 	tp := patch.(*typedPatch[TaggedStruct])
 	sp := tp.inner.(*structPatch)
-	atomicPatch := sp.fields["Atomic"]
+	atomicPatch := sp.field("Atomic")
 	if _, ok := atomicPatch.(*valuePatch); !ok {
 		t.Errorf("Atomic field patch is not a valuePatch: %T", atomicPatch)
 	}
 
-	readonlyPatch := sp.fields["ReadOnly"]
+	readonlyPatch := sp.field("ReadOnly")
 	if _, ok := readonlyPatch.(*readOnlyPatch); !ok {
 		t.Errorf("ReadOnly field patch is not a readOnlyPatch: %T", readonlyPatch)
 	}

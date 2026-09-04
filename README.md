@@ -70,10 +70,16 @@ Generated code vs the reflection engine, on the same five-field struct (nested s
 
 | Operation | Reflection | Generated | Speedup |
 | :--- | ---: | ---: | ---: |
-| **Diff** | 3,121 ns/op (77 allocs) | **546 ns/op** (16 allocs) | **5.7×** |
-| **Apply** | 1,476 ns/op (49 allocs) | **80 ns/op** (2 allocs) | **18.5×** |
-| **Equal** | 245 ns/op (5 allocs) | **100 ns/op** (2 allocs) | **2.4×** |
-| **Clone** | 986 ns/op (15 allocs) | **188 ns/op** (5 allocs) | **5.3×** |
+| **Diff** | 2,492 ns/op (63 allocs) | **629 ns/op** (18 allocs) | **4.0×** |
+| **Apply** | 1,252 ns/op (42 allocs) | **87 ns/op** (2 allocs) | **14.4×** |
+| **Equal** | 245 ns/op (5 allocs) | **102 ns/op** (2 allocs) | **2.4×** |
+| **Clone** | 1,039 ns/op (15 allocs) | **189 ns/op** (5 allocs) | **5.5×** |
+
+Diff now produces the same operations in the same order every time. Go
+randomises map iteration, so it previously did not, and a patch whose order
+varies between runs cannot be logged, cached, compared or signed. Sorting map
+keys costs the generated path about 20%; it is the one place where this table
+went backwards, and the guarantee is worth more than the nanoseconds.
 
 Deep copy compared with other clone libraries, same struct:
 
@@ -590,6 +596,50 @@ func (r Retired) CompactBefore(before hlc.HLC) any { /* drop entries older than 
 
 **`crdt/hlc`** — `Clock` (per-node: `Now`, `Update`, `Reserve`, `SetLatest`) and `HLC` timestamps (`Compare`, `After`) giving a total order across nodes without synchronized wall clocks.
 
+### Presence
+
+Awareness carries what the people editing alongside you are doing right now —
+cursor, selection, name, colour — deliberately outside the document. A cursor
+position is not an edit: it must not merge into the text, survive a reload, or
+appear in the history, and a peer that closes its laptop should stop being drawn
+rather than leave a cursor behind.
+
+```go
+me := crdt.NewAwareness[Cursor]("alice", crdt.WithTTL[Cursor](10*time.Second))
+
+me.OnChange(func(c crdt.PresenceChange[Cursor]) {
+    // c.Kind is PresenceJoined, PresenceUpdated or PresenceLeft
+})
+
+broadcast(me.SetLocal(Cursor{Index: 12}))  // also the heartbeat
+me.Apply(updateFromPeer)                   // last write wins, per peer
+me.States()                                // everyone currently present
+```
+
+State is last-write-wins per peer, ordered by a counter that peer controls, so
+updates may arrive out of order or twice without harm. A peer that says nothing
+for the timeout is dropped locally, with no coordination: because presence is
+ephemeral, a peer dropped too eagerly simply reappears with its next update.
+
+### Binary encoding
+
+`Update` and `StateVector` implement `encoding.BinaryMarshaler` and
+`BinaryUnmarshaler`, so gob and anything else that looks for those uses the
+compact format without being asked.
+
+An update is mostly identifiers, and identifiers are mostly repetition: every
+run carries a clock, every clock carries the node id that issued it, and
+neighbouring wall times differ by microseconds. JSON has no way to say "the same
+node as before" or "three microseconds later". The binary format says both —
+node ids are interned into a table and referred to by index, wall times are
+stored as deltas:
+
+| Runs in the update | JSON | Binary | |
+| ---: | ---: | ---: | ---: |
+| 10 | 1,336 B | 201 B | 6.6× |
+| 100 | 12,839 B | 1,480 B | 8.7× |
+| 1,000 | 129,150 B | 14,605 B | 8.8× |
+
 ## Architecture
 
 A patch is a **flat operation list** — `[]Operation` with JSON Pointer paths — rather than a recursive tree. That makes patches trivially serializable, cheap to iterate, and composable (merging is stateless). Application is a **hybrid**: generated `applyOperation` methods handle the common shapes at native speed and report anything else as unhandled, at which point the reflection engine — which understands every Go shape, unexported fields included — takes over for that one operation. Both paths implement the same semantics; divergence is treated as a bug.
@@ -645,6 +695,7 @@ Every directory under [`examples/`](examples/) is a runnable program (`go run ./
 | [`crdt_observers`](examples/crdt_observers) | `OnChange` for incremental UI updates |
 | [`crdt_compaction`](examples/crdt_compaction) | `Compact` for reclaiming the history a long-lived replica accumulates |
 | [`crdt_document`](examples/crdt_document) | `Document`, a text CRDT indexed for editing rather than stored as a slice |
+| [`crdt_presence`](examples/crdt_presence) | Awareness: who else is editing, where their cursor is, and how they stop being drawn |
 | [`crdt_sync_incremental`](examples/crdt_sync_incremental) | State vectors: sending only what a peer is missing |
 | [`crdt_custom_type`](examples/crdt_custom_type) | `Convergent` and `Compactable`: making your own type merge instead of losing a writer |
 | [`lww_fields`](examples/lww_fields) | Per-field `LWW[T]` registers resolving a write conflict |

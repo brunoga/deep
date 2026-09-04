@@ -6,6 +6,7 @@ import (
 	deep "github.com/brunoga/deep/v5"
 	"github.com/brunoga/deep/v5/condition"
 	crdt "github.com/brunoga/deep/v5/crdt"
+	gen "github.com/brunoga/deep/v5/gen"
 	"log/slog"
 	"reflect"
 	"regexp"
@@ -35,7 +36,7 @@ func (t *Stage) Patch(p deep.Patch[Stage], logger *slog.Logger) error {
 		if err != nil {
 			errs = append(errs, err)
 		} else if !handled {
-			if err := deep.ApplyOpReflection(t, op, logger); err != nil {
+			if err := gen.ApplyOpReflection(t, op, logger); err != nil {
 				errs = append(errs, err)
 			}
 		}
@@ -301,7 +302,7 @@ func (t *Job) Patch(p deep.Patch[Job], logger *slog.Logger) error {
 		if err != nil {
 			errs = append(errs, err)
 		} else if !handled {
-			if err := deep.ApplyOpReflection(t, op, logger); err != nil {
+			if err := gen.ApplyOpReflection(t, op, logger); err != nil {
 				errs = append(errs, err)
 			}
 		}
@@ -653,7 +654,7 @@ func (t *Job) applyOperation(op deep.Operation, logger *slog.Logger) (bool, erro
 // linear where listing every route could be exponential, and applying it
 // rebuilds the sharing whatever the target looked like before.
 func (t *Job) Diff(other *Job) deep.Patch[Job] {
-	seen := deep.NewDiffMemo()
+	seen := gen.NewDiffMemo()
 	defer seen.Release()
 	p := t.diffShared(other, seen, "")
 	p.Operations = append(p.Operations, seen.AliasOperations()...)
@@ -662,7 +663,7 @@ func (t *Job) Diff(other *Job) deep.Patch[Job] {
 
 // diffShared is Diff threaded with the pairs already visited and the absolute
 // path at which t sits.
-func (t *Job) diffShared(other *Job, seen *deep.DiffMemo, at string) deep.Patch[Job] {
+func (t *Job) diffShared(other *Job, seen *gen.DiffMemo, at string) deep.Patch[Job] {
 	p := deep.Patch[Job]{}
 	if t == other || !seen.Enter(t, other, at) {
 		return p
@@ -689,7 +690,8 @@ func (t *Job) diffShared(other *Job, seen *deep.DiffMemo, at string) deep.Patch[
 		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/retries", Old: t.Retries, New: other.Retries})
 	} else {
 		if other.Retries != nil {
-			for k, v := range other.Retries {
+			for _, k := range gen.SortedKeys(other.Retries) {
+				v := other.Retries[k]
 				if t.Retries == nil {
 					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/retries/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
 					continue
@@ -704,7 +706,8 @@ func (t *Job) diffShared(other *Job, seen *deep.DiffMemo, at string) deep.Patch[
 			}
 		}
 		if t.Retries != nil {
-			for k, v := range t.Retries {
+			for _, k := range gen.SortedKeys(t.Retries) {
+				v := t.Retries[k]
 				if _, ok := other.Retries[k]; !ok {
 					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: at + "/retries/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: v})
 				}
@@ -724,7 +727,8 @@ func (t *Job) diffShared(other *Job, seen *deep.DiffMemo, at string) deep.Patch[
 		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/owners", Old: t.Owners, New: other.Owners})
 	} else {
 		if other.Owners != nil {
-			for k, v := range other.Owners {
+			for _, k := range gen.SortedKeys(other.Owners) {
+				v := other.Owners[k]
 				if t.Owners == nil {
 					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/owners/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
 					continue
@@ -739,7 +743,8 @@ func (t *Job) diffShared(other *Job, seen *deep.DiffMemo, at string) deep.Patch[
 			}
 		}
 		if t.Owners != nil {
-			for k, v := range t.Owners {
+			for _, k := range gen.SortedKeys(t.Owners) {
+				v := t.Owners[k]
 				if _, ok := other.Owners[k]; !ok {
 					p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpRemove, Path: at + "/owners/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: v})
 				}
@@ -1013,13 +1018,13 @@ func (t *Job) evaluateCondition(c condition.Condition) (bool, error) {
 // values is compared once however many routes lead to it, and a cycle is
 // followed only until it repeats.
 func (t *Job) Equal(other *Job) bool {
-	seen := deep.NewVisitSet()
+	seen := gen.NewVisitSet()
 	defer seen.Release()
 	return t.equalShared(other, seen)
 }
 
 // equalShared is Equal threaded with the set of pairs already under comparison.
-func (t *Job) equalShared(other *Job, seen *deep.VisitSet) bool {
+func (t *Job) equalShared(other *Job, seen *gen.VisitSet) bool {
 	if t == other {
 		return true
 	}
@@ -1121,13 +1126,13 @@ func (t *Job) equalShared(other *Job, seen *deep.VisitSet) bool {
 // reference to it in the result points at that one copy, and a reference cycle
 // is rebuilt rather than followed forever.
 func (t *Job) Clone() *Job {
-	memo := deep.NewCloneMemo()
+	memo := gen.NewCloneMemo()
 	defer memo.Release()
 	return t.cloneShared(memo)
 }
 
 // cloneShared is Clone threaded with the memo of copies already made.
-func (t *Job) cloneShared(memo *deep.CloneMemo) *Job {
+func (t *Job) cloneShared(memo *gen.CloneMemo) *Job {
 	if t == nil {
 		return nil
 	}
@@ -1192,8 +1197,8 @@ func (t *Job) cloneShared(memo *deep.CloneMemo) *Job {
 		res.Notes = make(crdt.Text, len(t.Notes))
 		copy(res.Notes, t.Notes)
 	}
-	res.Title = deep.CloneShared(t.Title, memo)
-	res.History = deep.CloneShared(t.History, memo)
-	res.Done = deep.CloneShared(t.Done, memo)
+	res.Title = gen.CloneShared(t.Title, memo)
+	res.History = gen.CloneShared(t.History, memo)
+	res.Done = gen.CloneShared(t.Done, memo)
 	return res
 }
