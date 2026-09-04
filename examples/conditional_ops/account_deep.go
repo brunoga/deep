@@ -3,9 +3,9 @@ package main
 
 import (
 	"fmt"
-	deep "github.com/brunoga/deep/v5"
-	"github.com/brunoga/deep/v5/condition"
-	gen "github.com/brunoga/deep/v5/gen"
+	deep "github.com/brunoga/deep/v6"
+	"github.com/brunoga/deep/v6/condition"
+	gen "github.com/brunoga/deep/v6/gen"
 	"log/slog"
 	"reflect"
 	"regexp"
@@ -82,7 +82,7 @@ func (t *Account) applyOperation(op deep.Operation, logger *slog.Logger) (bool, 
 			}
 		}
 		if op.Kind == deep.OpReplace {
-			if v, ok := op.New.(Account); ok {
+			if v, ok := deep.ValueAs[Account](op.New); ok {
 				*t = v
 				return true, nil
 			}
@@ -102,7 +102,7 @@ func (t *Account) applyOperation(op deep.Operation, logger *slog.Logger) (bool, 
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(string); ok {
+			if v, ok := deep.ValueAs[string](op.New); ok {
 				t.Owner = v
 				return true, nil
 			}
@@ -121,12 +121,8 @@ func (t *Account) applyOperation(op deep.Operation, logger *slog.Logger) (bool, 
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(float64); ok {
+			if v, ok := deep.ValueAs[float64](op.New); ok {
 				t.Balance = v
-				return true, nil
-			}
-			if f, ok := op.New.(float64); ok {
-				t.Balance = float64(f)
 				return true, nil
 			}
 		}
@@ -144,12 +140,8 @@ func (t *Account) applyOperation(op deep.Operation, logger *slog.Logger) (bool, 
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(float64); ok {
+			if v, ok := deep.ValueAs[float64](op.New); ok {
 				t.LateFee = v
-				return true, nil
-			}
-			if f, ok := op.New.(float64); ok {
-				t.LateFee = float64(f)
 				return true, nil
 			}
 		}
@@ -167,7 +159,7 @@ func (t *Account) applyOperation(op deep.Operation, logger *slog.Logger) (bool, 
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(string); ok {
+			if v, ok := deep.ValueAs[string](op.New); ok {
 				t.Status = v
 				return true, nil
 			}
@@ -186,7 +178,7 @@ func (t *Account) applyOperation(op deep.Operation, logger *slog.Logger) (bool, 
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(string); ok {
+			if v, ok := deep.ValueAs[string](op.New); ok {
 				t.LastSeen = v
 				return true, nil
 			}

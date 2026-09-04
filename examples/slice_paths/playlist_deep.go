@@ -3,9 +3,9 @@ package main
 
 import (
 	"fmt"
-	deep "github.com/brunoga/deep/v5"
-	"github.com/brunoga/deep/v5/condition"
-	gen "github.com/brunoga/deep/v5/gen"
+	deep "github.com/brunoga/deep/v6"
+	"github.com/brunoga/deep/v6/condition"
+	gen "github.com/brunoga/deep/v6/gen"
 	"log/slog"
 	"reflect"
 	"regexp"
@@ -82,7 +82,7 @@ func (t *Playlist) applyOperation(op deep.Operation, logger *slog.Logger) (bool,
 			}
 		}
 		if op.Kind == deep.OpReplace {
-			if v, ok := op.New.(Playlist); ok {
+			if v, ok := deep.ValueAs[Playlist](op.New); ok {
 				*t = v
 				return true, nil
 			}
@@ -102,7 +102,7 @@ func (t *Playlist) applyOperation(op deep.Operation, logger *slog.Logger) (bool,
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(string); ok {
+			if v, ok := deep.ValueAs[string](op.New); ok {
 				t.Name = v
 				return true, nil
 			}
@@ -121,7 +121,7 @@ func (t *Playlist) applyOperation(op deep.Operation, logger *slog.Logger) (bool,
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.([]string); ok {
+			if v, ok := deep.ValueAs[[]string](op.New); ok {
 				t.Tracks = v
 				return true, nil
 			}

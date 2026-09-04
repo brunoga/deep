@@ -1,10 +1,10 @@
-//go:generate go run github.com/brunoga/deep/v5/cmd/deep-gen -type=ProxyConfig,SystemMeta -output proxyconfig_deep.go .
+//go:generate go run github.com/brunoga/deep/v6/cmd/deep-gen -type=ProxyConfig,SystemMeta -output proxyconfig_deep.go .
 
 package main
 
 import (
 	"fmt"
-	"github.com/brunoga/deep/v5"
+	"github.com/brunoga/deep/v6"
 	"log"
 )
 

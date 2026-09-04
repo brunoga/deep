@@ -18,13 +18,13 @@ import (
 	"testing"
 	"time"
 
-	deep "github.com/brunoga/deep/v5"
-	"github.com/brunoga/deep/v5/internal/engine"
-	"github.com/brunoga/deep/v5/internal/testmodels"
-	"github.com/brunoga/deep/v5/internal/testmodels/external"
-	"github.com/brunoga/deep/v5/internal/testmodels/graph"
-	"github.com/brunoga/deep/v5/internal/testmodels/shapes"
-	iunsafe "github.com/brunoga/deep/v5/internal/unsafe"
+	deep "github.com/brunoga/deep/v6"
+	"github.com/brunoga/deep/v6/internal/engine"
+	"github.com/brunoga/deep/v6/internal/testmodels"
+	"github.com/brunoga/deep/v6/internal/testmodels/external"
+	"github.com/brunoga/deep/v6/internal/testmodels/graph"
+	"github.com/brunoga/deep/v6/internal/testmodels/shapes"
+	iunsafe "github.com/brunoga/deep/v6/internal/unsafe"
 )
 
 // generated is the set of methods deep-gen emits that deep dispatches to. A

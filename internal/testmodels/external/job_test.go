@@ -4,9 +4,9 @@ import (
 	"testing"
 	"time"
 
-	deep "github.com/brunoga/deep/v5"
-	"github.com/brunoga/deep/v5/crdt"
-	"github.com/brunoga/deep/v5/internal/testmodels/external"
+	deep "github.com/brunoga/deep/v6"
+	"github.com/brunoga/deep/v6/crdt"
+	"github.com/brunoga/deep/v6/internal/testmodels/external"
 )
 
 func mustTime(t *testing.T, s string) time.Time {

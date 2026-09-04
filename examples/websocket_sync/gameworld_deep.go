@@ -3,9 +3,9 @@ package main
 
 import (
 	"fmt"
-	deep "github.com/brunoga/deep/v5"
-	"github.com/brunoga/deep/v5/condition"
-	gen "github.com/brunoga/deep/v5/gen"
+	deep "github.com/brunoga/deep/v6"
+	"github.com/brunoga/deep/v6/condition"
+	gen "github.com/brunoga/deep/v6/gen"
 	"log/slog"
 	"reflect"
 	"regexp"
@@ -83,7 +83,7 @@ func (t *GameWorld) applyOperation(op deep.Operation, logger *slog.Logger) (bool
 			}
 		}
 		if op.Kind == deep.OpReplace {
-			if v, ok := op.New.(GameWorld); ok {
+			if v, ok := deep.ValueAs[GameWorld](op.New); ok {
 				*t = v
 				return true, nil
 			}
@@ -103,7 +103,7 @@ func (t *GameWorld) applyOperation(op deep.Operation, logger *slog.Logger) (bool
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(map[string]Player); ok {
+			if v, ok := deep.ValueAs[map[string]Player](op.New); ok {
 				t.Players = v
 				return true, nil
 			}
@@ -122,12 +122,8 @@ func (t *GameWorld) applyOperation(op deep.Operation, logger *slog.Logger) (bool
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(int); ok {
+			if v, ok := deep.ValueAs[int](op.New); ok {
 				t.Time = v
-				return true, nil
-			}
-			if f, ok := op.New.(float64); ok {
-				t.Time = int(f)
 				return true, nil
 			}
 		}
@@ -140,7 +136,7 @@ func (t *GameWorld) applyOperation(op deep.Operation, logger *slog.Logger) (bool
 					delete(t.Players, key)
 					return true, nil
 				}
-				if v, ok := op.New.(Player); ok && (op.Kind == deep.OpAdd || op.Kind == deep.OpReplace) {
+				if v, ok := deep.ValueAs[Player](op.New); ok && (op.Kind == deep.OpAdd || op.Kind == deep.OpReplace) {
 					if t.Players == nil {
 						t.Players = make(map[string]Player)
 					}
@@ -400,7 +396,7 @@ func (t *Player) applyOperation(op deep.Operation, logger *slog.Logger) (bool, e
 			}
 		}
 		if op.Kind == deep.OpReplace {
-			if v, ok := op.New.(Player); ok {
+			if v, ok := deep.ValueAs[Player](op.New); ok {
 				*t = v
 				return true, nil
 			}
@@ -420,12 +416,8 @@ func (t *Player) applyOperation(op deep.Operation, logger *slog.Logger) (bool, e
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(int); ok {
+			if v, ok := deep.ValueAs[int](op.New); ok {
 				t.X = v
-				return true, nil
-			}
-			if f, ok := op.New.(float64); ok {
-				t.X = int(f)
 				return true, nil
 			}
 		}
@@ -443,12 +435,8 @@ func (t *Player) applyOperation(op deep.Operation, logger *slog.Logger) (bool, e
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(int); ok {
+			if v, ok := deep.ValueAs[int](op.New); ok {
 				t.Y = v
-				return true, nil
-			}
-			if f, ok := op.New.(float64); ok {
-				t.Y = int(f)
 				return true, nil
 			}
 		}
@@ -466,7 +454,7 @@ func (t *Player) applyOperation(op deep.Operation, logger *slog.Logger) (bool, e
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(string); ok {
+			if v, ok := deep.ValueAs[string](op.New); ok {
 				t.Name = v
 				return true, nil
 			}

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	icore "github.com/brunoga/deep/v5/internal/core"
+	icore "github.com/brunoga/deep/v6/internal/core"
 )
 
 // selector is a function that retrieves a field from a struct of type T.
@@ -29,6 +29,18 @@ func (p Path[T, V]) String() string {
 		return resolvePathInternal(p.sel)
 	}
 	return ""
+}
+
+// PathString creates a Path from a raw JSON Pointer string, for paths chosen
+// at run time — a field name arriving in a request, say — where no selector
+// function can be written.
+//
+// Nothing checks that the path exists on T or leads to a V; that is the
+// compile-time guarantee [Field], [At] and [MapKey] give and this deliberately
+// trades away. An operation built on a wrong path fails at apply time, the way
+// any hand-written path does.
+func PathString[T, V any](path string) Path[T, V] {
+	return Path[T, V]{path: path}
 }
 
 // Field creates a new type-safe path from a selector function.

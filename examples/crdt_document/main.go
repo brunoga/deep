@@ -5,8 +5,8 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/brunoga/deep/v5/crdt"
-	"github.com/brunoga/deep/v5/crdt/hlc"
+	"github.com/brunoga/deep/v6/crdt"
+	"github.com/brunoga/deep/v6/crdt/hlc"
 )
 
 // crdt.Document holds the same runs as crdt.Text, but keeps them in a tree

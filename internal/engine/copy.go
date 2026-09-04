@@ -1,7 +1,7 @@
 package engine
 
 import (
-	icore "github.com/brunoga/deep/v5/internal/core"
+	icore "github.com/brunoga/deep/v6/internal/core"
 )
 
 // Copier is an interface that types can implement to provide their own

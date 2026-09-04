@@ -3,9 +3,9 @@ package main
 
 import (
 	"fmt"
-	deep "github.com/brunoga/deep/v5"
-	"github.com/brunoga/deep/v5/condition"
-	gen "github.com/brunoga/deep/v5/gen"
+	deep "github.com/brunoga/deep/v6"
+	"github.com/brunoga/deep/v6/condition"
+	gen "github.com/brunoga/deep/v6/gen"
 	"log/slog"
 	"reflect"
 	"regexp"
@@ -83,7 +83,7 @@ func (t *Meta) applyOperation(op deep.Operation, logger *slog.Logger) (bool, err
 			}
 		}
 		if op.Kind == deep.OpReplace {
-			if v, ok := op.New.(Meta); ok {
+			if v, ok := deep.ValueAs[Meta](op.New); ok {
 				*t = v
 				return true, nil
 			}
@@ -103,7 +103,7 @@ func (t *Meta) applyOperation(op deep.Operation, logger *slog.Logger) (bool, err
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(string); ok {
+			if v, ok := deep.ValueAs[string](op.New); ok {
 				t.Region = v
 				return true, nil
 			}
@@ -122,7 +122,7 @@ func (t *Meta) applyOperation(op deep.Operation, logger *slog.Logger) (bool, err
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(string); ok {
+			if v, ok := deep.ValueAs[string](op.New); ok {
 				t.Zone = v
 				return true, nil
 			}
@@ -377,7 +377,7 @@ func (t *Limits) applyOperation(op deep.Operation, logger *slog.Logger) (bool, e
 			}
 		}
 		if op.Kind == deep.OpReplace {
-			if v, ok := op.New.(Limits); ok {
+			if v, ok := deep.ValueAs[Limits](op.New); ok {
 				*t = v
 				return true, nil
 			}
@@ -397,12 +397,8 @@ func (t *Limits) applyOperation(op deep.Operation, logger *slog.Logger) (bool, e
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(int); ok {
+			if v, ok := deep.ValueAs[int](op.New); ok {
 				t.CPU = v
-				return true, nil
-			}
-			if f, ok := op.New.(float64); ok {
-				t.CPU = int(f)
 				return true, nil
 			}
 		}
@@ -420,12 +416,8 @@ func (t *Limits) applyOperation(op deep.Operation, logger *slog.Logger) (bool, e
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(int); ok {
+			if v, ok := deep.ValueAs[int](op.New); ok {
 				t.Memory = v
-				return true, nil
-			}
-			if f, ok := op.New.(float64); ok {
-				t.Memory = int(f)
 				return true, nil
 			}
 		}
@@ -705,7 +697,7 @@ func (t *Server) applyOperation(op deep.Operation, logger *slog.Logger) (bool, e
 			}
 		}
 		if op.Kind == deep.OpReplace {
-			if v, ok := op.New.(Server); ok {
+			if v, ok := deep.ValueAs[Server](op.New); ok {
 				*t = v
 				return true, nil
 			}
@@ -725,7 +717,7 @@ func (t *Server) applyOperation(op deep.Operation, logger *slog.Logger) (bool, e
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(Meta); ok {
+			if v, ok := deep.ValueAs[Meta](op.New); ok {
 				t.Meta = v
 				return true, nil
 			}
@@ -744,7 +736,7 @@ func (t *Server) applyOperation(op deep.Operation, logger *slog.Logger) (bool, e
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(string); ok {
+			if v, ok := deep.ValueAs[string](op.New); ok {
 				t.Name = v
 				return true, nil
 			}
@@ -763,7 +755,7 @@ func (t *Server) applyOperation(op deep.Operation, logger *slog.Logger) (bool, e
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(Limits); ok {
+			if v, ok := deep.ValueAs[Limits](op.New); ok {
 				t.Limits = v
 				return true, nil
 			}
@@ -782,7 +774,7 @@ func (t *Server) applyOperation(op deep.Operation, logger *slog.Logger) (bool, e
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(*Limits); ok {
+			if v, ok := deep.ValueAs[*Limits](op.New); ok {
 				t.Sidecar = v
 				return true, nil
 			}

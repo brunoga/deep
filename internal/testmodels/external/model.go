@@ -4,13 +4,13 @@
 // generator that emits invalid code for these types breaks the build.
 package external
 
-//go:generate go run github.com/brunoga/deep/v5/cmd/deep-gen -type=Job,Stage -output job_deep.go .
+//go:generate go run github.com/brunoga/deep/v6/cmd/deep-gen -type=Job,Stage -output job_deep.go .
 
 import (
 	"time"
 	clock "time"
 
-	"github.com/brunoga/deep/v5/crdt"
+	"github.com/brunoga/deep/v6/crdt"
 )
 
 // Priority is a named type over a builtin: it has no generated methods.

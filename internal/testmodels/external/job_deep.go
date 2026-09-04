@@ -3,10 +3,10 @@ package external
 
 import (
 	"fmt"
-	deep "github.com/brunoga/deep/v5"
-	"github.com/brunoga/deep/v5/condition"
-	crdt "github.com/brunoga/deep/v5/crdt"
-	gen "github.com/brunoga/deep/v5/gen"
+	deep "github.com/brunoga/deep/v6"
+	"github.com/brunoga/deep/v6/condition"
+	crdt "github.com/brunoga/deep/v6/crdt"
+	gen "github.com/brunoga/deep/v6/gen"
 	"log/slog"
 	"reflect"
 	"regexp"
@@ -86,7 +86,7 @@ func (t *Stage) applyOperation(op deep.Operation, logger *slog.Logger) (bool, er
 			}
 		}
 		if op.Kind == deep.OpReplace {
-			if v, ok := op.New.(Stage); ok {
+			if v, ok := deep.ValueAs[Stage](op.New); ok {
 				*t = v
 				return true, nil
 			}
@@ -106,7 +106,7 @@ func (t *Stage) applyOperation(op deep.Operation, logger *slog.Logger) (bool, er
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(string); ok {
+			if v, ok := deep.ValueAs[string](op.New); ok {
 				t.Name = v
 				return true, nil
 			}
@@ -125,7 +125,7 @@ func (t *Stage) applyOperation(op deep.Operation, logger *slog.Logger) (bool, er
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(time.Time); ok {
+			if v, ok := deep.ValueAs[time.Time](op.New); ok {
 				t.At = v
 				return true, nil
 			}
@@ -352,7 +352,7 @@ func (t *Job) applyOperation(op deep.Operation, logger *slog.Logger) (bool, erro
 			}
 		}
 		if op.Kind == deep.OpReplace {
-			if v, ok := op.New.(Job); ok {
+			if v, ok := deep.ValueAs[Job](op.New); ok {
 				*t = v
 				return true, nil
 			}
@@ -372,7 +372,7 @@ func (t *Job) applyOperation(op deep.Operation, logger *slog.Logger) (bool, erro
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(*time.Time); ok {
+			if v, ok := deep.ValueAs[*time.Time](op.New); ok {
 				t.StartAt = v
 				return true, nil
 			}
@@ -391,7 +391,7 @@ func (t *Job) applyOperation(op deep.Operation, logger *slog.Logger) (bool, erro
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(time.Time); ok {
+			if v, ok := deep.ValueAs[time.Time](op.New); ok {
 				t.Deadline = v
 				return true, nil
 			}
@@ -410,7 +410,7 @@ func (t *Job) applyOperation(op deep.Operation, logger *slog.Logger) (bool, erro
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(time.Duration); ok {
+			if v, ok := deep.ValueAs[time.Duration](op.New); ok {
 				t.Timeout = v
 				return true, nil
 			}
@@ -429,7 +429,7 @@ func (t *Job) applyOperation(op deep.Operation, logger *slog.Logger) (bool, erro
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.([]time.Time); ok {
+			if v, ok := deep.ValueAs[[]time.Time](op.New); ok {
 				t.Window = v
 				return true, nil
 			}
@@ -448,7 +448,7 @@ func (t *Job) applyOperation(op deep.Operation, logger *slog.Logger) (bool, erro
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(map[string]*time.Time); ok {
+			if v, ok := deep.ValueAs[map[string]*time.Time](op.New); ok {
 				t.Retries = v
 				return true, nil
 			}
@@ -467,7 +467,7 @@ func (t *Job) applyOperation(op deep.Operation, logger *slog.Logger) (bool, erro
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.([]Stage); ok {
+			if v, ok := deep.ValueAs[[]Stage](op.New); ok {
 				t.Stages = v
 				return true, nil
 			}
@@ -486,7 +486,7 @@ func (t *Job) applyOperation(op deep.Operation, logger *slog.Logger) (bool, erro
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(map[string]*Stage); ok {
+			if v, ok := deep.ValueAs[map[string]*Stage](op.New); ok {
 				t.Owners = v
 				return true, nil
 			}
@@ -505,7 +505,7 @@ func (t *Job) applyOperation(op deep.Operation, logger *slog.Logger) (bool, erro
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(Priority); ok {
+			if v, ok := deep.ValueAs[Priority](op.New); ok {
 				t.Priority = v
 				return true, nil
 			}
@@ -539,7 +539,7 @@ func (t *Job) applyOperation(op deep.Operation, logger *slog.Logger) (bool, erro
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(crdt.LWW[string]); ok {
+			if v, ok := deep.ValueAs[crdt.LWW[string]](op.New); ok {
 				t.Title = v
 				return true, nil
 			}
@@ -558,7 +558,7 @@ func (t *Job) applyOperation(op deep.Operation, logger *slog.Logger) (bool, erro
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(crdt.LWW[[]int]); ok {
+			if v, ok := deep.ValueAs[crdt.LWW[[]int]](op.New); ok {
 				t.History = v
 				return true, nil
 			}
@@ -577,7 +577,7 @@ func (t *Job) applyOperation(op deep.Operation, logger *slog.Logger) (bool, erro
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(clock.Time); ok {
+			if v, ok := deep.ValueAs[clock.Time](op.New); ok {
 				t.Checked = v
 				return true, nil
 			}
@@ -596,7 +596,7 @@ func (t *Job) applyOperation(op deep.Operation, logger *slog.Logger) (bool, erro
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.([2]int); ok {
+			if v, ok := deep.ValueAs[[2]int](op.New); ok {
 				t.Grid = v
 				return true, nil
 			}
@@ -610,7 +610,7 @@ func (t *Job) applyOperation(op deep.Operation, logger *slog.Logger) (bool, erro
 					delete(t.Retries, key)
 					return true, nil
 				}
-				if v, ok := op.New.(*time.Time); ok && (op.Kind == deep.OpAdd || op.Kind == deep.OpReplace) {
+				if v, ok := deep.ValueAs[*time.Time](op.New); ok && (op.Kind == deep.OpAdd || op.Kind == deep.OpReplace) {
 					if t.Retries == nil {
 						t.Retries = make(map[string]*time.Time)
 					}
@@ -628,7 +628,7 @@ func (t *Job) applyOperation(op deep.Operation, logger *slog.Logger) (bool, erro
 						delete(t.Owners, key)
 						return true, nil
 					}
-					if v, ok := op.New.(*Stage); ok && (op.Kind == deep.OpAdd || op.Kind == deep.OpReplace) {
+					if v, ok := deep.ValueAs[*Stage](op.New); ok && (op.Kind == deep.OpAdd || op.Kind == deep.OpReplace) {
 						if t.Owners == nil {
 							t.Owners = make(map[string]*Stage)
 						}

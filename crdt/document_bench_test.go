@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/brunoga/deep/v5/crdt/hlc"
+	"github.com/brunoga/deep/v6/crdt/hlc"
 )
 
 // Editing a document that has accumulated many runs, which is where Text's

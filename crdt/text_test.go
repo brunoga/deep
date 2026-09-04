@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"fmt"
-	"github.com/brunoga/deep/v5/crdt/hlc"
+	"github.com/brunoga/deep/v6/crdt/hlc"
 	"math/rand"
 	"sort"
 	"strings"

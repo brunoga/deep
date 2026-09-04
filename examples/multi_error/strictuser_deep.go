@@ -3,9 +3,9 @@ package main
 
 import (
 	"fmt"
-	deep "github.com/brunoga/deep/v5"
-	"github.com/brunoga/deep/v5/condition"
-	gen "github.com/brunoga/deep/v5/gen"
+	deep "github.com/brunoga/deep/v6"
+	"github.com/brunoga/deep/v6/condition"
+	gen "github.com/brunoga/deep/v6/gen"
 	"log/slog"
 	"reflect"
 	"regexp"
@@ -82,7 +82,7 @@ func (t *StrictUser) applyOperation(op deep.Operation, logger *slog.Logger) (boo
 			}
 		}
 		if op.Kind == deep.OpReplace {
-			if v, ok := op.New.(StrictUser); ok {
+			if v, ok := deep.ValueAs[StrictUser](op.New); ok {
 				*t = v
 				return true, nil
 			}
@@ -102,7 +102,7 @@ func (t *StrictUser) applyOperation(op deep.Operation, logger *slog.Logger) (boo
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(string); ok {
+			if v, ok := deep.ValueAs[string](op.New); ok {
 				t.Name = v
 				return true, nil
 			}
@@ -121,12 +121,8 @@ func (t *StrictUser) applyOperation(op deep.Operation, logger *slog.Logger) (boo
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(int); ok {
+			if v, ok := deep.ValueAs[int](op.New); ok {
 				t.Age = v
-				return true, nil
-			}
-			if f, ok := op.New.(float64); ok {
-				t.Age = int(f)
 				return true, nil
 			}
 		}

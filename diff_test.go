@@ -1,8 +1,8 @@
 package deep_test
 
 import (
-	"github.com/brunoga/deep/v5"
-	"github.com/brunoga/deep/v5/internal/testmodels"
+	"github.com/brunoga/deep/v6"
+	"github.com/brunoga/deep/v6/internal/testmodels"
 
 	"testing"
 )
@@ -14,7 +14,7 @@ func TestBuilder(t *testing.T) {
 
 	c1 := Config{Theme: "dark"}
 
-	patch := deep.Edit(&c1).
+	patch := deep.NewPatch[Config]().
 		With(deep.Set(deep.Field(func(c *Config) *string { return &c.Theme }), "light")).
 		Build()
 
@@ -40,7 +40,7 @@ func TestComplexBuilder(t *testing.T) {
 	rolesPath := deep.Field(func(u *testmodels.User) *[]string { return &u.Roles })
 	scorePath := deep.Field(func(u *testmodels.User) *map[string]int { return &u.Score })
 
-	patch := deep.Edit(&u1).
+	patch := deep.NewPatch[testmodels.User]().
 		With(
 			deep.Set(namePath, "Alice Smith"),
 			deep.Set(agePath, 35),
@@ -77,7 +77,7 @@ func TestLog(t *testing.T) {
 
 	namePath := deep.Field(func(u *testmodels.User) *string { return &u.Name })
 
-	p := deep.Edit(&u).
+	p := deep.NewPatch[testmodels.User]().
 		Log("Starting update").
 		With(deep.Set(namePath, "Bob")).
 		Log("Finished update").
@@ -87,11 +87,10 @@ func TestLog(t *testing.T) {
 }
 
 func TestBuilderAdvanced(t *testing.T) {
-	u := &testmodels.User{}
 	idPath := deep.Field(func(u *testmodels.User) *int { return &u.ID })
 	namePath := deep.Field(func(u *testmodels.User) *string { return &u.Name })
 
-	p := deep.Edit(u).
+	p := deep.NewPatch[testmodels.User]().
 		Guard(deep.Eq(idPath, 1)).
 		With(
 			deep.Set(idPath, 2).Unless(deep.Eq(idPath, 1)),

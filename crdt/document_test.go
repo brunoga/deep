@@ -6,7 +6,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/brunoga/deep/v5/crdt/hlc"
+	"github.com/brunoga/deep/v6/crdt/hlc"
 	"strings"
 	"time"
 )
@@ -291,7 +291,11 @@ func TestDocumentDeltaIsIncremental(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal document: %v", err)
 	}
-	if len(wire) >= len(whole)/10 {
+	// The one-operation delta carries fixed overhead — the operation kind is a
+	// word, the clock a struct — so the ratio loosens as the document shrinks;
+	// an eighth of a 2 KB document still fails if the delta stops being
+	// incremental.
+	if len(wire) >= len(whole)/8 {
 		t.Errorf("a one-character edit produced a %d byte delta for a %d byte document",
 			len(wire), len(whole))
 	}

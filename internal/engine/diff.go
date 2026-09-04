@@ -8,8 +8,8 @@ import (
 	"sync"
 	"sync/atomic"
 
-	icore "github.com/brunoga/deep/v5/internal/core"
-	"github.com/brunoga/deep/v5/internal/unsafe"
+	icore "github.com/brunoga/deep/v6/internal/core"
+	"github.com/brunoga/deep/v6/internal/unsafe"
 )
 
 // DiffOption allows configuring the behavior of the Diff function.

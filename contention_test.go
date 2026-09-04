@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	deep "github.com/brunoga/deep/v5"
-	"github.com/brunoga/deep/v5/condition"
-	"github.com/brunoga/deep/v5/internal/testmodels/record"
+	deep "github.com/brunoga/deep/v6"
+	"github.com/brunoga/deep/v6/condition"
+	"github.com/brunoga/deep/v6/internal/testmodels/record"
 )
 
 // This file compares two ways of writing to a contended row: whole-payload

@@ -6,7 +6,7 @@ import (
 	"math/rand"
 	"testing"
 
-	"github.com/brunoga/deep/v5/crdt/hlc"
+	"github.com/brunoga/deep/v6/crdt/hlc"
 )
 
 // genUpdate builds an update the way a real session produces one: runs from a

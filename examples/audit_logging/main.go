@@ -1,4 +1,4 @@
-//go:generate go run github.com/brunoga/deep/v5/cmd/deep-gen -type=User .
+//go:generate go run github.com/brunoga/deep/v6/cmd/deep-gen -type=User .
 
 package main
 
@@ -8,7 +8,7 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/brunoga/deep/v5"
+	"github.com/brunoga/deep/v6"
 )
 
 type User struct {

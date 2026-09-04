@@ -3,9 +3,9 @@ package main
 
 import (
 	"fmt"
-	deep "github.com/brunoga/deep/v5"
-	"github.com/brunoga/deep/v5/condition"
-	gen "github.com/brunoga/deep/v5/gen"
+	deep "github.com/brunoga/deep/v6"
+	"github.com/brunoga/deep/v6/condition"
+	gen "github.com/brunoga/deep/v6/gen"
 	"log/slog"
 	"reflect"
 	"regexp"
@@ -83,7 +83,7 @@ func (t *User) applyOperation(op deep.Operation, logger *slog.Logger) (bool, err
 			}
 		}
 		if op.Kind == deep.OpReplace {
-			if v, ok := op.New.(User); ok {
+			if v, ok := deep.ValueAs[User](op.New); ok {
 				*t = v
 				return true, nil
 			}
@@ -103,7 +103,7 @@ func (t *User) applyOperation(op deep.Operation, logger *slog.Logger) (bool, err
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(string); ok {
+			if v, ok := deep.ValueAs[string](op.New); ok {
 				t.Name = v
 				return true, nil
 			}
@@ -122,7 +122,7 @@ func (t *User) applyOperation(op deep.Operation, logger *slog.Logger) (bool, err
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(string); ok {
+			if v, ok := deep.ValueAs[string](op.New); ok {
 				t.Email = v
 				return true, nil
 			}
@@ -141,7 +141,7 @@ func (t *User) applyOperation(op deep.Operation, logger *slog.Logger) (bool, err
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(map[string]bool); ok {
+			if v, ok := deep.ValueAs[map[string]bool](op.New); ok {
 				t.Tags = v
 				return true, nil
 			}
@@ -155,7 +155,7 @@ func (t *User) applyOperation(op deep.Operation, logger *slog.Logger) (bool, err
 					delete(t.Tags, key)
 					return true, nil
 				}
-				if v, ok := op.New.(bool); ok && (op.Kind == deep.OpAdd || op.Kind == deep.OpReplace) {
+				if v, ok := deep.ValueAs[bool](op.New); ok && (op.Kind == deep.OpAdd || op.Kind == deep.OpReplace) {
 					if t.Tags == nil {
 						t.Tags = make(map[string]bool)
 					}

@@ -3,7 +3,7 @@
 // pointer-valued maps, and map keys needing RFC 6901 escaping.
 package shapes
 
-//go:generate go run github.com/brunoga/deep/v5/cmd/deep-gen -type=Doc,Meta,Entry,Payload -output doc_deep.go .
+//go:generate go run github.com/brunoga/deep/v6/cmd/deep-gen -type=Doc,Meta,Entry,Payload -output doc_deep.go .
 
 // Meta is embedded in Doc; embedded fields are addressed by type name.
 type Meta struct {

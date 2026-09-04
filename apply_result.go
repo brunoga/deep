@@ -7,8 +7,8 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/brunoga/deep/v5/condition"
-	"github.com/brunoga/deep/v5/internal/engine"
+	"github.com/brunoga/deep/v6/condition"
+	"github.com/brunoga/deep/v6/internal/engine"
 )
 
 // ErrGuardNotMet is returned when a patch's [Patch.Guard] evaluates false. It
@@ -257,10 +257,3 @@ func applyOneOp[T any](target *T, op Operation, strict bool, logger *slog.Logger
 	op.Strict = strict
 	return engine.ApplyOpReflectionValue(reflect.ValueOf(target).Elem(), op, logger)
 }
-
-// Status is an alias for [OpStatus].
-//
-// Deprecated: use [OpStatus]. This existed only so that an embedded field in
-// [OpOutcome] would be named Status; that field is now declared explicitly, so
-// the alias has no remaining purpose.
-type Status = OpStatus

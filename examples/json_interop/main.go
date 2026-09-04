@@ -1,4 +1,4 @@
-//go:generate go run github.com/brunoga/deep/v5/cmd/deep-gen -type=UIState -output uistate_deep.go .
+//go:generate go run github.com/brunoga/deep/v6/cmd/deep-gen -type=UIState -output uistate_deep.go .
 
 package main
 
@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/brunoga/deep/v5"
+	"github.com/brunoga/deep/v6"
 )
 
 type UIState struct {

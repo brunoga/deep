@@ -3,8 +3,8 @@ package deep
 import (
 	"reflect"
 
-	icore "github.com/brunoga/deep/v5/internal/core"
-	"github.com/brunoga/deep/v5/internal/engine"
+	icore "github.com/brunoga/deep/v6/internal/core"
+	"github.com/brunoga/deep/v6/internal/engine"
 )
 
 // Custom behaviour for a single type.

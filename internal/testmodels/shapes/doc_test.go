@@ -3,10 +3,10 @@ package shapes_test
 import (
 	"testing"
 
-	deep "github.com/brunoga/deep/v5"
-	"github.com/brunoga/deep/v5/condition"
-	"github.com/brunoga/deep/v5/internal/testmodels/multirun"
-	"github.com/brunoga/deep/v5/internal/testmodels/shapes"
+	deep "github.com/brunoga/deep/v6"
+	"github.com/brunoga/deep/v6/condition"
+	"github.com/brunoga/deep/v6/internal/testmodels/multirun"
+	"github.com/brunoga/deep/v6/internal/testmodels/shapes"
 )
 
 // Embedded fields must flow through Diff, Apply, Equal and Clone; they used to

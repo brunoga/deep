@@ -3,9 +3,9 @@ package main
 
 import (
 	"fmt"
-	deep "github.com/brunoga/deep/v5"
-	"github.com/brunoga/deep/v5/condition"
-	gen "github.com/brunoga/deep/v5/gen"
+	deep "github.com/brunoga/deep/v6"
+	"github.com/brunoga/deep/v6/condition"
+	gen "github.com/brunoga/deep/v6/gen"
 	"log/slog"
 	"reflect"
 )
@@ -81,7 +81,7 @@ func (t *Fleet) applyOperation(op deep.Operation, logger *slog.Logger) (bool, er
 			}
 		}
 		if op.Kind == deep.OpReplace {
-			if v, ok := op.New.(Fleet); ok {
+			if v, ok := deep.ValueAs[Fleet](op.New); ok {
 				*t = v
 				return true, nil
 			}
@@ -101,7 +101,7 @@ func (t *Fleet) applyOperation(op deep.Operation, logger *slog.Logger) (bool, er
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(map[DeviceID]string); ok {
+			if v, ok := deep.ValueAs[map[DeviceID]string](op.New); ok {
 				t.Devices = v
 				return true, nil
 			}

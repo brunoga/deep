@@ -6,8 +6,8 @@ import (
 	"math/rand"
 	"testing"
 
-	deep "github.com/brunoga/deep/v5"
-	"github.com/brunoga/deep/v5/internal/testmodels/shapes"
+	deep "github.com/brunoga/deep/v6"
+	"github.com/brunoga/deep/v6/internal/testmodels/shapes"
 )
 
 // Properties that must hold for every value, checked over generated inputs

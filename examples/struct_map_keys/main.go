@@ -1,4 +1,4 @@
-//go:generate go run github.com/brunoga/deep/v5/cmd/deep-gen -type=Fleet -output fleet_deep.go .
+//go:generate go run github.com/brunoga/deep/v6/cmd/deep-gen -type=Fleet -output fleet_deep.go .
 
 package main
 
@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/brunoga/deep/v5"
+	"github.com/brunoga/deep/v6"
 )
 
 // DeviceID is a non-string map key. deep uses its String() representation

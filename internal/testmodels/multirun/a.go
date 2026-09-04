@@ -5,8 +5,8 @@
 // regression guard.
 package multirun
 
-//go:generate go run github.com/brunoga/deep/v5/cmd/deep-gen -type=Alpha -output alpha_deep.go .
-//go:generate go run github.com/brunoga/deep/v5/cmd/deep-gen -type=Beta -output beta_deep.go .
+//go:generate go run github.com/brunoga/deep/v6/cmd/deep-gen -type=Alpha -output alpha_deep.go .
+//go:generate go run github.com/brunoga/deep/v6/cmd/deep-gen -type=Beta -output beta_deep.go .
 
 type Alpha struct {
 	M map[string]int `json:"m"`

@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/brunoga/deep/v5"
+	"github.com/brunoga/deep/v6"
 )
 
 // No //go:generate here: this package has no generated code, so everything runs

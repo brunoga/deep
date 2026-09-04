@@ -3,8 +3,8 @@ package deep_test
 import (
 	"testing"
 
-	"github.com/brunoga/deep/v5"
-	"github.com/brunoga/deep/v5/internal/testmodels"
+	"github.com/brunoga/deep/v6"
+	"github.com/brunoga/deep/v6/internal/testmodels"
 )
 
 func TestSelector(t *testing.T) {
@@ -93,7 +93,7 @@ func TestMapKeyEscapesJSONPointerSpecials(t *testing.T) {
 	// End-to-end: a Set through MapKey on a slash-bearing key must hit the
 	// right entry.
 	s := &S{M: map[string]int{"a/b": 0, "other": 0}}
-	p := deep.Edit(s).With(
+	p := deep.NewPatch[S]().With(
 		deep.Set(deep.MapKey[S, map[string]int, string, int](mPath, "a/b"), 42),
 	).Build()
 	if err := deep.Apply(s, p); err != nil {

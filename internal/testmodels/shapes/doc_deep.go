@@ -3,9 +3,9 @@ package shapes
 
 import (
 	"fmt"
-	deep "github.com/brunoga/deep/v5"
-	"github.com/brunoga/deep/v5/condition"
-	gen "github.com/brunoga/deep/v5/gen"
+	deep "github.com/brunoga/deep/v6"
+	"github.com/brunoga/deep/v6/condition"
+	gen "github.com/brunoga/deep/v6/gen"
 	"log/slog"
 	"reflect"
 	"regexp"
@@ -83,7 +83,7 @@ func (t *Meta) applyOperation(op deep.Operation, logger *slog.Logger) (bool, err
 			}
 		}
 		if op.Kind == deep.OpReplace {
-			if v, ok := op.New.(Meta); ok {
+			if v, ok := deep.ValueAs[Meta](op.New); ok {
 				*t = v
 				return true, nil
 			}
@@ -103,12 +103,8 @@ func (t *Meta) applyOperation(op deep.Operation, logger *slog.Logger) (bool, err
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(int); ok {
+			if v, ok := deep.ValueAs[int](op.New); ok {
 				t.Version = v
-				return true, nil
-			}
-			if f, ok := op.New.(float64); ok {
-				t.Version = int(f)
 				return true, nil
 			}
 		}
@@ -126,7 +122,7 @@ func (t *Meta) applyOperation(op deep.Operation, logger *slog.Logger) (bool, err
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(string); ok {
+			if v, ok := deep.ValueAs[string](op.New); ok {
 				t.Author = v
 				return true, nil
 			}
@@ -394,7 +390,7 @@ func (t *Entry) applyOperation(op deep.Operation, logger *slog.Logger) (bool, er
 			}
 		}
 		if op.Kind == deep.OpReplace {
-			if v, ok := op.New.(Entry); ok {
+			if v, ok := deep.ValueAs[Entry](op.New); ok {
 				*t = v
 				return true, nil
 			}
@@ -414,7 +410,7 @@ func (t *Entry) applyOperation(op deep.Operation, logger *slog.Logger) (bool, er
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(string); ok {
+			if v, ok := deep.ValueAs[string](op.New); ok {
 				t.ID = v
 				return true, nil
 			}
@@ -433,12 +429,8 @@ func (t *Entry) applyOperation(op deep.Operation, logger *slog.Logger) (bool, er
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(int); ok {
+			if v, ok := deep.ValueAs[int](op.New); ok {
 				t.N = v
-				return true, nil
-			}
-			if f, ok := op.New.(float64); ok {
-				t.N = int(f)
 				return true, nil
 			}
 		}
@@ -705,7 +697,7 @@ func (t *Payload) applyOperation(op deep.Operation, logger *slog.Logger) (bool, 
 			}
 		}
 		if op.Kind == deep.OpReplace {
-			if v, ok := op.New.(Payload); ok {
+			if v, ok := deep.ValueAs[Payload](op.New); ok {
 				*t = v
 				return true, nil
 			}
@@ -725,7 +717,7 @@ func (t *Payload) applyOperation(op deep.Operation, logger *slog.Logger) (bool, 
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.([]byte); ok {
+			if v, ok := deep.ValueAs[[]byte](op.New); ok {
 				t.Bytes = v
 				return true, nil
 			}
@@ -744,7 +736,7 @@ func (t *Payload) applyOperation(op deep.Operation, logger *slog.Logger) (bool, 
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(string); ok {
+			if v, ok := deep.ValueAs[string](op.New); ok {
 				t.Label = v
 				return true, nil
 			}
@@ -961,7 +953,7 @@ func (t *Doc) applyOperation(op deep.Operation, logger *slog.Logger) (bool, erro
 			}
 		}
 		if op.Kind == deep.OpReplace {
-			if v, ok := op.New.(Doc); ok {
+			if v, ok := deep.ValueAs[Doc](op.New); ok {
 				*t = v
 				return true, nil
 			}
@@ -981,7 +973,7 @@ func (t *Doc) applyOperation(op deep.Operation, logger *slog.Logger) (bool, erro
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(Meta); ok {
+			if v, ok := deep.ValueAs[Meta](op.New); ok {
 				t.Meta = v
 				return true, nil
 			}
@@ -1000,7 +992,7 @@ func (t *Doc) applyOperation(op deep.Operation, logger *slog.Logger) (bool, erro
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.([]Entry); ok {
+			if v, ok := deep.ValueAs[[]Entry](op.New); ok {
 				t.Entries = v
 				return true, nil
 			}
@@ -1019,7 +1011,7 @@ func (t *Doc) applyOperation(op deep.Operation, logger *slog.Logger) (bool, erro
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(map[string]map[string]int); ok {
+			if v, ok := deep.ValueAs[map[string]map[string]int](op.New); ok {
 				t.Nested = v
 				return true, nil
 			}
@@ -1038,7 +1030,7 @@ func (t *Doc) applyOperation(op deep.Operation, logger *slog.Logger) (bool, erro
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(map[string]*Meta); ok {
+			if v, ok := deep.ValueAs[map[string]*Meta](op.New); ok {
 				t.Stages = v
 				return true, nil
 			}
@@ -1057,7 +1049,7 @@ func (t *Doc) applyOperation(op deep.Operation, logger *slog.Logger) (bool, erro
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(*Meta); ok {
+			if v, ok := deep.ValueAs[*Meta](op.New); ok {
 				t.Side = v
 				return true, nil
 			}
@@ -1076,7 +1068,7 @@ func (t *Doc) applyOperation(op deep.Operation, logger *slog.Logger) (bool, erro
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(Payload); ok {
+			if v, ok := deep.ValueAs[Payload](op.New); ok {
 				t.Blob = v
 				return true, nil
 			}
@@ -1095,7 +1087,7 @@ func (t *Doc) applyOperation(op deep.Operation, logger *slog.Logger) (bool, erro
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(map[string]int); ok {
+			if v, ok := deep.ValueAs[map[string]int](op.New); ok {
 				t.Scores = v
 				return true, nil
 			}
@@ -1114,7 +1106,7 @@ func (t *Doc) applyOperation(op deep.Operation, logger *slog.Logger) (bool, erro
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(string); ok {
+			if v, ok := deep.ValueAs[string](op.New); ok {
 				t.Name = v
 				return true, nil
 			}
@@ -1132,7 +1124,7 @@ func (t *Doc) applyOperation(op deep.Operation, logger *slog.Logger) (bool, erro
 					delete(t.Nested, key)
 					return true, nil
 				}
-				if v, ok := op.New.(map[string]int); ok && (op.Kind == deep.OpAdd || op.Kind == deep.OpReplace) {
+				if v, ok := deep.ValueAs[map[string]int](op.New); ok && (op.Kind == deep.OpAdd || op.Kind == deep.OpReplace) {
 					if t.Nested == nil {
 						t.Nested = make(map[string]map[string]int)
 					}
@@ -1150,7 +1142,7 @@ func (t *Doc) applyOperation(op deep.Operation, logger *slog.Logger) (bool, erro
 						delete(t.Stages, key)
 						return true, nil
 					}
-					if v, ok := op.New.(*Meta); ok && (op.Kind == deep.OpAdd || op.Kind == deep.OpReplace) {
+					if v, ok := deep.ValueAs[*Meta](op.New); ok && (op.Kind == deep.OpAdd || op.Kind == deep.OpReplace) {
 						if t.Stages == nil {
 							t.Stages = make(map[string]*Meta)
 						}
@@ -1177,7 +1169,7 @@ func (t *Doc) applyOperation(op deep.Operation, logger *slog.Logger) (bool, erro
 					delete(t.Scores, key)
 					return true, nil
 				}
-				if v, ok := op.New.(int); ok && (op.Kind == deep.OpAdd || op.Kind == deep.OpReplace) {
+				if v, ok := deep.ValueAs[int](op.New); ok && (op.Kind == deep.OpAdd || op.Kind == deep.OpReplace) {
 					if t.Scores == nil {
 						t.Scores = make(map[string]int)
 					}

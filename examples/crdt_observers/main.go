@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/brunoga/deep/v5/crdt"
+	"github.com/brunoga/deep/v6/crdt"
 )
 
 // A user interface needs to know what changed, not just that something did.

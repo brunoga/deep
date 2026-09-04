@@ -3,8 +3,8 @@ package main
 import (
 	"fmt"
 
-	"github.com/brunoga/deep/v5/crdt"
-	"github.com/brunoga/deep/v5/crdt/hlc"
+	"github.com/brunoga/deep/v6/crdt"
+	"github.com/brunoga/deep/v6/crdt/hlc"
 )
 
 // Profile uses per-field LWW[T] registers. Each register carries the timestamp

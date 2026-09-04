@@ -3,8 +3,10 @@ package crdt
 import (
 	"encoding/binary"
 	"fmt"
+	"maps"
+	"slices"
 
-	"github.com/brunoga/deep/v5/crdt/hlc"
+	"github.com/brunoga/deep/v6/crdt/hlc"
 )
 
 // A compact wire format for Update and StateVector.
@@ -153,18 +155,7 @@ func (sv StateVector) MarshalBinary() ([]byte, error) {
 }
 
 func sortedNodes(sv StateVector) []string {
-	out := make([]string, 0, len(sv))
-	for n := range sv {
-		out = append(out, n)
-	}
-	// Insertion sort: state vectors have one entry per writer, so this is a
-	// handful of elements and never worth an allocation.
-	for i := 1; i < len(out); i++ {
-		for j := i; j > 0 && out[j] < out[j-1]; j-- {
-			out[j], out[j-1] = out[j-1], out[j]
-		}
-	}
-	return out
+	return slices.Sorted(maps.Keys(sv))
 }
 
 // ── decoding ─────────────────────────────────────────────────────────────────

@@ -7,42 +7,55 @@ import (
 	"strings"
 )
 
-// OpKind represents the type of operation in a patch.
-type OpKind int
+// OpKind is the type of an operation in a patch. It is a string, and the
+// string is the wire form: a serialized operation says "replace", not a number
+// whose meaning depends on the order the kinds were declared in. That also
+// makes the zero value invalid rather than silently meaning add.
+type OpKind string
 
 const (
-	OpAdd OpKind = iota
-	OpRemove
-	OpReplace
-	OpMove
-	OpCopy
-	OpLog
-	// OpAlias makes Path hold the same object From resolves to — sharing, where
-	// OpCopy makes an independent deep copy. Diff emits it for the second and
-	// later routes to a value that is referenced more than once, so applying
-	// the patch rebuilds the sharing the new value has.
-	OpAlias
+	OpAdd     OpKind = "add"
+	OpRemove  OpKind = "remove"
+	OpReplace OpKind = "replace"
+	OpMove    OpKind = "move"
+	OpCopy    OpKind = "copy"
+	OpLog     OpKind = "log"
+	// OpAlias makes Path hold the same object From resolves to — sharing,
+	// where OpCopy makes an independent deep copy. Diff emits it for the
+	// second and later routes to a value that is referenced more than once, so
+	// applying the patch rebuilds the sharing the new value has.
+	OpAlias OpKind = "alias"
 )
 
 func (k OpKind) String() string {
-	switch k {
-	case OpAdd:
-		return "add"
-	case OpRemove:
-		return "remove"
-	case OpReplace:
-		return "replace"
-	case OpMove:
-		return "move"
-	case OpCopy:
-		return "copy"
-	case OpLog:
-		return "log"
-	case OpAlias:
-		return "alias"
-	default:
-		return "unknown"
+	if k == "" {
+		return "invalid"
 	}
+	return string(k)
+}
+
+// UnmarshalJSON accepts the string form, and also the small integers v5 wrote —
+// a patch stored before the change should still be readable, even though v6
+// will never write one like it.
+func (k *OpKind) UnmarshalJSON(data []byte) error {
+	if len(data) > 0 && data[0] == '"' {
+		var s string
+		if err := json.Unmarshal(data, &s); err != nil {
+			return err
+		}
+		*k = OpKind(s)
+		return nil
+	}
+	var n int
+	if err := json.Unmarshal(data, &n); err != nil {
+		return fmt.Errorf("operation kind must be a string or a v5 integer: %s", data)
+	}
+	v5 := []OpKind{OpAdd, OpRemove, OpReplace, OpMove, OpCopy, OpLog, OpAlias}
+	if n < 0 || n >= len(v5) {
+		return fmt.Errorf("unknown v5 operation kind %d", n)
+	}
+	*k = v5[n]
+	return nil
 }
 
 // Patch represents a set of changes that can be applied to a value of type T.

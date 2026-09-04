@@ -3,9 +3,9 @@ package record
 
 import (
 	"fmt"
-	deep "github.com/brunoga/deep/v5"
-	"github.com/brunoga/deep/v5/condition"
-	gen "github.com/brunoga/deep/v5/gen"
+	deep "github.com/brunoga/deep/v6"
+	"github.com/brunoga/deep/v6/condition"
+	gen "github.com/brunoga/deep/v6/gen"
 	"log/slog"
 	"reflect"
 	"regexp"
@@ -82,7 +82,7 @@ func (t *Record) applyOperation(op deep.Operation, logger *slog.Logger) (bool, e
 			}
 		}
 		if op.Kind == deep.OpReplace {
-			if v, ok := op.New.(Record); ok {
+			if v, ok := deep.ValueAs[Record](op.New); ok {
 				*t = v
 				return true, nil
 			}
@@ -102,7 +102,7 @@ func (t *Record) applyOperation(op deep.Operation, logger *slog.Logger) (bool, e
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(string); ok {
+			if v, ok := deep.ValueAs[string](op.New); ok {
 				t.ID = v
 				return true, nil
 			}
@@ -121,12 +121,8 @@ func (t *Record) applyOperation(op deep.Operation, logger *slog.Logger) (bool, e
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(int); ok {
+			if v, ok := deep.ValueAs[int](op.New); ok {
 				t.Version = v
-				return true, nil
-			}
-			if f, ok := op.New.(float64); ok {
-				t.Version = int(f)
 				return true, nil
 			}
 		}
@@ -144,12 +140,8 @@ func (t *Record) applyOperation(op deep.Operation, logger *slog.Logger) (bool, e
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(int); ok {
+			if v, ok := deep.ValueAs[int](op.New); ok {
 				t.Stock = v
-				return true, nil
-			}
-			if f, ok := op.New.(float64); ok {
-				t.Stock = int(f)
 				return true, nil
 			}
 		}
@@ -167,12 +159,8 @@ func (t *Record) applyOperation(op deep.Operation, logger *slog.Logger) (bool, e
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(int); ok {
+			if v, ok := deep.ValueAs[int](op.New); ok {
 				t.Price = v
-				return true, nil
-			}
-			if f, ok := op.New.(float64); ok {
-				t.Price = int(f)
 				return true, nil
 			}
 		}
@@ -190,12 +178,8 @@ func (t *Record) applyOperation(op deep.Operation, logger *slog.Logger) (bool, e
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(int); ok {
+			if v, ok := deep.ValueAs[int](op.New); ok {
 				t.Views = v
-				return true, nil
-			}
-			if f, ok := op.New.(float64); ok {
-				t.Views = int(f)
 				return true, nil
 			}
 		}
@@ -213,12 +197,8 @@ func (t *Record) applyOperation(op deep.Operation, logger *slog.Logger) (bool, e
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(int); ok {
+			if v, ok := deep.ValueAs[int](op.New); ok {
 				t.Rating = v
-				return true, nil
-			}
-			if f, ok := op.New.(float64); ok {
-				t.Rating = int(f)
 				return true, nil
 			}
 		}
@@ -236,12 +216,8 @@ func (t *Record) applyOperation(op deep.Operation, logger *slog.Logger) (bool, e
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(int); ok {
+			if v, ok := deep.ValueAs[int](op.New); ok {
 				t.Reserved = v
-				return true, nil
-			}
-			if f, ok := op.New.(float64); ok {
-				t.Reserved = int(f)
 				return true, nil
 			}
 		}
@@ -259,12 +235,8 @@ func (t *Record) applyOperation(op deep.Operation, logger *slog.Logger) (bool, e
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(int); ok {
+			if v, ok := deep.ValueAs[int](op.New); ok {
 				t.Shipped = v
-				return true, nil
-			}
-			if f, ok := op.New.(float64); ok {
-				t.Shipped = int(f)
 				return true, nil
 			}
 		}
@@ -282,12 +254,8 @@ func (t *Record) applyOperation(op deep.Operation, logger *slog.Logger) (bool, e
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(int); ok {
+			if v, ok := deep.ValueAs[int](op.New); ok {
 				t.Returned = v
-				return true, nil
-			}
-			if f, ok := op.New.(float64); ok {
-				t.Returned = int(f)
 				return true, nil
 			}
 		}
@@ -305,12 +273,8 @@ func (t *Record) applyOperation(op deep.Operation, logger *slog.Logger) (bool, e
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(int); ok {
+			if v, ok := deep.ValueAs[int](op.New); ok {
 				t.Flagged = v
-				return true, nil
-			}
-			if f, ok := op.New.(float64); ok {
-				t.Flagged = int(f)
 				return true, nil
 			}
 		}

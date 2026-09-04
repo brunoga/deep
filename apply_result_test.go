@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	deep "github.com/brunoga/deep/v5"
-	"github.com/brunoga/deep/v5/internal/testmodels"
+	deep "github.com/brunoga/deep/v6"
+	"github.com/brunoga/deep/v6/internal/testmodels"
 )
 
 // reflectDoc has no generated code, so it exercises the reflection path. Its

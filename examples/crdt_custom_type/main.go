@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/brunoga/deep/v5/crdt"
-	"github.com/brunoga/deep/v5/crdt/hlc"
+	"github.com/brunoga/deep/v6/crdt"
+	"github.com/brunoga/deep/v6/crdt/hlc"
 )
 
 // A field inside a CRDT normally merges by last-write-wins: two replicas

@@ -3,9 +3,9 @@ package main
 
 import (
 	"fmt"
-	deep "github.com/brunoga/deep/v5"
-	"github.com/brunoga/deep/v5/condition"
-	gen "github.com/brunoga/deep/v5/gen"
+	deep "github.com/brunoga/deep/v6"
+	"github.com/brunoga/deep/v6/condition"
+	gen "github.com/brunoga/deep/v6/gen"
 	"log/slog"
 	"reflect"
 	"regexp"
@@ -83,7 +83,7 @@ func (t *DocState) applyOperation(op deep.Operation, logger *slog.Logger) (bool,
 			}
 		}
 		if op.Kind == deep.OpReplace {
-			if v, ok := op.New.(DocState); ok {
+			if v, ok := deep.ValueAs[DocState](op.New); ok {
 				*t = v
 				return true, nil
 			}
@@ -103,7 +103,7 @@ func (t *DocState) applyOperation(op deep.Operation, logger *slog.Logger) (bool,
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(string); ok {
+			if v, ok := deep.ValueAs[string](op.New); ok {
 				t.Title = v
 				return true, nil
 			}
@@ -122,7 +122,7 @@ func (t *DocState) applyOperation(op deep.Operation, logger *slog.Logger) (bool,
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(string); ok {
+			if v, ok := deep.ValueAs[string](op.New); ok {
 				t.Content = v
 				return true, nil
 			}
@@ -141,7 +141,7 @@ func (t *DocState) applyOperation(op deep.Operation, logger *slog.Logger) (bool,
 			}
 		}
 		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
-			if v, ok := op.New.(map[string]string); ok {
+			if v, ok := deep.ValueAs[map[string]string](op.New); ok {
 				t.Metadata = v
 				return true, nil
 			}
@@ -155,7 +155,7 @@ func (t *DocState) applyOperation(op deep.Operation, logger *slog.Logger) (bool,
 					delete(t.Metadata, key)
 					return true, nil
 				}
-				if v, ok := op.New.(string); ok && (op.Kind == deep.OpAdd || op.Kind == deep.OpReplace) {
+				if v, ok := deep.ValueAs[string](op.New); ok && (op.Kind == deep.OpAdd || op.Kind == deep.OpReplace) {
 					if t.Metadata == nil {
 						t.Metadata = make(map[string]string)
 					}
