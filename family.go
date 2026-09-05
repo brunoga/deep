@@ -54,6 +54,13 @@ type TypeFamily struct {
 	// seconds and nanos.
 	Marshal   func(v any) ([]byte, error)
 	Unmarshal func(data []byte, t reflect.Type) (any, error)
+	// Resolve reads the value at a path inside a matched value, path relative
+	// to the value. It is what lets a condition — a patch Guard, an
+	// operation's If — look into the value: the generic navigator stops at the
+	// family boundary the way Apply does, and hands the rest of the path here.
+	// An error means the path holds nothing, which an exists condition
+	// reports as false.
+	Resolve func(v any, path string) (any, error)
 }
 
 // RegisterTypeFamily installs a family. Families are consulted in registration
@@ -70,6 +77,7 @@ func RegisterTypeFamily(f TypeFamily) {
 		Clone:     f.Clone,
 		Marshal:   f.Marshal,
 		Unmarshal: f.Unmarshal,
+		Resolve:   f.Resolve,
 	})
 	if f.Diff != nil || f.Apply != nil {
 		engine.RegisterFamilyOps(f.Name, f.Diff, f.Apply)

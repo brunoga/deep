@@ -3,7 +3,7 @@ module github.com/brunoga/deep/proto
 go 1.27
 
 require (
-	github.com/brunoga/deep/v6 v6.1.0
+	github.com/brunoga/deep/v6 v6.2.0
 	google.golang.org/protobuf v1.36.6
 )
 

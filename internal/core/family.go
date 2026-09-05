@@ -37,6 +37,12 @@ type Family struct {
 	// Timestamp is an RFC 3339 string under protojson, not a struct.
 	Marshal   func(v any) ([]byte, error)
 	Unmarshal func(data []byte, t reflect.Type) (any, error)
+	// Resolve reads the value at a path inside a matched value, path relative
+	// to it. It is what lets a condition look into the value — the generic
+	// navigator stops at the family boundary the same way apply does, and
+	// hands the rest of the path here. An error means the path holds nothing,
+	// which an exists condition reports as false.
+	Resolve func(v any, path string) (any, error)
 }
 
 var (

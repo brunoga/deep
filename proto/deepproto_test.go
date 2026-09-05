@@ -8,6 +8,7 @@ import (
 
 	deepproto "github.com/brunoga/deep/proto"
 	deep "github.com/brunoga/deep/v6"
+	"github.com/brunoga/deep/v6/condition"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -337,5 +338,105 @@ func TestPropertyEqualAgreesWithProto(t *testing.T) {
 			t.Fatalf("seed %d: deep.Equal=%v proto.Equal=%v\na=%v\nb=%v",
 				seed, deep.Equal(a, b), proto.Equal(a, b), a, b)
 		}
+	}
+}
+
+func TestConditionsInsideMessages(t *testing.T) {
+	// The limitation deep/proto v1.0.0 documented, now removed: a condition
+	// path may cross into a message, resolved by protoreflect with protojson
+	// names rather than by walking the Go struct.
+	row := listing{
+		SKU:     "sku-1",
+		Price:   1999,
+		Details: mustStruct(t, map[string]any{"stock": 12.0, "colour": "red"}),
+	}
+
+	stockIs := func(want float64) *condition.Condition {
+		return &condition.Condition{
+			Op: condition.Eq, Path: "/Details/fields/stock/numberValue", Value: want,
+		}
+	}
+
+	// Condition holds → the plain field updates.
+	p := deep.Patch[listing]{Operations: []deep.Operation{{
+		Kind: deep.OpReplace, Path: "/price", New: 1499,
+		If: stockIs(12),
+	}}}
+	res, err := deep.ApplyWithResult(&row, p)
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if !res.AllApplied() || row.Price != 1499 {
+		t.Fatalf("condition into the message did not hold: %s", res)
+	}
+
+	// Condition no longer holds → skipped, and the result says so.
+	p.Operations[0].If = stockIs(99)
+	p.Operations[0].New = 999
+	res, err = deep.ApplyWithResult(&row, p)
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if _, skipped, _ := res.Counts(); skipped != 1 || row.Price != 1499 {
+		t.Fatalf("stale condition should skip: %s price=%d", res, row.Price)
+	}
+
+	// A guard works too, and exists is false for an unset field rather than
+	// an error.
+	g := deep.Patch[listing]{
+		Guard: &condition.Condition{Op: condition.Exists, Path: "/Details/fields/discount"},
+		Operations: []deep.Operation{{
+			Kind: deep.OpReplace, Path: "/price", New: 1,
+		}},
+	}
+	if _, err := deep.ApplyWithResult(&row, g); err == nil {
+		t.Error("guard on an unset message field should reject the patch")
+	}
+	if row.Price != 1499 {
+		t.Errorf("guarded patch modified the row: price=%d", row.Price)
+	}
+
+	// The condition survives a JSON round trip like everything else.
+	p.Operations[0].If = stockIs(12)
+	p.Operations[0].New = 1299
+	data, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire deep.Patch[listing]
+	if err := json.Unmarshal(data, &wire); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := deep.ApplyWithResult(&row, wire); err != nil {
+		t.Fatalf("wire apply: %v", err)
+	}
+	if row.Price != 1299 {
+		t.Errorf("decoded conditional patch did not land: price=%d", row.Price)
+	}
+}
+
+func TestConditionOnListAndMapPaths(t *testing.T) {
+	v := structpb.NewListValue(&structpb.ListValue{Values: []*structpb.Value{
+		structpb.NewStringValue("first"),
+		structpb.NewNumberValue(7),
+	}})
+	type holder struct {
+		V   *structpb.Value `json:"v"`
+		Tag string          `json:"tag"`
+	}
+	h := holder{V: v}
+
+	p := deep.Patch[holder]{Operations: []deep.Operation{{
+		Kind: deep.OpReplace, Path: "/tag", New: "seen",
+		If: &condition.Condition{
+			Op: condition.Eq, Path: "/V/listValue/values/1/numberValue", Value: 7.0,
+		},
+	}}}
+	res, err := deep.ApplyWithResult(&h, p)
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if !res.AllApplied() || h.Tag != "seen" {
+		t.Fatalf("condition through list index did not hold: %s", res)
 	}
 }

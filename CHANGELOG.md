@@ -6,6 +6,23 @@ All notable changes to this project are documented here, newest first.
 > version's entry before tagging, so the tag, the GitHub release notes, and this
 > file always agree.
 
+## v6.2.0
+
+### Added
+
+- **Type families resolve paths.** A family may supply a `Resolve` handler,
+  and the path navigator hands it everything below the family boundary — the
+  same boundary Apply already honours. What this buys concretely: a condition
+  can look inside a family-owned value. A patch guard or an operation's `If`
+  with a path crossing into a protobuf message is answered by the proto
+  runtime, with protojson field names, rather than by walking the message's Go
+  struct. An error from the family means the path holds nothing, which an
+  exists condition reports as false — matching how an unset proto field
+  behaves everywhere else.
+
+  This removes the one limitation deep/proto v1.0.0 shipped with; deep/proto
+  v1.1.0 implements the handler.
+
 ## v6.1.0
 
 ### Added

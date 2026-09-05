@@ -474,3 +474,70 @@ func splitPath(path string) []string {
 	}
 	return parts
 }
+
+// resolveInMessage reads the value at a path inside a message. It is the
+// family Resolve handler — what a condition path crossing into a message goes
+// through — and mirrors the applier's navigation, read-only.
+func resolveInMessage(target any, path string) (any, error) {
+	msg := target.(proto.Message)
+	segs := splitPath(path)
+	if len(segs) == 0 {
+		return msg, nil
+	}
+	return resolveSegments(msg.ProtoReflect(), segs)
+}
+
+func resolveSegments(m protoreflect.Message, segs []string) (any, error) {
+	fd := fieldByName(m.Descriptor(), segs[0])
+	if fd == nil {
+		return nil, fmt.Errorf("deepproto: %s has no field %q", m.Descriptor().FullName(), segs[0])
+	}
+	rest := segs[1:]
+
+	// A field that is not populated resolves to nothing — which an exists
+	// condition reads as false, matching how an unset proto field behaves
+	// everywhere else in the proto world.
+	if !m.Has(fd) && (fd.HasPresence() || fd.IsMap() || fd.IsList()) {
+		return nil, fmt.Errorf("deepproto: field %q is not set", segs[0])
+	}
+	v := m.Get(fd)
+
+	switch {
+	case fd.IsMap():
+		if len(rest) == 0 {
+			return mapValue(fd, v.Map()), nil
+		}
+		mk, err := mapKey(fd.MapKey(), rest[0])
+		if err != nil {
+			return nil, err
+		}
+		if !v.Map().Has(mk) {
+			return nil, fmt.Errorf("deepproto: map has no key %q", rest[0])
+		}
+		return resolveElem(fd.MapValue(), v.Map().Get(mk), rest[1:])
+	case fd.IsList():
+		if len(rest) == 0 {
+			return listValue(fd, v.List()), nil
+		}
+		idx, err := strconv.Atoi(rest[0])
+		if err != nil {
+			return nil, fmt.Errorf("deepproto: %q is not a list index", rest[0])
+		}
+		if idx < 0 || idx >= v.List().Len() {
+			return nil, fmt.Errorf("deepproto: index %d out of range", idx)
+		}
+		return resolveElem(fd, v.List().Get(idx), rest[1:])
+	default:
+		return resolveElem(fd, v, rest)
+	}
+}
+
+func resolveElem(fd protoreflect.FieldDescriptor, v protoreflect.Value, rest []string) (any, error) {
+	if len(rest) == 0 {
+		return elemValue(fd, v), nil
+	}
+	if fd.Message() == nil {
+		return nil, fmt.Errorf("deepproto: path continues past scalar field %q", fd.JSONName())
+	}
+	return resolveSegments(v.Message(), rest)
+}
