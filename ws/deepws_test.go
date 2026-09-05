@@ -172,11 +172,9 @@ func TestPresencePropagatesAndLeaves(t *testing.T) {
 	defer alice.Close(ctx)
 	bob, _ := deepws.Dial[cursor](ctx, url, "bob")
 
-	var mu sync.Mutex
 	if err := bob.Announce(ctx, cursor{Name: "Bob", Index: 3}); err != nil {
 		t.Fatal(err)
 	}
-	_ = mu
 	waitFor(t, "alice to see bob", func() bool {
 		s, ok := alice.Awareness().States()["bob"]
 		return ok && s.Index == 3
