@@ -6,6 +6,22 @@ All notable changes to this project are documented here, newest first.
 > version's entry before tagging, so the tag, the GitHub release notes, and this
 > file always agree.
 
+## v6.2.1
+
+### Fixed
+
+- **A seven-byte payload could crash the process decoding it.** The compact
+  binary format's node-table count was allocated for before being checked, so
+  a payload claiming terabytes of entries — version byte plus one maximal
+  varint — died of the allocation. Every other count in the decoder carried
+  the guard; this one shipped without it. With deep/ws relaying frames from
+  whoever connects, that was a remotely triggerable denial of service against
+  any hub.
+
+  Found by a new fuzz target within its first second, which is now part of the
+  suite alongside the crasher as a regression test. The decoders read network
+  bytes and are fuzzed as such.
+
 ## v6.2.0
 
 ### Added

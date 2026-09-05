@@ -180,6 +180,14 @@ func newDecoder(data []byte) (*decoder, error) {
 	if d.err != nil {
 		return nil, d.err
 	}
+	// The count is checked against what is left rather than trusted: every
+	// entry needs at least one byte, so a count beyond that is a lie, and
+	// allocating for it would let a seven-byte payload demand terabytes. The
+	// other counts in this file carry the same guard; this one shipped
+	// without it, and the fuzzer found the omission in its first second.
+	if count > uint64(len(d.buf)) {
+		return nil, fmt.Errorf("crdt: payload claims %d nodes but holds %d bytes", count, len(d.buf))
+	}
 	d.nodes = make([]string, 0, count)
 	for i := uint64(0); i < count; i++ {
 		d.nodes = append(d.nodes, d.str())
