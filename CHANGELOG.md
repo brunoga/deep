@@ -6,6 +6,28 @@ All notable changes to this project are documented here, newest first.
 > version's entry before tagging, so the tag, the GitHub release notes, and this
 > file always agree.
 
+## v6.1.0
+
+### Added
+
+- **Type families**: custom behaviour for every type matching a predicate,
+  where `RegisterCustomEqual` and friends are custom behaviour for one
+  concrete type. `deep.RegisterTypeFamily` takes a `Match` predicate and a
+  family of handlers — Equal, Clone, Diff, Apply, and a value codec — and any
+  type the predicate accepts is handled by them, however many such types
+  exist.
+
+  The distinction matters for types produced by another runtime. A protobuf
+  application holds hundreds of generated message types; registering each one
+  is not a usable interface, and every one needs the same treatment. A family
+  is also all-or-nothing about its boundary: once a value is matched, nothing
+  generic looks inside it — an operation whose path crosses into a matched
+  value is handed to the family's own applier with the remainder of the path,
+  and the family's codec carries its values on the wire in their own form.
+
+  This is the extension point the `deep/proto` companion module builds on; it
+  is proto-agnostic and serves any foreign type family with its own runtime.
+
 ## v6.0.0
 
 The deletion half of the road that v5.14 paved: everything marked deprecated

@@ -24,6 +24,13 @@ func ApplyOpReflectionValue(v reflect.Value, op Operation, logger *slog.Logger) 
 	if logger == nil {
 		logger = slog.Default()
 	}
+	// An operation whose path enters a family-owned value belongs to that
+	// family's applier: everything below the boundary is the family runtime's
+	// territory, and the generic navigation below must not walk into it.
+	if handled, err := familyDelegate(v, op); handled {
+		return err
+	}
+
 	// Strict check. The comparison coerces, because a patch that travelled as
 	// JSON carries every number as float64 whatever the field's type; a check
 	// that demanded identical types would fail against state it matches.
