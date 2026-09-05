@@ -154,3 +154,17 @@ func TestBinaryIsSmallerThanJSON(t *testing.T) {
 		}
 	}
 }
+
+func TestDecoderRejectsLyingCounts(t *testing.T) {
+	// Seven bytes claiming a four-terabyte node table: version 1 followed by a
+	// maximal varint count. Before the guard this allocated for the claim and
+	// died of it — a remote crash for anything decoding network frames.
+	var u Update
+	if err := u.UnmarshalBinary([]byte("\x01\xff\xff\xff\xff\xff\x0f")); err == nil {
+		t.Fatal("accepted a payload claiming more entries than it has bytes")
+	}
+	var sv StateVector
+	if err := sv.UnmarshalBinary([]byte("\x01\xff\xff\xff\xff\xff\x0f")); err == nil {
+		t.Fatal("state vector accepted the same lie")
+	}
+}
