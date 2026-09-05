@@ -152,6 +152,11 @@ func applyIntoList(m protoreflect.Message, fd protoreflect.FieldDescriptor, rest
 	if len(rest) == 0 {
 		return applyToField(m, fd, op) // the whole list
 	}
+	// Keyed lists address elements by key, the way the core library's keyed
+	// slices do; path tokens are keys, not indexes.
+	if kd, ok := listKeyFor(fd); ok {
+		return applyKeyedList(m, fd, kd, rest, op)
+	}
 	idx, err := strconv.Atoi(rest[0])
 	if err != nil {
 		return fmt.Errorf("deepproto: %q is not a list index", rest[0])
@@ -518,6 +523,9 @@ func resolveSegments(m protoreflect.Message, segs []string) (any, error) {
 	case fd.IsList():
 		if len(rest) == 0 {
 			return listValue(fd, v.List()), nil
+		}
+		if kd, ok := listKeyFor(fd); ok {
+			return resolveKeyedList(fd, kd, v.List(), rest)
 		}
 		idx, err := strconv.Atoi(rest[0])
 		if err != nil {
