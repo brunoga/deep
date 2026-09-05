@@ -58,12 +58,23 @@ func (p DeepPath) ResolveParent(v reflect.Value) (reflect.Value, PathPart, error
 }
 
 func (p DeepPath) Navigate(v reflect.Value, parts []PathPart) (reflect.Value, PathPart, error) {
+	// A path that enters a family-owned value is resolved by the family from
+	// that point on: everything below the boundary belongs to its runtime,
+	// and walking the raw Go struct instead would read internal bookkeeping.
+	// The check runs before Dereference, because families match the pointer
+	// type a foreign runtime's values are held as.
+	if len(parts) > 0 && FamiliesRegistered() {
+		if out, ok, ferr := familyResolve(v, parts); ok {
+			return out, PathPart{}, ferr
+		}
+	}
+
 	current, err := Dereference(v)
 	if err != nil {
 		return reflect.Value{}, PathPart{}, err
 	}
 
-	for _, part := range parts {
+	for i, part := range parts {
 		if !current.IsValid() {
 			return reflect.Value{}, PathPart{}, fmt.Errorf("path traversal failed: nil value at intermediate step")
 		}
@@ -155,12 +166,51 @@ func (p DeepPath) Navigate(v reflect.Value, parts []PathPart) (reflect.Value, Pa
 			current = f
 		}
 
+		if i+1 < len(parts) && FamiliesRegistered() {
+			if out, ok, ferr := familyResolve(current, parts[i+1:]); ok {
+				return out, PathPart{}, ferr
+			}
+		}
+
 		current, err = Dereference(current)
 		if err != nil {
 			return reflect.Value{}, PathPart{}, err
 		}
 	}
 	return current, PathPart{}, nil
+}
+
+// familyResolve hands the remaining path to the family owning v's type, if
+// one does and it resolves paths.
+func familyResolve(v reflect.Value, parts []PathPart) (reflect.Value, bool, error) {
+	if !v.IsValid() {
+		return reflect.Value{}, false, nil
+	}
+	fam, ok := FamilyFor(v.Type())
+	if !ok || fam.Resolve == nil {
+		return reflect.Value{}, false, nil
+	}
+	out, err := fam.Resolve(v.Interface(), BuildPath(parts))
+	if err != nil {
+		return reflect.Value{}, true, err
+	}
+	return reflect.ValueOf(out), true, nil
+}
+
+// BuildPath renders path parts back into a JSON Pointer.
+func BuildPath(parts []PathPart) string {
+	if len(parts) == 0 {
+		return "/"
+	}
+	out := ""
+	for _, p := range parts {
+		if p.IsIndex {
+			out += "/" + strconv.Itoa(p.Index)
+		} else {
+			out += "/" + EscapeKey(p.Key)
+		}
+	}
+	return out
 }
 
 // ResolveMember resolves the path to the member the last segment names — the

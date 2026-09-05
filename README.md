@@ -432,8 +432,10 @@ and paths address message fields by their protojson names
 add-new-case; messages with differing unknown fields fall back to a whole-value
 replace, since no per-field path can describe bytes the schema cannot name.
 
-Conditions (`If`/`Guard`) evaluate against plain fields of the surrounding
-struct; condition paths that reach inside a message are not yet supported.
+Conditions look inside messages too: a `Guard` or an operation's `If` may use
+a path like `/details/fields/stock/numberValue`, resolved by `protoreflect`
+with the same protojson names — so a conditional write can hinge on a field
+deep inside the proto row it is updating.
 
 ## Custom Behaviour per Type
 

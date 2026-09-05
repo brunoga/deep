@@ -56,8 +56,9 @@ func Register() {
 			Clone: func(v any) any {
 				return proto.Clone(v.(proto.Message))
 			},
-			Diff:  diffMessages,
-			Apply: applyToMessage,
+			Diff:    diffMessages,
+			Apply:   applyToMessage,
+			Resolve: resolveInMessage,
 			Marshal: func(v any) ([]byte, error) {
 				data, err := protojson.Marshal(v.(proto.Message))
 				if err != nil {

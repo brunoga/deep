@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	deep "github.com/brunoga/deep/v6"
+	"github.com/brunoga/deep/v6/condition"
 )
 
 // A stand-in for a foreign runtime's type: a "sealed" value whose Go struct
@@ -87,6 +88,19 @@ func init() {
 		Marshal: func(v any) ([]byte, error) {
 			s := asSealed(v)
 			return json.Marshal("sealed:" + s.Text) // a shape encoding/json would never produce
+		},
+		Resolve: func(v any, path string) (any, error) {
+			s := asSealed(v)
+			if s == nil {
+				return nil, fmt.Errorf("nothing to resolve in a nil sealed value")
+			}
+			switch path {
+			case "/text":
+				return s.Text, nil
+			case "/", "":
+				return v, nil
+			}
+			return nil, fmt.Errorf("no such path in a sealed value: %s", path)
 		},
 		Unmarshal: func(data []byte, t reflect.Type) (any, error) {
 			var s string
@@ -236,5 +250,49 @@ func TestFamilyStrictAndReverse(t *testing.T) {
 	}
 	if got.Doc.Text != "old" {
 		t.Errorf("reverse landed on %q, want old", got.Doc.Text)
+	}
+}
+
+
+func TestFamilyConditionsLookInside(t *testing.T) {
+	// A condition path crossing the family boundary is resolved by the family,
+	// not by walking the sealed value's Go struct.
+	doc := sealedHolder{Name: "n", Doc: &sealed{Text: "ready", bookkeeping: 9}}
+
+	textIs := func(want string) *condition.Condition {
+		return &condition.Condition{Op: condition.Eq, Path: "/Doc/text", Value: want}
+	}
+
+	p := deep.Patch[sealedHolder]{Operations: []deep.Operation{{
+		Kind: deep.OpReplace, Path: "/name", New: "published",
+		If: textIs("ready"),
+	}}}
+	res, err := deep.ApplyWithResult(&doc, p)
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if !res.AllApplied() || doc.Name != "published" {
+		t.Fatalf("condition on a family path did not hold: %s", res)
+	}
+
+	// The same condition against different family state skips.
+	p.Operations[0].If = textIs("draft")
+	p.Operations[0].New = "should not land"
+	res, err = deep.ApplyWithResult(&doc, p)
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if _, skipped, _ := res.Counts(); skipped != 1 || doc.Name != "published" {
+		t.Fatalf("condition should have skipped: %s, name=%q", res, doc.Name)
+	}
+
+	// A guard works the same way, and exists on a missing family path is
+	// false rather than an error.
+	g := deep.Patch[sealedHolder]{
+		Guard:      &condition.Condition{Op: condition.Exists, Path: "/Doc/no_such"},
+		Operations: []deep.Operation{{Kind: deep.OpReplace, Path: "/name", New: "x"}},
+	}
+	if _, err := deep.ApplyWithResult(&doc, g); err == nil {
+		t.Error("guard on a missing family path should reject the patch")
 	}
 }
