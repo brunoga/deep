@@ -700,6 +700,31 @@ stored as deltas:
 | 100 | 12,839 B | 1,480 B | 8.7× |
 | 1,000 | 129,150 B | 14,605 B | 8.8× |
 
+### Sync over websockets
+
+`github.com/brunoga/deep/ws` is the transport: a hub that relays document
+updates and presence between the clients of a room, and a client that keeps a
+local document converged with it. A separate module, because a transport means
+owning a network dependency and most users of deep never open a socket.
+
+```go
+// Server
+hub := deepws.NewHub()
+http.ListenAndServe(":8080", hub)
+
+// Client
+c, _ := deepws.Dial[Cursor](ctx, "ws://host/?room=doc-1", "alice")
+c.Edit(func(d *crdt.Document) { d.Insert(0, "hello") })
+c.Publish(ctx)
+c.Announce(ctx, Cursor{Index: 5})
+```
+
+The handshake exchanges state vectors both ways, so a reconnecting client
+uploads its offline edits and downloads what it missed before `Dial` returns;
+steady state streams binary deltas. Presence rides along as opaque frames the
+hub relays and caches for joiners but never decodes — expiry is every
+client's own affair, which is safe because presence is ephemeral.
+
 ## Architecture
 
 A patch is a **flat operation list** — `[]Operation` with JSON Pointer paths — rather than a recursive tree. That makes patches trivially serializable, cheap to iterate, and composable (merging is stateless). Application is a **hybrid**: generated `applyOperation` methods handle the common shapes at native speed and report anything else as unhandled, at which point the reflection engine — which understands every Go shape, unexported fields included — takes over for that one operation. Both paths implement the same semantics; divergence is treated as a bug.
