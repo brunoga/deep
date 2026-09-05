@@ -56,6 +56,14 @@ jobs:
         run: go test -race -v ./...
         working-directory: proto
 
+      - name: Fuzz proto applier
+        run: go test -run=XXX -fuzz=FuzzApplyToMessage -fuzztime=15s .
+        working-directory: proto
+
+      - name: Fuzz proto resolver
+        run: go test -run=XXX -fuzz=FuzzResolveInMessage -fuzztime=15s .
+        working-directory: proto
+
       - name: Build ws module
         run: go build -v ./...
         working-directory: ws

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	deep "github.com/brunoga/deep/v6"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -255,6 +256,9 @@ func scalarValue(fd protoreflect.FieldDescriptor, v any) (protoreflect.Value, er
 		}
 	case protoreflect.StringKind:
 		if s, ok := deep.ValueAs[string](v); ok {
+			if !utf8.ValidString(s) {
+				return protoreflect.Value{}, fmt.Errorf("string value is not valid UTF-8")
+			}
 			return protoreflect.ValueOfString(s), nil
 		}
 	case protoreflect.BytesKind:
@@ -433,6 +437,12 @@ func fieldByName(d protoreflect.MessageDescriptor, name string) protoreflect.Fie
 func mapKey(kd protoreflect.FieldDescriptor, seg string) (protoreflect.MapKey, error) {
 	switch kd.Kind() {
 	case protoreflect.StringKind:
+		// Proto strings must be valid UTF-8. Accepting a key that is not
+		// leaves a message proto.Marshal refuses — corruption, found by the
+		// fuzzer in its first seconds. Refuse the operation instead.
+		if !utf8.ValidString(seg) {
+			return protoreflect.MapKey{}, fmt.Errorf("deepproto: map key is not valid UTF-8")
+		}
 		return protoreflect.ValueOfString(seg).MapKey(), nil
 	case protoreflect.BoolKind:
 		b, err := strconv.ParseBool(seg)
