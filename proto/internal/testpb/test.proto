@@ -1,0 +1,21 @@
+// Test-only messages for the deepproto test suite: a message with keyed
+// repeated fields, maps, and scalars, standing in for the application schemas
+// this package operates on.
+syntax = "proto3";
+
+package deep.testpb;
+
+option go_package = "github.com/brunoga/deep/proto/internal/testpb";
+
+message Item {
+  string id = 1;
+  int32 qty = 2;
+  string note = 3;
+}
+
+message Catalog {
+  string name = 1;
+  repeated Item items = 2;
+  map<string, int32> stock = 3;
+  repeated string tags = 4;
+}

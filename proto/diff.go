@@ -86,8 +86,12 @@ func diffField(path string, fd protoreflect.FieldDescriptor, va, vb protoreflect
 }
 
 func diffList(path string, fd protoreflect.FieldDescriptor, la, lb protoreflect.List, ops *[]deep.Operation) error {
-	// The same shape the generic engine gives unkeyed slices: a length change
-	// replaces the whole list, equal lengths compare per index.
+	// A registered key makes the list order-insensitive and element-addressed.
+	if kd, ok := listKeyFor(fd); ok {
+		return diffKeyedList(path, fd, kd, la, lb, ops)
+	}
+	// Unkeyed: the same shape the generic engine gives unkeyed slices — a
+	// length change replaces the whole list, equal lengths compare per index.
 	if la.Len() != lb.Len() {
 		*ops = append(*ops, deep.Operation{Kind: deep.OpReplace, Path: path,
 			Old: listValue(fd, la), New: listValue(fd, lb)})

@@ -1,0 +1,56 @@
+// The wire schema for a deep patch, for consumers in other languages.
+//
+// A patch's native encoding is JSON, and any JSON parser can read it. This
+// schema exists for systems that carry structured payloads as protobuf — a
+// patch inside a gRPC request travels as a typed message rather than opaque
+// bytes, and a non-Go peer gets a compiler-checked structure to read it with.
+//
+// Operation values (old, new, and condition values) are JSON-encoded bytes,
+// exactly the bytes the native encoding would carry: protobuf cannot type
+// arbitrary values without their schema, and keeping the value encoding
+// identical means a value decodes the same way whichever envelope delivered
+// it. For fields of protobuf messages those bytes are protojson.
+syntax = "proto3";
+
+package deep.wire.v1;
+
+option go_package = "github.com/brunoga/deep/proto/wire";
+
+// Patch mirrors deep.Patch: an ordered list of operations, an optional guard
+// that must hold before any of them apply, and a strict flag requiring each
+// operation's recorded old value to match before writing.
+message Patch {
+  Condition guard = 1;
+  repeated Operation ops = 2;
+  bool strict = 3;
+}
+
+// Operation mirrors deep.Operation. Kind is the operation name — "add",
+// "remove", "replace", "move", "copy", "log", "alias" — never a number.
+message Operation {
+  string kind = 1;
+  string path = 2;
+  // from is the source path for move, copy and alias.
+  string from = 3;
+  // old and new are JSON-encoded values; absent means none. has_old/has_new
+  // distinguish an absent value from JSON null.
+  bytes old = 4;
+  bytes new = 5;
+  bool has_old = 6;
+  bool has_new = 7;
+  Condition if = 8;
+  Condition unless = 9;
+}
+
+// Condition mirrors condition.Condition: a predicate over the target value,
+// or a combination of sub-conditions under "and", "or", "not".
+message Condition {
+  // op is one of: ==, !=, >, <, >=, <=, exists, in, matches, type, and, or,
+  // not.
+  string op = 1;
+  string path = 2;
+  // value is JSON-encoded; absent for operators that take none.
+  bytes value = 3;
+  bool has_value = 4;
+  repeated Condition sub = 5;
+}

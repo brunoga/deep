@@ -437,6 +437,20 @@ a path like `/details/fields/stock/numberValue`, resolved by `protoreflect`
 with the same protojson names — so a conditional write can hinge on a field
 deep inside the proto row it is updating.
 
+Two more pieces the module carries:
+
+- **Keyed repeated fields** — the proto counterpart of `deep:"key"`.
+  `deepproto.RegisterListKey("shop.Catalog.items", "id")` makes that field
+  diff by element identity: reordering is no change at all, elements are
+  addressed by key (`/items/a/qty`), and an add or removal touches one
+  element instead of replacing the list.
+- **A protobuf envelope for patches** (`proto/wire/deeppatch.proto`), for
+  carrying a patch inside a gRPC request as a typed message instead of opaque
+  bytes — and for non-Go peers, who get a compiler-checked structure to read.
+  `deepproto.ToProto` / `FromProto` convert; operation values are the same
+  JSON bytes the native encoding uses, so they decode identically whichever
+  envelope delivered them.
+
 ## Custom Behaviour per Type
 
 A type can carry its own behaviour by implementing a method — `Equal`, `Clone`,
