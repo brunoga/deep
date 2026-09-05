@@ -402,6 +402,39 @@ Rules worth knowing:
 - Generated files never need hand-editing and are safe to regenerate; deep-gen ignores its own previous output while parsing.
 - **Recursive and shared types are detected and handled.** See below.
 
+## Protocol Buffers
+
+Do not point the generic machinery at protoc-generated structs without this: a
+message's Go struct carries the proto runtime's internal state, so
+field-by-field equality reports two equal messages unequal once either has been
+marshaled, a diff emits operations for the runtime's bookkeeping, and a
+reflection-made clone crashes the runtime on its next `Marshal`.
+
+The companion module `github.com/brunoga/deep/proto` fixes all of it with one
+call — it is a separate module so that only proto users take the protobuf
+dependency:
+
+```go
+import deepproto "github.com/brunoga/deep/proto"
+
+func main() {
+    deepproto.Register()
+}
+```
+
+Register installs a type family claiming every `proto.Message`. Inside that
+boundary the proto runtime's own machinery is used — `proto.Equal`,
+`proto.Clone`, `protoreflect` for diffing and applying, protojson on the wire —
+and outside it nothing changes: messages sit in ordinary structs, patches carry
+ordinary operations, strict checks and `ApplyResult` work as they do anywhere,
+and paths address message fields by their protojson names
+(`/details/fields/price/numberValue`). Oneofs diff as remove-old-case plus
+add-new-case; messages with differing unknown fields fall back to a whole-value
+replace, since no per-field path can describe bytes the schema cannot name.
+
+Conditions (`If`/`Guard`) evaluate against plain fields of the surrounding
+struct; condition paths that reach inside a message are not yet supported.
+
 ## Custom Behaviour per Type
 
 A type can carry its own behaviour by implementing a method — `Equal`, `Clone`,

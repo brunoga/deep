@@ -26,3 +26,18 @@ jobs:
 
       - name: Test
         run: go test -race -v ./...
+
+      # The proto companion is its own module (its dependency on
+      # google.golang.org/protobuf must not reach the core), so ./... from the
+      # root does not touch it.
+      - name: Build proto module
+        run: go build -v ./...
+        working-directory: proto
+
+      - name: Vet proto module
+        run: go vet ./...
+        working-directory: proto
+
+      - name: Test proto module
+        run: go test -race -v ./...
+        working-directory: proto
