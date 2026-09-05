@@ -41,3 +41,15 @@ jobs:
       - name: Test proto module
         run: go test -race -v ./...
         working-directory: proto
+
+      - name: Build ws module
+        run: go build -v ./...
+        working-directory: ws
+
+      - name: Vet ws module
+        run: go vet ./...
+        working-directory: ws
+
+      - name: Test ws module
+        run: go test -race -v ./...
+        working-directory: ws
