@@ -141,9 +141,7 @@ func (t *Stage) Diff(other *Stage) deep.Patch[Stage] {
 	if t.Name != other.Name {
 		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/name", Old: t.Name, New: other.Name})
 	}
-	if !deep.Equal(t.At, other.At) {
-		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/at", Old: t.At, New: other.At})
-	}
+	p.Operations = append(p.Operations, gen.DiffOpaque("/at", t.At, other.At)...)
 
 	return p
 }
@@ -668,15 +666,9 @@ func (t *Job) diffShared(other *Job, seen *gen.DiffMemo, at string) deep.Patch[J
 	if t == other || !seen.Enter(t, other, at) {
 		return p
 	}
-	if !deep.Equal(t.StartAt, other.StartAt) {
-		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/startAt", Old: t.StartAt, New: other.StartAt})
-	}
-	if !deep.Equal(t.Deadline, other.Deadline) {
-		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/deadline", Old: t.Deadline, New: other.Deadline})
-	}
-	if !deep.Equal(t.Timeout, other.Timeout) {
-		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/timeout", Old: t.Timeout, New: other.Timeout})
-	}
+	p.Operations = append(p.Operations, gen.DiffOpaque(at+"/startAt", t.StartAt, other.StartAt)...)
+	p.Operations = append(p.Operations, gen.DiffOpaque(at+"/deadline", t.Deadline, other.Deadline)...)
+	p.Operations = append(p.Operations, gen.DiffOpaque(at+"/timeout", t.Timeout, other.Timeout)...)
 	if len(t.Window) != len(other.Window) || (t.Window == nil) != (other.Window == nil) {
 		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/window", Old: t.Window, New: other.Window})
 	} else {
@@ -767,21 +759,11 @@ func (t *Job) diffShared(other *Job, seen *gen.DiffMemo, at string) deep.Patch[J
 		}
 		p.Operations = append(p.Operations, op)
 	}
-	if !deep.Equal(t.Title, other.Title) {
-		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/title", Old: t.Title, New: other.Title})
-	}
-	if !deep.Equal(t.History, other.History) {
-		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/history", Old: t.History, New: other.History})
-	}
-	if !deep.Equal(t.Checked, other.Checked) {
-		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/checked", Old: t.Checked, New: other.Checked})
-	}
-	if !deep.Equal(t.Grid, other.Grid) {
-		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/grid", Old: t.Grid, New: other.Grid})
-	}
-	if !deep.Equal(t.Done, other.Done) {
-		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/done", Old: t.Done, New: other.Done})
-	}
+	p.Operations = append(p.Operations, gen.DiffOpaque(at+"/title", t.Title, other.Title)...)
+	p.Operations = append(p.Operations, gen.DiffOpaque(at+"/history", t.History, other.History)...)
+	p.Operations = append(p.Operations, gen.DiffOpaque(at+"/checked", t.Checked, other.Checked)...)
+	p.Operations = append(p.Operations, gen.DiffOpaque(at+"/grid", t.Grid, other.Grid)...)
+	p.Operations = append(p.Operations, gen.DiffOpaque(at+"/done", t.Done, other.Done)...)
 
 	seen.Leave(t, other, len(p.Operations))
 	return p

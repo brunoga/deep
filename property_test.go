@@ -343,3 +343,46 @@ func TestPropertyDiffIsDeterministic(t *testing.T) {
 		}
 	}
 }
+
+func TestPropertyMergedPatchApplies(t *testing.T) {
+	// Merge's contract after the v5.13 overlap fix: whatever two diffs of the
+	// same base it combines, the result must be an applicable patch. Which
+	// value it lands on is the resolver's business; failing to apply at all is
+	// what the overlap bug produced.
+	for seed := 0; seed < propertySeeds; seed++ {
+		rng := rand.New(rand.NewSource(int64(seed)))
+		base := genDoc(rng)
+		b, c := genDoc(rng), genDoc(rng)
+
+		p1 := deep.MustDiff(base, b)
+		p2 := deep.MustDiff(base, c)
+		m := deep.Merge(p1, p2, nil)
+
+		got := deep.Clone(base)
+		if err := deep.Apply(&got, m); err != nil {
+			t.Fatalf("seed %d: merged patch not applicable: %v\nops: %v", seed, err, m)
+		}
+	}
+}
+
+func TestPropertyReverseSurvivesTheWire(t *testing.T) {
+	// Reversing a patch that has been through JSON: Old and New are RawValues
+	// there, and swapping them must undo the change exactly as the in-process
+	// reverse does.
+	for seed := 0; seed < propertySeeds; seed++ {
+		rng := rand.New(rand.NewSource(int64(seed)))
+		a, b := genDoc(rng), genDoc(rng)
+
+		p := deep.MustDiff(a, b)
+		decoded := jsonRoundTrip(t, p)
+
+		got := deep.Clone(b)
+		if err := deep.Apply(&got, decoded.Reverse()); err != nil {
+			t.Fatalf("seed %d: reverse of a decoded patch: %v", seed, err)
+		}
+		if !deep.Equal(got, a) {
+			t.Fatalf("seed %d: reverse of a decoded patch did not return to the start\n got: %+v\nwant: %+v",
+				seed, got, a)
+		}
+	}
+}

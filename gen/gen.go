@@ -304,3 +304,35 @@ func SortOperations(ops []engine.Operation) {
 	}
 	slices.SortFunc(ops, func(a, b engine.Operation) int { return cmp.Compare(a.Path, b.Path) })
 }
+
+// DiffOpaque diffs one field the generator cannot see inside — a type from
+// another package, an interface, a generic instantiation — rooted at path.
+//
+// When a type family owns the value, the result is the family's own
+// operations: a one-field change to a protobuf message held by a generated
+// struct becomes one operation naming that field, where the generated code
+// previously replaced the whole message. Otherwise it is what the generated
+// code always did: nothing when the values are equal, one whole-value replace
+// when they differ.
+func DiffOpaque(path string, a, b any) []engine.Operation {
+	if list, ok, err := engine.FamilyDiff(a, b); ok {
+		if err != nil {
+			// The family could not describe the change; the whole value can.
+			return []engine.Operation{{Kind: engine.OpReplace, Path: path, Old: a, New: b}}
+		}
+		out := make([]engine.Operation, 0, len(list))
+		for _, op := range list {
+			if op.Path == "" || op.Path == "/" {
+				op.Path = path
+			} else {
+				op.Path = path + op.Path
+			}
+			out = append(out, op)
+		}
+		return out
+	}
+	if icore.Equal(a, b) {
+		return nil
+	}
+	return []engine.Operation{{Kind: engine.OpReplace, Path: path, Old: a, New: b}}
+}

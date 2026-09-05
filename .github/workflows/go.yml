@@ -27,6 +27,20 @@ jobs:
       - name: Test
         run: go test -race -v ./...
 
+      # Short fuzz passes on every run: the property suite and fuzzers have
+      # found more real defects in this repository than any other kind of
+      # test, including a remotely triggerable OOM the day the decoder became
+      # network-facing. Fifteen seconds per target keeps CI fast while still
+      # searching beyond the seeds.
+      - name: Fuzz diff round trip
+        run: go test -run=XXX -fuzz=FuzzDiffApply -fuzztime=15s .
+
+      - name: Fuzz binary update decoder
+        run: go test -run=XXX -fuzz=FuzzUpdateUnmarshalBinary -fuzztime=15s ./crdt
+
+      - name: Fuzz binary state-vector decoder
+        run: go test -run=XXX -fuzz=FuzzStateVectorUnmarshalBinary -fuzztime=15s ./crdt
+
       # The proto companion is its own module (its dependency on
       # google.golang.org/protobuf must not reach the core), so ./... from the
       # root does not touch it.
