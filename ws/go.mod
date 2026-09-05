@@ -3,7 +3,7 @@ module github.com/brunoga/deep/ws
 go 1.27
 
 require (
-	github.com/brunoga/deep/v6 v6.2.0
+	github.com/brunoga/deep/v6 v6.2.1
 	github.com/coder/websocket v1.8.13
 )
 

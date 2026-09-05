@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/brunoga/deep/v6/crdt"
 	"github.com/brunoga/deep/v6/crdt/hlc"
@@ -20,11 +21,21 @@ type Hub struct {
 	// acceptOptions are passed to the websocket accept; a caller that fronts
 	// the hub with its own origin checks can loosen or tighten them.
 	acceptOptions *websocket.AcceptOptions
+	// auth, when set, decides whether a request may join a room.
+	auth func(r *http.Request, room string) error
+	// pingInterval paces the liveness probe on every connection.
+	pingInterval time.Duration
+	// evictAfter and onEvict, when set, drop a room that has sat empty.
+	evictAfter time.Duration
+	onEvict    func(name string, doc *crdt.Document)
 }
 
 type room struct {
 	mu  sync.Mutex
 	doc *crdt.Document
+	// emptySince ticks up each time the room empties; an eviction fires only
+	// if nobody joined in between.
+	emptySince uint64
 	// conns maps each live connection to its send queue.
 	conns map[*conn]struct{}
 	// presence holds each connection's last announcement, replayed to a
@@ -46,9 +57,39 @@ func WithAcceptOptions(opts *websocket.AcceptOptions) HubOption {
 	return func(h *Hub) { h.acceptOptions = opts }
 }
 
+// WithAuth installs a per-request check, called before the websocket upgrade
+// with the request and the room it names. A non-nil error refuses the
+// connection with 403. Origin policy belongs in [WithAcceptOptions]; this is
+// for the authorization the request itself carries — a token in a header, a
+// session cookie.
+func WithAuth(fn func(r *http.Request, room string) error) HubOption {
+	return func(h *Hub) { h.auth = fn }
+}
+
+// WithPingInterval sets how often the hub probes each connection for
+// liveness. A connection whose peer stops answering is closed, which frees
+// its room slot — without the probe, a silently dead TCP connection holds it
+// until the operating system gives up, which can be never. The default is 20
+// seconds; zero disables the probe.
+func WithPingInterval(d time.Duration) HubOption {
+	return func(h *Hub) { h.pingInterval = d }
+}
+
+// WithRoomEviction drops a room after it has sat empty for idle, calling
+// onEvict with the document first so the host can persist it. Without this a
+// hub keeps every room it has ever served; with it, a room's state lives in
+// the host's store between sessions and the next joiner starts a fresh room
+// the host can seed from that store via [Hub.Room].
+func WithRoomEviction(idle time.Duration, onEvict func(name string, doc *crdt.Document)) HubOption {
+	return func(h *Hub) {
+		h.evictAfter = idle
+		h.onEvict = onEvict
+	}
+}
+
 // NewHub returns an empty hub.
 func NewHub(opts ...HubOption) *Hub {
-	h := &Hub{rooms: make(map[string]*room)}
+	h := &Hub{rooms: make(map[string]*room), pingInterval: 20 * time.Second}
 	for _, o := range opts {
 		o(h)
 	}
@@ -89,6 +130,12 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, "missing room parameter", http.StatusBadRequest)
 		return
 	}
+	if h.auth != nil {
+		if err := h.auth(req, roomName); err != nil {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+	}
 
 	sock, err := websocket.Accept(w, req, h.acceptOptions)
 	if err != nil {
@@ -99,7 +146,33 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	r := h.room(roomName)
 	c := &conn{send: make(chan []byte, 64)}
 
-	ctx := req.Context()
+	ctx, cancel := context.WithCancel(req.Context())
+	defer cancel()
+
+	// The liveness probe: a peer that stops answering pings gets its
+	// connection closed, which unblocks the read below and frees the slot.
+	if h.pingInterval > 0 {
+		go func() {
+			ticker := time.NewTicker(h.pingInterval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					pingCtx, pingCancel := context.WithTimeout(ctx, h.pingInterval)
+					err := sock.Ping(pingCtx)
+					pingCancel()
+					if err != nil {
+						// CloseNow: no close handshake with a peer that has
+						// already stopped answering.
+						sock.CloseNow()
+						return
+					}
+				}
+			}
+		}()
+	}
 
 	// The writer: one goroutine owns the socket's write side, fed by the send
 	// queue, so broadcasts from other connections never interleave writes.
@@ -116,7 +189,7 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	err = h.serve(ctx, sock, r, c)
 
-	r.detach(c)
+	h.detach(roomName, r, c)
 	close(c.send)
 	<-writerDone
 	if err != nil && websocket.CloseStatus(err) == -1 {
@@ -149,6 +222,7 @@ func (h *Hub) serve(ctx context.Context, sock *websocket.Conn, r *room, c *conn)
 		pres = append(pres, p)
 	}
 	r.conns[c] = struct{}{}
+	r.emptySince++ // invalidate any armed eviction: the room is live again
 	r.mu.Unlock()
 
 	if !missing.IsEmpty() {
@@ -229,11 +303,40 @@ func (r *room) broadcastLocked(from *conn, frame []byte) {
 	}
 }
 
-func (r *room) detach(c *conn) {
+// detach removes the connection and, when the room empties and eviction is
+// configured, arms the eviction timer. The emptySince counter defeats the
+// obvious race: a joiner between emptying and firing bumps it, and the timer
+// finds its number stale and does nothing.
+func (h *Hub) detach(name string, r *room, c *conn) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	delete(r.conns, c)
 	delete(r.presence, c)
+	empty := len(r.conns) == 0
+	var mark uint64
+	if empty {
+		r.emptySince++
+		mark = r.emptySince
+	}
+	r.mu.Unlock()
+
+	if !empty || h.evictAfter <= 0 {
+		return
+	}
+	time.AfterFunc(h.evictAfter, func() {
+		r.mu.Lock()
+		still := len(r.conns) == 0 && r.emptySince == mark
+		doc := r.doc
+		r.mu.Unlock()
+		if !still {
+			return
+		}
+		h.mu.Lock()
+		delete(h.rooms, name)
+		h.mu.Unlock()
+		if h.onEvict != nil {
+			h.onEvict(name, doc)
+		}
+	})
 }
 
 func readFrame(ctx context.Context, sock *websocket.Conn) (byte, []byte, error) {
