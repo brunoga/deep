@@ -212,6 +212,34 @@ func recursiveCopy(v reflect.Value, pointers PointersMap,
 		return res[0], nil
 	}
 
+	// A type family owns the copy of every type it matches. For values whose
+	// own runtime keeps internal state — a protobuf message's lazily-installed
+	// reflection info — copying field by field corrupts that state; the
+	// family's Clone is the runtime's own, which knows what not to copy.
+	if FamiliesRegistered() && !(kind == reflect.Pointer && v.IsNil()) {
+		if fam, famOK := FamilyFor(v.Type()); famOK && fam.Clone != nil {
+			// The top-of-function memo lookup keys pointer fields on the
+			// field's own address; family values are deduplicated on the
+			// pointee, the way recursiveCopyPtr does, so a value reached by
+			// two routes is cloned once.
+			if kind == reflect.Pointer {
+				if done, hit := pointers[PointersMapKey{v.Pointer(), v.Type()}]; hit {
+					return done, nil
+				}
+			}
+			cloned := reflect.ValueOf(fam.Clone(v.Interface()))
+			if !cloned.IsValid() || !cloned.Type().AssignableTo(v.Type()) {
+				return reflect.Zero(v.Type()), nil
+			}
+			if kind == reflect.Pointer {
+				// Recorded like any other pointer copy, so a value reached by
+				// two routes stays one value in the result.
+				pointers[PointersMapKey{v.Pointer(), v.Type()}] = cloned
+			}
+			return cloned, nil
+		}
+	}
+
 	// Handle cyclic references for addressable values (structs, maps, slices, pointers).
 	if v.CanAddr() {
 		ptr := v.Addr().Pointer()

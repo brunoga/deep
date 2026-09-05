@@ -58,6 +58,15 @@ func encodeAny(v any) (json.RawMessage, error) {
 	if raw, ok := v.(RawValue); ok {
 		return raw.JSON, nil
 	}
+	// A family's values use the family's own wire form — a protobuf message
+	// encodes as protojson, which encoding/json cannot produce for it.
+	wire, err := familyWireValue(v)
+	if err != nil {
+		return nil, err
+	}
+	if raw, ok := wire.(RawValue); ok {
+		return raw.JSON, nil
+	}
 	return json.Marshal(v)
 }
 

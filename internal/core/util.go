@@ -22,7 +22,24 @@ func ConvertValue(v reflect.Value, targetType reflect.Type) reflect.Value {
 	// for an int field and a struct for a struct field, instead of this
 	// function guessing its way back from float64 and map[string]any.
 	if v.Type() == rawValueType {
-		if decoded, err := v.Interface().(RawValue).Decode(targetType); err == nil {
+		raw := v.Interface().(RawValue)
+		// A family's values may use a wire form encoding/json cannot read — a
+		// protobuf Timestamp is an RFC 3339 string under protojson — so the
+		// family decodes its own.
+		if FamiliesRegistered() {
+			if fam, ok := FamilyFor(targetType); ok && fam.Unmarshal != nil {
+				out, err := fam.Unmarshal(raw.JSON, targetType)
+				if err != nil {
+					return reflect.Value{}
+				}
+				rv := reflect.ValueOf(out)
+				if rv.IsValid() && rv.Type().AssignableTo(targetType) {
+					return rv
+				}
+				return reflect.Value{}
+			}
+		}
+		if decoded, err := raw.Decode(targetType); err == nil {
 			return decoded
 		}
 		return reflect.Value{}

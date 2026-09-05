@@ -491,6 +491,23 @@ func (d *Differ) diffRecursive(a, b reflect.Value, atomic bool, ctx *diffContext
 		return fn(a, b, ctx)
 	}
 
+	// A type family owns the diff of every type it matches; its differ knows
+	// which parts of a value are state and which are its runtime's
+	// bookkeeping. The operations come back relative to the value and are
+	// rooted at this position when the patch is walked.
+	if icore.FamiliesRegistered() && a.IsValid() && b.IsValid() && a.Type() == b.Type() {
+		if ops, ok := familyOpsForType(a.Type()); ok && ops.diff != nil {
+			list, err := ops.diff(a.Interface(), b.Interface())
+			if err != nil {
+				return nil, err
+			}
+			if len(list) == 0 {
+				return nil, nil
+			}
+			return &familyPatch{name: a.Type().String(), ops: list, applyOp: ops.applyOp}, nil
+		}
+	}
+
 	// Move/Copy Detection. The path is built inside the guard: detection is
 	// off by default, and building it first meant assembling a string for
 	// every value visited only to hand it to a function that returns

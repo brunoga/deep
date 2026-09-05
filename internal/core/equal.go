@@ -113,6 +113,17 @@ func equalRecursive(a, b reflect.Value, visited map[VisitKey]bool, config *equal
 		return res[0].Bool()
 	}
 
+	// A type family owns equality for every type it matches: its runtime knows
+	// which parts of a value are state and which are bookkeeping. Comparing a
+	// protobuf message field by field reports two equal messages unequal the
+	// moment one of them has been marshaled, because marshaling populates an
+	// internal size cache.
+	if FamiliesRegistered() {
+		if fam, famOK := FamilyFor(a.Type()); famOK && fam.Equal != nil {
+			return fam.Equal(a.Interface(), b.Interface())
+		}
+	}
+
 	kind := a.Kind()
 
 	switch kind {
@@ -276,10 +287,11 @@ func EqualCoercedValue(current, ev reflect.Value) bool {
 	}
 
 	// A still-encoded value is decoded into the current value's own type
-	// before comparing, so the comparison is exact rather than coerced.
+	// before comparing, so the comparison is exact rather than coerced. The
+	// decode goes through ConvertValue so a family's own codec applies.
 	if ev.Type() == rawValueType {
-		decoded, err := ev.Interface().(RawValue).Decode(current.Type())
-		if err != nil {
+		decoded := ConvertValue(ev, current.Type())
+		if !decoded.IsValid() {
 			return false
 		}
 		return ValueEqual(current, decoded, nil)
