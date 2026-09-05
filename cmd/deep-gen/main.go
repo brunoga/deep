@@ -397,6 +397,7 @@ func diffFieldPaths(code string) string {
 	code = strings.ReplaceAll(code, `Path: fmt.Sprintf("`, `Path: at + fmt.Sprintf("`)
 	code = strings.ReplaceAll(code, `prefix := "`, `prefix := at + "`)
 	code = strings.ReplaceAll(code, `op.Path = "`, `op.Path = at + "`)
+	code = strings.ReplaceAll(code, `DiffOpaque("`, `DiffOpaque(at + "`)
 	return code
 }
 
@@ -577,12 +578,19 @@ func diffFieldBody(f FieldInfo, p, g string, typeKeys map[string]string) string 
 				b.WriteString("\t\t\t}\n\t\t}\n\t}\n")
 			}
 		}
-	} else if f.Generic() || f.Atomic && (f.IsStruct || f.IsCollection || f.IsText) {
+	} else if f.Atomic && (f.IsStruct || f.IsCollection || f.IsText || f.Generic()) {
 		// Atomic composite fields diff as a single whole-value replace; == is
 		// not even defined for most of them.
 		fmt.Fprintf(&b, "\tif !%sEqual(t.%s, other.%s) {\n", p, f.Name, f.Name)
 		fmt.Fprintf(&b, "\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpReplace, Path: \"/%s\", Old: t.%s, New: other.%s})\n", p, p, f.JSONName, f.Name, f.Name)
 		b.WriteString("\t}\n")
+	} else if f.Generic() {
+		// A field the generator cannot see inside. DiffOpaque emits nothing
+		// when the values are equal, one whole-value replace when they differ
+		// — and, when a type family owns the value, the family's own
+		// fine-grained operations: a one-field change to a protobuf message
+		// held here becomes one operation naming that field.
+		fmt.Fprintf(&b, "\tp.Operations = append(p.Operations, %sDiffOpaque(\"/%s\", t.%s, other.%s)...)\n", g, f.JSONName, f.Name, f.Name)
 	} else {
 		fmt.Fprintf(&b, "\tif t.%s != other.%s {\n", f.Name, f.Name)
 		fmt.Fprintf(&b, "\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpReplace, Path: \"/%s\", Old: t.%s, New: other.%s})\n", p, p, f.JSONName, f.Name, f.Name)

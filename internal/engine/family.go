@@ -242,3 +242,24 @@ func buildPath(parts []icore.PathPart) string {
 	}
 	return out
 }
+
+// FamilyDiff returns the family's operations for two values of a
+// family-owned type, with paths relative to the value, and whether a family
+// owns the type at all. Generated code uses it (through gen.DiffOpaque) so a
+// field the generator cannot see inside still gets the family's fine-grained
+// diff rather than a whole-value replace.
+func FamilyDiff(a, b any) ([]Operation, bool, error) {
+	if a == nil || b == nil {
+		return nil, false, nil
+	}
+	t := reflect.TypeOf(a)
+	if t != reflect.TypeOf(b) {
+		return nil, false, nil
+	}
+	ops, ok := familyOpsForType(t)
+	if !ok || ops.diff == nil {
+		return nil, false, nil
+	}
+	list, err := ops.diff(a, b)
+	return list, true, err
+}

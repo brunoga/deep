@@ -6,6 +6,31 @@ All notable changes to this project are documented here, newest first.
 > version's entry before tagging, so the tag, the GitHub release notes, and this
 > file always agree.
 
+## v6.3.0
+
+### Changed
+
+- **Generated code gives family-owned fields fine-grained diffs.** A field the
+  generator cannot see inside used to diff as a whole-value replace whenever it
+  differed. It now goes through `gen.DiffOpaque`, which asks the value's type
+  family first — so a one-field change to a protobuf message held by a
+  generated struct becomes one operation naming that field, exactly what the
+  reflection path already produced. Fields without a family behave as before,
+  and `deep:"atomic"` still forces the whole-value replace.
+
+### Added
+
+- Two properties: a merge of two diffs of the same base is always applicable
+  (the contract the v5.13 overlap fix established, now held over generated
+  inputs), and reversing a patch that has been through JSON returns to the
+  start (Old and New are RawValues there, and swapping them must behave
+  exactly like the in-process reverse).
+- CI runs short fuzz passes on every build: the diff round trip and both
+  network-facing binary decoders. The fuzzers have found more real defects in
+  this repository than any other kind of test — including the v6.2.1 decoder
+  OOM, found in the fuzzer's first second — and now they run before every
+  merge instead of when someone remembers them.
+
 ## v6.2.1
 
 ### Fixed
