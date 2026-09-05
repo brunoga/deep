@@ -2,6 +2,8 @@ package deepws_test
 
 import (
 	"context"
+	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
@@ -10,6 +12,7 @@ import (
 
 	"github.com/brunoga/deep/v6/crdt"
 	deepws "github.com/brunoga/deep/ws"
+	"github.com/coder/websocket"
 )
 
 type cursor struct {
@@ -241,4 +244,161 @@ func TestConcurrentEditingConverges(t *testing.T) {
 		}
 		return true
 	})
+}
+
+func TestAuthRejectsAndAdmits(t *testing.T) {
+	hub := deepws.NewHub(deepws.WithAuth(func(r *http.Request, room string) error {
+		if r.Header.Get("X-Token") != "sesame" {
+			return fmt.Errorf("no")
+		}
+		return nil
+	}))
+	srv := httptest.NewServer(hub)
+	defer srv.Close()
+	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/?room=locked"
+	ctx := context.Background()
+
+	if _, err := deepws.Dial[cursor](ctx, url, "intruder"); err == nil {
+		t.Fatal("dial without the token should fail")
+	}
+
+	c, err := deepws.Dial[cursor](ctx, url, "bearer", deepws.WithDialOptions(&websocket.DialOptions{
+		HTTPHeader: http.Header{"X-Token": []string{"sesame"}},
+	}))
+	if err != nil {
+		t.Fatalf("dial with the token: %v", err)
+	}
+	c.Close(ctx)
+}
+
+func TestRoomEvictionPersistsAndFrees(t *testing.T) {
+	var mu sync.Mutex
+	evicted := map[string]string{}
+	hub := deepws.NewHub(deepws.WithRoomEviction(50*time.Millisecond, func(name string, d *crdt.Document) {
+		mu.Lock()
+		defer mu.Unlock()
+		evicted[name] = d.String()
+	}))
+	srv := httptest.NewServer(hub)
+	defer srv.Close()
+	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/?room=temp"
+	ctx := context.Background()
+
+	c, err := deepws.Dial[cursor](ctx, url, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Edit(func(d *crdt.Document) { d.Insert(0, "save me") })
+	if err := c.Publish(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "hub to hold the text", func() bool {
+		var s string
+		hub.Room("temp", func(d *crdt.Document) { s = d.String() })
+		return s == "save me"
+	})
+	c.Close(ctx)
+
+	waitFor(t, "the room to be evicted with its state", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return evicted["temp"] == "save me"
+	})
+
+	// The next joiner gets a fresh room — which the host may seed from what
+	// it persisted, the way Room is documented for.
+	hub.Room("temp", func(d *crdt.Document) {
+		if got := d.String(); got != "" {
+			t.Errorf("room was not fresh after eviction: %q", got)
+		}
+	})
+}
+
+func TestRejoinCancelsEviction(t *testing.T) {
+	var mu sync.Mutex
+	evictions := 0
+	hub := deepws.NewHub(deepws.WithRoomEviction(80*time.Millisecond, func(string, *crdt.Document) {
+		mu.Lock()
+		defer mu.Unlock()
+		evictions++
+	}))
+	srv := httptest.NewServer(hub)
+	defer srv.Close()
+	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/?room=busy"
+	ctx := context.Background()
+
+	a, _ := deepws.Dial[cursor](ctx, url, "a")
+	a.Close(ctx) // room empties; timer armed
+
+	b, _ := deepws.Dial[cursor](ctx, url, "b") // rejoin before it fires
+	time.Sleep(160 * time.Millisecond)         // past the idle window
+	mu.Lock()
+	n := evictions
+	mu.Unlock()
+	if n != 0 {
+		t.Fatalf("room evicted %d times while occupied", n)
+	}
+	b.Close(ctx)
+	waitFor(t, "eviction after the real departure", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return evictions == 1
+	})
+}
+
+func TestHeartbeatKeepsAndDetects(t *testing.T) {
+	hub := deepws.NewHub(deepws.WithPingInterval(20 * time.Millisecond))
+	srv := httptest.NewServer(hub)
+	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/?room=hb"
+	ctx := context.Background()
+
+	c, err := deepws.Dial[cursor](ctx, url, "a", deepws.WithClientPingInterval(20*time.Millisecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Several ping intervals pass; a healthy connection stays up.
+	time.Sleep(150 * time.Millisecond)
+	select {
+	case <-c.Done():
+		t.Fatalf("healthy connection died: %v", c.Err())
+	default:
+	}
+
+	c.Close(ctx)
+	srv.Close()
+}
+
+func TestHeartbeatDetectsASilentPeer(t *testing.T) {
+	// A hub that completes the handshake and then goes silent — never reads
+	// again, so pings get no pong. That is what a half-open TCP connection
+	// looks like, which httptest cannot simulate directly: its
+	// CloseClientConnections does not touch hijacked connections.
+	silent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sock, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		ctx := r.Context()
+		if _, _, err := sock.Read(ctx); err != nil { // the client's state vector
+			return
+		}
+		sv, _ := crdt.StateVector{}.MarshalBinary()
+		_ = sock.Write(ctx, websocket.MessageBinary, append([]byte{1}, sv...)) // frame 1: state vector
+		<-ctx.Done()                                                           // silence: no reads, so no pong ever comes back
+	}))
+	defer silent.Close()
+
+	c, err := deepws.Dial[cursor](context.Background(),
+		"ws"+strings.TrimPrefix(silent.URL, "http"), "a",
+		deepws.WithClientPingInterval(30*time.Millisecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-c.Done():
+		// The probe noticed; the client is free instead of waiting forever
+		// for updates that cannot come.
+	case <-time.After(3 * time.Second):
+		t.Fatal("client never noticed the silent hub")
+	}
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/brunoga/deep/v6/crdt"
 	"github.com/brunoga/deep/v6/crdt/hlc"
@@ -29,6 +30,29 @@ type Client[P any] struct {
 	err  error
 }
 
+// ClientOption configures a client.
+type ClientOption func(*clientConfig)
+
+type clientConfig struct {
+	pingInterval time.Duration
+	dialOptions  *websocket.DialOptions
+}
+
+// WithClientPingInterval sets how often the client probes the connection. A
+// hub that stops answering gets the connection closed and [Client.Done]
+// closed with it — without the probe, a silently dead TCP connection leaves
+// the client waiting forever for updates that cannot come. The default is 20
+// seconds; zero disables the probe.
+func WithClientPingInterval(d time.Duration) ClientOption {
+	return func(c *clientConfig) { c.pingInterval = d }
+}
+
+// WithDialOptions sets the websocket dial options — headers for
+// authentication, an HTTP client, a subprotocol.
+func WithDialOptions(opts *websocket.DialOptions) ClientOption {
+	return func(c *clientConfig) { c.dialOptions = opts }
+}
+
 // Dial connects to a hub and completes the sync handshake: whatever the room
 // has that this client does not arrives before Dial returns, and whatever
 // this client has that the room does not — offline edits, on a reconnect — is
@@ -36,8 +60,13 @@ type Client[P any] struct {
 //
 // node identifies this client's edits and presence; reuse the same id across
 // reconnects so its clock keeps counting from where it left off.
-func Dial[P any](ctx context.Context, url, node string) (*Client[P], error) {
-	sock, _, err := websocket.Dial(ctx, url, nil)
+func Dial[P any](ctx context.Context, url, node string, opts ...ClientOption) (*Client[P], error) {
+	cfg := clientConfig{pingInterval: 20 * time.Second}
+	for _, o := range opts {
+		o(&cfg)
+	}
+
+	sock, _, err := websocket.Dial(ctx, url, cfg.dialOptions)
 	if err != nil {
 		return nil, err
 	}
@@ -55,7 +84,35 @@ func Dial[P any](ctx context.Context, url, node string) (*Client[P], error) {
 	}
 
 	go c.readLoop()
+	if cfg.pingInterval > 0 {
+		go c.pingLoop(cfg.pingInterval)
+	}
 	return c, nil
+}
+
+// pingLoop probes until the connection is over; a failed probe closes the
+// socket, which ends the read loop and closes Done.
+func (c *Client[P]) pingLoop(interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-c.done:
+			return
+		case <-ticker.C:
+			ctx, cancel := context.WithTimeout(context.Background(), interval)
+			err := c.sock.Ping(ctx)
+			cancel()
+			if err != nil {
+				// CloseNow, not Close: the close handshake waits for a reply,
+				// and a peer that just failed to answer a ping is not going to
+				// answer that either — it cost five silent seconds before the
+				// read loop got unblocked.
+				c.sock.CloseNow()
+				return
+			}
+		}
+	}
 }
 
 func (c *Client[P]) handshake(ctx context.Context) error {
