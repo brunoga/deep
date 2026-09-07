@@ -27,6 +27,7 @@ import (
 	"github.com/brunoga/deep/examples/incident/client"
 	"github.com/brunoga/deep/examples/incident/model"
 	"github.com/brunoga/deep/examples/incident/server"
+	"github.com/brunoga/deep/examples/incident/tui"
 )
 
 func envOr(key, fallback string) string {
@@ -73,6 +74,7 @@ commands:
   task done <id> <task-id>               mark a task done
   task rm <id> <task-id>                 remove a task
   close <id>                             close (guarded: must be resolved)
+  open <id>                              live TUI: record, shared notes, presence
   history <id>                           the audit log
   undo <id> <seq>                        reverse one audit entry
   watch <id>                             poll and print changes as they land
@@ -244,6 +246,12 @@ func run(c *client.Client, args []string) error {
 			return fmt.Errorf("usage: watch <id>")
 		}
 		return watch(c, rest[0])
+
+	case "open":
+		if len(rest) != 1 {
+			return fmt.Errorf("usage: open <id>")
+		}
+		return tui.Run(c, rest[0])
 	}
 	return fmt.Errorf("unknown command %q", cmd)
 }
