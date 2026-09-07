@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/brunoga/deep/v6/crdt"
+	"github.com/brunoga/deep/v6/crdt/hlc"
 	deepws "github.com/brunoga/deep/ws"
 	"github.com/coder/websocket"
 )
@@ -452,4 +453,43 @@ func TestWithDocumentResumesOfflineEdits(t *testing.T) {
 			strings.Contains(a, "offline. ") &&
 			strings.Contains(a, "bob was here. ")
 	})
+}
+
+func TestFailedHandshakeLeavesDocumentUntouched(t *testing.T) {
+	// A hub that sends real room state and then dies mid-handshake. With
+	// WithDocument the document is the caller's; a failed Dial must not have
+	// half-merged the room into it.
+	remote := crdt.NewDocument(hlc.NewClock("remote"))
+	remote.Insert(0, "room state")
+	update, err := remote.Since(crdt.StateVector{}).MarshalBinary()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sock, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		ctx := r.Context()
+		_, _, _ = sock.Read(ctx) // the client's state vector
+		// Frame kind 2 is an update; then vanish before the state vector
+		// that would let the handshake finish.
+		_ = sock.Write(ctx, websocket.MessageBinary, append([]byte{2}, update...))
+		sock.CloseNow()
+	}))
+	defer srv.Close()
+
+	doc := crdt.NewDocument(hlc.NewClock("alice"))
+	doc.Insert(0, "mine")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	url := "ws" + strings.TrimPrefix(srv.URL, "http")
+	if _, err := deepws.Dial[cursor](ctx, url, "alice", deepws.WithDocument(doc)); err == nil {
+		t.Fatal("dial succeeded against a dying hub")
+	}
+	if got := doc.String(); got != "mine" {
+		t.Fatalf("failed dial mutated the document: %q", got)
+	}
 }

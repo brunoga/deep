@@ -144,6 +144,12 @@ func (c *Client[P]) handshake(ctx context.Context) error {
 
 	// 2. The hub sends what we are missing (perhaps nothing) and its own
 	// vector; presence replays may follow and are handled by the read loop.
+	//
+	// Incoming updates are buffered, not applied: a handshake can still fail
+	// after they arrive, and with [WithDocument] the document belongs to the
+	// caller — a failed Dial must hand it back exactly as it was, not
+	// half-merged with room state.
+	var incoming []crdt.Update
 	for {
 		kind, payload, err := readFrame(ctx, c.sock)
 		if err != nil {
@@ -155,13 +161,15 @@ func (c *Client[P]) handshake(ctx context.Context) error {
 			if err := u.UnmarshalBinary(payload); err != nil {
 				return err
 			}
-			c.doc.Apply(u)
+			incoming = append(incoming, u)
 		case frameStateVector:
 			var hubSV crdt.StateVector
 			if err := hubSV.UnmarshalBinary(payload); err != nil {
 				return err
 			}
-			// 3. Send what the hub is missing — the offline edits.
+			// 3. Send what the hub is missing — the offline edits. The
+			// buffered updates are all covered by hubSV, so Since answers the
+			// same whether they are applied yet or not.
 			pending := c.doc.Since(hubSV)
 			if !pending.IsEmpty() {
 				frame, err := encodeUpdate(pending)
@@ -171,6 +179,10 @@ func (c *Client[P]) handshake(ctx context.Context) error {
 				if err := c.sock.Write(ctx, websocket.MessageBinary, frame); err != nil {
 					return err
 				}
+			}
+			// Nothing can fail past this point; now the document may change.
+			for _, u := range incoming {
+				c.doc.Apply(u)
 			}
 			c.published = c.doc.StateVector()
 			return nil

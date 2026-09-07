@@ -118,6 +118,14 @@ func (h *Hub) room(name string) *room {
 			presence: make(map[*conn][]byte),
 		}
 		h.rooms[name] = r
+	} else {
+		// Handing the room out invalidates any armed eviction, even before
+		// the caller registers a connection: the eviction timer checks the
+		// generation while holding both locks, so a room retrieved here can
+		// no longer be deleted out from under its new user.
+		r.mu.Lock()
+		r.emptySince++
+		r.mu.Unlock()
 	}
 	return r
 }
@@ -323,17 +331,21 @@ func (h *Hub) detach(name string, r *room, c *conn) {
 		return
 	}
 	time.AfterFunc(h.evictAfter, func() {
+		// Check and delete under both locks, h.mu first (the order every
+		// other path uses): a join in flight has either already bumped the
+		// generation through room() — the check fails — or has not reached
+		// room() yet and will get a fresh room after the delete. Either way,
+		// nobody is left holding a room the map no longer knows.
+		h.mu.Lock()
 		r.mu.Lock()
 		still := len(r.conns) == 0 && r.emptySince == mark
 		doc := r.doc
-		r.mu.Unlock()
-		if !still {
-			return
+		if still {
+			delete(h.rooms, name)
 		}
-		h.mu.Lock()
-		delete(h.rooms, name)
+		r.mu.Unlock()
 		h.mu.Unlock()
-		if h.onEvict != nil {
+		if still && h.onEvict != nil {
 			h.onEvict(name, doc)
 		}
 	})
