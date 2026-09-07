@@ -211,6 +211,15 @@ func (r *RawValue) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// String renders the still-encoded value as its JSON text, so operations that
+// crossed the wire print legibly — "ana", not a slice of byte values.
+func (r RawValue) String() string {
+	if len(r.JSON) == 0 {
+		return "null"
+	}
+	return string(r.JSON)
+}
+
 // Decode unmarshals the value into t, returning the decoded value.
 func (r RawValue) Decode(t reflect.Type) (reflect.Value, error) {
 	out := reflect.New(t)

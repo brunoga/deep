@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/gob"
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -264,5 +265,17 @@ func TestV5IntegerKindsStillParse(t *testing.T) {
 	}
 	if target.Int != 42 {
 		t.Errorf("Int = %d, want 42", target.Int)
+	}
+}
+
+// A RawValue prints as its JSON text: history rendered from wire-decoded
+// patches must be legible, not a slice of byte values.
+func TestRawValueString(t *testing.T) {
+	r := deep.RawValue{JSON: []byte(`"ana"`)}
+	if got := fmt.Sprintf("%v", r); got != `"ana"` {
+		t.Fatalf("RawValue %%v = %s", got)
+	}
+	if got := (deep.RawValue{}).String(); got != "null" {
+		t.Fatalf("empty RawValue String = %s", got)
 	}
 }
