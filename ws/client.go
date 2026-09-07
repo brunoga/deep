@@ -36,6 +36,7 @@ type ClientOption func(*clientConfig)
 type clientConfig struct {
 	pingInterval time.Duration
 	dialOptions  *websocket.DialOptions
+	doc          *crdt.Document
 }
 
 // WithClientPingInterval sets how often the client probes the connection. A
@@ -51,6 +52,18 @@ func WithClientPingInterval(d time.Duration) ClientOption {
 // authentication, an HTTP client, a subprotocol.
 func WithDialOptions(opts *websocket.DialOptions) ClientOption {
 	return func(c *clientConfig) { c.dialOptions = opts }
+}
+
+// WithDocument resumes from an existing document instead of starting empty.
+// This is the offline story: keep editing a previous client's document after
+// the connection is gone (through [Client.Edit] it stays valid), then hand it
+// to the next Dial — the handshake sends everything the room has not seen,
+// offline edits included, and pulls down what the room gained meanwhile.
+//
+// The document must not be shared with another live client, and node should
+// be the same identity that produced its edits.
+func WithDocument(doc *crdt.Document) ClientOption {
+	return func(c *clientConfig) { c.doc = doc }
 }
 
 // Dial connects to a hub and completes the sync handshake: whatever the room
@@ -71,9 +84,13 @@ func Dial[P any](ctx context.Context, url, node string, opts ...ClientOption) (*
 		return nil, err
 	}
 
+	doc := cfg.doc
+	if doc == nil {
+		doc = crdt.NewDocument(hlc.NewClock(node))
+	}
 	c := &Client[P]{
 		sock:      sock,
-		doc:       crdt.NewDocument(hlc.NewClock(node)),
+		doc:       doc,
 		awareness: crdt.NewAwareness[P](node),
 		done:      make(chan struct{}),
 	}
@@ -241,6 +258,22 @@ func (c *Client[P]) Close(ctx context.Context) error {
 	err := c.sock.Close(websocket.StatusNormalClosure, "bye")
 	<-c.done
 	return err
+}
+
+// Detach hands over the client's document once the connection is over — for
+// offline editing and a later resume via [WithDocument]. It returns nil while
+// the client is still live: sharing a document with a running read loop is a
+// data race, so a live client's document is reachable only through
+// [Client.Edit].
+func (c *Client[P]) Detach() *crdt.Document {
+	select {
+	case <-c.done:
+	default:
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.doc
 }
 
 // Err reports why the read loop stopped, once it has.

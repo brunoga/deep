@@ -402,3 +402,54 @@ func TestHeartbeatDetectsASilentPeer(t *testing.T) {
 		t.Fatal("client never noticed the silent hub")
 	}
 }
+
+func TestWithDocumentResumesOfflineEdits(t *testing.T) {
+	// The real offline story: the connection dies, the responder keeps
+	// typing into the same document, and the next Dial carries those edits up.
+	hub, url := startHub(t)
+	ctx := context.Background()
+
+	alice, _ := deepws.Dial[cursor](ctx, url, "alice")
+	alice.Edit(func(d *crdt.Document) { d.Insert(0, "online. ") })
+	if err := alice.Publish(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "hub to hold the online edit", func() bool {
+		var s string
+		hub.Room("doc-1", func(d *crdt.Document) { s = d.String() })
+		return s == "online. "
+	})
+	alice.Close(ctx)
+
+	// Offline: the old client is closed, but its document is still valid
+	// through Edit. Meanwhile the room moves on without her.
+	alice.Edit(func(d *crdt.Document) { d.Insert(d.Len(), "offline. ") })
+
+	bob, _ := deepws.Dial[cursor](ctx, url, "bob")
+	bob.Edit(func(d *crdt.Document) { d.Insert(d.Len(), "bob was here. ") })
+	if err := bob.Publish(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer bob.Close(ctx)
+
+	// Reconnect resuming the same document: the handshake pushes the offline
+	// edit up and pulls bob's edit down. Detach is the sanctioned way to take
+	// the document out of a finished client.
+	kept := alice.Detach()
+	if kept == nil {
+		t.Fatal("Detach returned nil after Close")
+	}
+	alice2, err := deepws.Dial[cursor](ctx, url, "alice", deepws.WithDocument(kept))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer alice2.Close(ctx)
+
+	waitFor(t, "everyone to hold all three edits", func() bool {
+		a, b := alice2.Text(), bob.Text()
+		return a == b &&
+			strings.Contains(a, "online. ") &&
+			strings.Contains(a, "offline. ") &&
+			strings.Contains(a, "bob was here. ")
+	})
+}
