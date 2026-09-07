@@ -40,6 +40,7 @@ func NewAPI(store *Store, opts ...APIOption) *API {
 	a.mux.HandleFunc("POST /incidents/{id}/patch", a.patch)
 	a.mux.HandleFunc("GET /incidents/{id}/history", a.history)
 	a.mux.HandleFunc("POST /incidents/{id}/undo", a.undo)
+	a.registerProtoRoutes()
 	return a
 }
 
