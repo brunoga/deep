@@ -75,3 +75,18 @@ jobs:
       - name: Test ws module
         run: go test -race -v ./...
         working-directory: ws
+
+      # The incident example is a complete application spanning all three
+      # modules; building and testing it is the proof that the library's
+      # pieces still compose.
+      - name: Build incident example
+        run: go build -v ./...
+        working-directory: examples/incident
+
+      - name: Vet incident example
+        run: go vet ./...
+        working-directory: examples/incident
+
+      - name: Test incident example
+        run: go test -race -v ./...
+        working-directory: examples/incident
