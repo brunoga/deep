@@ -6,6 +6,41 @@ All notable changes to this project are documented here, newest first.
 > version's entry before tagging, so the tag, the GitHub release notes, and this
 > file always agree.
 
+## v6.4.0
+
+### Added
+
+- **`RawValue` implements `Stringer`**, printing the still-encoded value as
+  its JSON text. Rendering a patch that crossed the wire — an audit log
+  fetched over HTTP, say — used to print operation values as raw byte-slice
+  numbers; now `Patch.String()` reads the same whether the patch is fresh
+  from `Diff` or decoded from the network.
+
+- **A complete example system.** `examples/incident` is commandpost, a
+  working incident-management application — server, CLI, live terminal UI,
+  and a protobuf consumer bot — built to show the whole library composed:
+  conditional patches as the concurrency story, the audit log as reversible
+  canonical diffs, type families keeping `time.Time` and `netip.Addr`
+  internals off the wire, a CRDT notes room per incident over deep/ws, and a
+  change feed diffed from protobuf snapshots via deep/proto. Its README maps
+  every library feature to the file where it carries a real responsibility.
+
+  Building it surfaced the gap deep/ws v1.2.0 closes: `Dial` always started
+  from an empty document, so the documented offline-edits-on-reconnect story
+  had no way to actually carry edits across a reconnect. `WithDocument`
+  resumes from an existing document and `Client.Detach` hands the document
+  out once the connection is over.
+
+  deep/ws v1.2.0 also carries two fixes the example's review shook out. A
+  handshake that failed partway used to have already applied the hub's
+  updates — harmless when the document was Dial's own, wrong once
+  `WithDocument` made it the caller's; updates now buffer until the handshake
+  can no longer fail. And the room eviction timer could delete a room between
+  another connection fetching it and registering — leaving that client
+  attached to a room the hub no longer knew, splitting one room's name across
+  two documents; retrieval now invalidates any armed eviction, and the timer
+  checks under both locks.
+
 ## v6.3.0
 
 ### Changed

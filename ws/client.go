@@ -36,6 +36,7 @@ type ClientOption func(*clientConfig)
 type clientConfig struct {
 	pingInterval time.Duration
 	dialOptions  *websocket.DialOptions
+	doc          *crdt.Document
 }
 
 // WithClientPingInterval sets how often the client probes the connection. A
@@ -51,6 +52,18 @@ func WithClientPingInterval(d time.Duration) ClientOption {
 // authentication, an HTTP client, a subprotocol.
 func WithDialOptions(opts *websocket.DialOptions) ClientOption {
 	return func(c *clientConfig) { c.dialOptions = opts }
+}
+
+// WithDocument resumes from an existing document instead of starting empty.
+// This is the offline story: keep editing a previous client's document after
+// the connection is gone (through [Client.Edit] it stays valid), then hand it
+// to the next Dial — the handshake sends everything the room has not seen,
+// offline edits included, and pulls down what the room gained meanwhile.
+//
+// The document must not be shared with another live client, and node should
+// be the same identity that produced its edits.
+func WithDocument(doc *crdt.Document) ClientOption {
+	return func(c *clientConfig) { c.doc = doc }
 }
 
 // Dial connects to a hub and completes the sync handshake: whatever the room
@@ -71,9 +84,13 @@ func Dial[P any](ctx context.Context, url, node string, opts ...ClientOption) (*
 		return nil, err
 	}
 
+	doc := cfg.doc
+	if doc == nil {
+		doc = crdt.NewDocument(hlc.NewClock(node))
+	}
 	c := &Client[P]{
 		sock:      sock,
-		doc:       crdt.NewDocument(hlc.NewClock(node)),
+		doc:       doc,
 		awareness: crdt.NewAwareness[P](node),
 		done:      make(chan struct{}),
 	}
@@ -127,6 +144,12 @@ func (c *Client[P]) handshake(ctx context.Context) error {
 
 	// 2. The hub sends what we are missing (perhaps nothing) and its own
 	// vector; presence replays may follow and are handled by the read loop.
+	//
+	// Incoming updates are buffered, not applied: a handshake can still fail
+	// after they arrive, and with [WithDocument] the document belongs to the
+	// caller — a failed Dial must hand it back exactly as it was, not
+	// half-merged with room state.
+	var incoming []crdt.Update
 	for {
 		kind, payload, err := readFrame(ctx, c.sock)
 		if err != nil {
@@ -138,13 +161,15 @@ func (c *Client[P]) handshake(ctx context.Context) error {
 			if err := u.UnmarshalBinary(payload); err != nil {
 				return err
 			}
-			c.doc.Apply(u)
+			incoming = append(incoming, u)
 		case frameStateVector:
 			var hubSV crdt.StateVector
 			if err := hubSV.UnmarshalBinary(payload); err != nil {
 				return err
 			}
-			// 3. Send what the hub is missing — the offline edits.
+			// 3. Send what the hub is missing — the offline edits. The
+			// buffered updates are all covered by hubSV, so Since answers the
+			// same whether they are applied yet or not.
 			pending := c.doc.Since(hubSV)
 			if !pending.IsEmpty() {
 				frame, err := encodeUpdate(pending)
@@ -154,6 +179,10 @@ func (c *Client[P]) handshake(ctx context.Context) error {
 				if err := c.sock.Write(ctx, websocket.MessageBinary, frame); err != nil {
 					return err
 				}
+			}
+			// Nothing can fail past this point; now the document may change.
+			for _, u := range incoming {
+				c.doc.Apply(u)
 			}
 			c.published = c.doc.StateVector()
 			return nil
@@ -241,6 +270,22 @@ func (c *Client[P]) Close(ctx context.Context) error {
 	err := c.sock.Close(websocket.StatusNormalClosure, "bye")
 	<-c.done
 	return err
+}
+
+// Detach hands over the client's document once the connection is over — for
+// offline editing and a later resume via [WithDocument]. It returns nil while
+// the client is still live: sharing a document with a running read loop is a
+// data race, so a live client's document is reachable only through
+// [Client.Edit].
+func (c *Client[P]) Detach() *crdt.Document {
+	select {
+	case <-c.done:
+	default:
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.doc
 }
 
 // Err reports why the read loop stopped, once it has.

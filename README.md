@@ -786,6 +786,13 @@ Every directory under [`examples/`](examples/) is a runnable program (`go run ./
 | [`lww_fields`](examples/lww_fields) | Per-field `LWW[T]` registers resolving a write conflict |
 | [`text_sync`](examples/text_sync) | Collaborative text with `crdt.Text` |
 
+**A complete system**
+
+[`incident`](examples/incident) composes the whole library into one working
+application — an incident-management server with a patch-driven API, an audit
+log of reversible patches, collaborative notes over websockets, and a CLI —
+with a feature map pointing at where each library feature does its job.
+
 ## Migrating from v5
 
 - **Import path**: `github.com/brunoga/deep/v6`. Regenerate with deep-gen —

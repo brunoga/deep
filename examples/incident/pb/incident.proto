@@ -1,0 +1,39 @@
+// Commandpost's external face: the incident as a protobuf message, for
+// consumers that are not this codebase — a dashboard in another language, a
+// bot on the other side of an RPC boundary.
+//
+// The Go model (../model) is the source of truth; this schema mirrors it
+// field for field. Deep's proto companion diffs and patches these messages
+// through the protobuf runtime itself, so a consumer holding two snapshots
+// can recover exactly what changed — including tasks matched by id, once the
+// repeated field's key is registered.
+
+syntax = "proto3";
+
+package commandpost;
+
+option go_package = "github.com/brunoga/deep/examples/incident/pb";
+
+import "google/protobuf/timestamp.proto";
+
+message Task {
+  string id = 1;
+  string text = 2;
+  string owner = 3;
+  bool done = 4;
+}
+
+message Incident {
+  string id = 1;
+  string title = 2;
+  // 1 is the worst; matches model.Severity.
+  int32 severity = 3;
+  // open | mitigated | resolved | closed.
+  string status = 4;
+  string commander = 5;
+  repeated string services = 6;
+  // Addresses in their string form, as the netip family renders them.
+  repeated string hosts = 7;
+  repeated Task tasks = 8;
+  google.protobuf.Timestamp updated = 9;
+}
