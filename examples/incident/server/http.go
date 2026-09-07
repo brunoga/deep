@@ -40,6 +40,7 @@ func NewAPI(store *Store, opts ...APIOption) *API {
 	a.mux.HandleFunc("POST /incidents/{id}/patch", a.patch)
 	a.mux.HandleFunc("GET /incidents/{id}/history", a.history)
 	a.mux.HandleFunc("POST /incidents/{id}/undo", a.undo)
+	a.mux.HandleFunc("POST /incidents/{id}/compact", a.compact)
 	a.registerProtoRoutes()
 	return a
 }
@@ -154,6 +155,26 @@ func (a *API) history(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, log)
+}
+
+func (a *API) compact(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Keep int `json:"keep"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid compact request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := a.store.Compact(r.PathValue("id"), req.Keep); err != nil {
+		writeError(w, err, Result{})
+		return
+	}
+	log, err := a.store.History(r.PathValue("id"))
+	if err != nil {
+		writeError(w, err, Result{})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int{"entries": len(log)})
 }
 
 func (a *API) undo(w http.ResponseWriter, r *http.Request) {

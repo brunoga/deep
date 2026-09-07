@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -140,7 +141,9 @@ func loadRecord(dir string) (*record, error) {
 func (s *Store) incidentDir(id string) string { return filepath.Join(s.dir, id) }
 
 // persistState writes the incident snapshot; persistEntry appends one log
-// line. Both are called with the store lock held.
+// line. Both are called with the store lock held. The snapshot goes through
+// a temp file and a rename so a crash mid-write can never leave a truncated
+// state.json behind.
 func (s *Store) persistState(inc *model.Incident) error {
 	dir := s.incidentDir(inc.ID)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -150,7 +153,11 @@ func (s *Store) persistState(inc *model.Incident) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir, "state.json"), data, 0o644)
+	tmp := filepath.Join(dir, "state.json.tmp")
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, filepath.Join(dir, "state.json"))
 }
 
 func (s *Store) persistEntry(id string, entry LogEntry) error {
@@ -194,8 +201,11 @@ func (s *Store) Create(inc model.Incident) error {
 	}
 	inc.Updated = s.now()
 	clone := deep.Clone(inc)
+	if err := s.persistState(&clone); err != nil {
+		return err
+	}
 	s.records[inc.ID] = &record{inc: &clone}
-	return s.persistState(&clone)
+	return nil
 }
 
 // Get returns a copy of one incident: the caller can hold it, mutate it,
@@ -280,14 +290,22 @@ func (s *Store) applyPatch(id, author, note string, p deep.Patch[model.Incident]
 		Note:   note,
 		Patch:  canonical,
 	}
-	rec.inc = &work
-	rec.log = append(rec.log, entry)
-	out.Seq = entry.Seq
 
+	// Disk first, memory second: an error here reports failure for a change
+	// that truly did not take effect, instead of a 500 for one already live.
+	// The entry goes before the snapshot so a crash between the two writes
+	// leaves an audit line whose change the state does not show — over-
+	// reporting history — rather than a state change no log entry explains.
+	if err := s.persistEntry(id, entry); err != nil {
+		return out, err
+	}
 	if err := s.persistState(&work); err != nil {
 		return out, err
 	}
-	return out, s.persistEntry(id, entry)
+	rec.inc = &work
+	rec.log = append(rec.log, entry)
+	out.Seq = entry.Seq
+	return out, nil
 }
 
 func nextSeq(log []LogEntry) int64 {
@@ -355,11 +373,17 @@ func (s *Store) Compact(id string, keep int) error {
 	return s.rewriteLog(id, rec.log)
 }
 
+// idPattern is the shape of every identifier that reaches the filesystem or
+// a path segment. The incident ID names a directory and a websocket room;
+// anything beyond this alphabet is a traversal risk ("../../etc") or a
+// reload-keying hazard, not a name.
+var idPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)
+
 // validate is the rulebook patch guards cannot express: it judges the whole
 // resulting incident, not one path.
 func validate(inc *model.Incident) error {
-	if inc.ID == "" {
-		return fmt.Errorf("%w: empty id", ErrValidation)
+	if !idPattern.MatchString(inc.ID) {
+		return fmt.Errorf("%w: id %q (want letters, digits, '_', '.', '-'; max 64)", ErrValidation, inc.ID)
 	}
 	if strings.TrimSpace(inc.Title) == "" {
 		return fmt.Errorf("%w: empty title", ErrValidation)

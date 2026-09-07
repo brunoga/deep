@@ -252,3 +252,18 @@ func TestServerStampsUpdated(t *testing.T) {
 		t.Fatalf("updated = %v, want %v", inc.Updated, fixed)
 	}
 }
+
+// Incident IDs become directory names and room names; anything resembling a
+// path stays out.
+func TestTraversalIDsRejected(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"../../../tmp/evil", "a/b", "..", ".hidden", "", "x y"} {
+		err := s.Create(model.Incident{ID: id, Title: "x", Severity: model.Sev3, Status: model.StatusOpen})
+		if !errors.Is(err, ErrValidation) {
+			t.Errorf("id %q: want ErrValidation, got %v", id, err)
+		}
+	}
+}

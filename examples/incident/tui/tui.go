@@ -41,14 +41,16 @@ const (
 
 // Messages.
 type (
-	incidentMsg model.Incident
-	notesMsg    struct{}
-	presenceMsg struct{}
-	statusMsg   string
-	errMsg      struct{ err error }
-	pollTick    struct{}
-	beatTick    struct{}
-	wsDeadMsg   struct{ err error }
+	incidentMsg    model.Incident
+	notesMsg       struct{}
+	presenceMsg    struct{}
+	statusMsg      string
+	errMsg         struct{ err error }
+	pollTick       struct{}
+	beatTick       struct{}
+	wsDeadMsg      struct{}
+	reconnectedMsg struct{ c *deepws.Client[Presence] }
+	retryMsg       struct{}
 )
 
 // Model is the bubbletea model.
@@ -58,11 +60,12 @@ type Model struct {
 	id    string
 	me    string
 
-	inc    model.Incident
-	cursor int // rune position in the notes
-	sel    int // selected task
-	focus  pane
-	status string
+	inc      model.Incident
+	cursor   int    // rune position in the notes
+	lastText string // the notes as last rendered, for cursor mapping
+	sel      int    // selected task
+	focus    pane
+	status   string
 
 	width, height int
 	program       *tea.Program
@@ -83,26 +86,56 @@ func Run(api *client.Client, id string) error {
 	}
 
 	m := &Model{api: api, notes: notes, id: id, me: api.Author(), inc: inc,
-		status: "connected", cursor: notes.Len()}
+		status: "connected", cursor: notes.Len(), lastText: notes.Text()}
 
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	m.program = p
-
-	// Remote edits and presence changes land on the read goroutine; forward
-	// them into the program loop as messages.
-	notes.OnUpdate(func() { p.Send(notesMsg{}) })
-	cancelAw := notes.Awareness().OnChange(func(crdt.PresenceChange[Presence]) { p.Send(presenceMsg{}) })
-	defer cancelAw()
-	go func() {
-		<-notes.Done()
-		p.Send(wsDeadMsg{err: notes.Err()})
-	}()
+	m.watch(notes)
 
 	_, err = p.Run()
 	closeCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	_ = notes.Close(closeCtx)
 	return err
+}
+
+// watch forwards a client's remote events — edits, presence, death — into
+// the program loop. Remote edits and presence changes land on the read
+// goroutine, so they travel as messages.
+func (m *Model) watch(c *deepws.Client[Presence]) {
+	// p is nil in headless tests, which pump messages by hand.
+	send := func(msg tea.Msg) {}
+	if p := m.program; p != nil {
+		send = func(msg tea.Msg) { p.Send(msg) }
+	}
+	c.OnUpdate(func() { send(notesMsg{}) })
+	c.Awareness().OnChange(func(crdt.PresenceChange[Presence]) { send(presenceMsg{}) })
+	go func() {
+		<-c.Done()
+		send(wsDeadMsg{})
+	}()
+}
+
+// reconnect detaches the dead client's document and dials again with it —
+// nothing typed while offline is lost, which is [deepws.WithDocument]'s whole
+// purpose.
+func (m *Model) reconnect() tea.Cmd {
+	dead := m.notes // captured here: Update may swap m.notes before the cmd runs
+	wsurl, me := m.api.WSURL(m.id), m.me
+	return func() tea.Msg {
+		doc := dead.Detach()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		var opts []deepws.ClientOption
+		if doc != nil {
+			opts = append(opts, deepws.WithDocument(doc))
+		}
+		c, err := deepws.Dial[Presence](ctx, wsurl, me, opts...)
+		if err != nil {
+			return retryMsg{}
+		}
+		return reconnectedMsg{c}
+	}
 }
 
 func (m *Model) Init() tea.Cmd {
@@ -115,21 +148,22 @@ func (m *Model) Init() tea.Cmd {
 
 // announce sends this client's presence — name and cursor — to the room.
 func (m *Model) announce() tea.Cmd {
-	pos := m.cursor
+	notes, pos := m.notes, m.cursor
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
-		_ = m.notes.Announce(ctx, Presence{Name: m.me, Pos: pos})
+		_ = notes.Announce(ctx, Presence{Name: m.me, Pos: pos})
 		return nil
 	}
 }
 
 // publish pushes pending local notes edits to the room.
 func (m *Model) publish() tea.Cmd {
+	notes := m.notes
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
-		if err := m.notes.Publish(ctx); err != nil {
+		if err := notes.Publish(ctx); err != nil {
 			return errMsg{fmt.Errorf("publish: %w", err)}
 		}
 		return nil
@@ -181,14 +215,33 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case notesMsg:
-		// A remote edit landed; keep the cursor inside the document.
-		if l := m.notes.Len(); m.cursor > l {
-			m.cursor = l
-		}
+		// A remote edit landed; move the cursor with the text it sits in, so
+		// a peer typing above does not drag this client's keystrokes into the
+		// middle of their sentence.
+		text := m.notes.Text()
+		m.cursor = adjustCursor(m.lastText, text, m.cursor)
+		m.lastText = text
 		return m, nil
 
 	case presenceMsg:
 		return m, nil
+
+	case wsDeadMsg:
+		m.status = "✗ notes connection lost — reconnecting"
+		return m, m.reconnect()
+
+	case retryMsg:
+		m.status = "✗ notes offline — retrying"
+		return m, tea.Tick(3*time.Second, func(time.Time) tea.Msg { return wsDeadMsg{} })
+
+	case reconnectedMsg:
+		m.notes = msg.c
+		m.watch(msg.c)
+		text := m.notes.Text()
+		m.cursor = adjustCursor(m.lastText, text, m.cursor)
+		m.lastText = text
+		m.status = "notes reconnected"
+		return m, tea.Batch(m.publish(), m.announce())
 
 	case statusMsg:
 		m.status = string(msg)
@@ -196,10 +249,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case errMsg:
 		m.status = "✗ " + msg.err.Error()
-		return m, nil
-
-	case wsDeadMsg:
-		m.status = "✗ notes connection lost"
 		return m, nil
 
 	case pollTick:
@@ -306,15 +355,18 @@ func (m *Model) notesKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.notes.Edit(func(d *crdt.Document) { d.Insert(m.cursor, text) })
 		m.cursor += len([]rune(text))
+		m.lastText = m.notes.Text()
 		return m, tea.Batch(m.publish(), m.announce())
 	case tea.KeyEnter:
 		m.notes.Edit(func(d *crdt.Document) { d.Insert(m.cursor, "\n") })
 		m.cursor++
+		m.lastText = m.notes.Text()
 		return m, tea.Batch(m.publish(), m.announce())
 	case tea.KeyBackspace:
 		if m.cursor > 0 {
 			m.notes.Edit(func(d *crdt.Document) { d.Delete(m.cursor-1, 1) })
 			m.cursor--
+			m.lastText = m.notes.Text()
 			return m, tea.Batch(m.publish(), m.announce())
 		}
 	case tea.KeyLeft:
@@ -335,4 +387,35 @@ func (m *Model) notesKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.announce()
 	}
 	return m, nil
+}
+
+// adjustCursor maps a cursor position across a text change, by rune. The
+// changed region is found as what lies between the common prefix and common
+// suffix: a change entirely before the cursor shifts it by the length delta,
+// a change entirely after leaves it alone, and a change spanning it pins it
+// to the end of the replacement.
+func adjustCursor(oldText, newText string, cursor int) int {
+	if oldText == newText {
+		return min(cursor, len([]rune(newText)))
+	}
+	oldRunes, newRunes := []rune(oldText), []rune(newText)
+
+	prefix := 0
+	for prefix < len(oldRunes) && prefix < len(newRunes) && oldRunes[prefix] == newRunes[prefix] {
+		prefix++
+	}
+	suffix := 0
+	for suffix < len(oldRunes)-prefix && suffix < len(newRunes)-prefix &&
+		oldRunes[len(oldRunes)-1-suffix] == newRunes[len(newRunes)-1-suffix] {
+		suffix++
+	}
+
+	switch {
+	case cursor <= prefix:
+		return cursor
+	case cursor >= len(oldRunes)-suffix:
+		return cursor + len(newRunes) - len(oldRunes)
+	default:
+		return len(newRunes) - suffix
+	}
 }

@@ -77,6 +77,7 @@ commands:
   open <id>                              live TUI: record, shared notes, presence
   history <id>                           the audit log
   undo <id> <seq>                        reverse one audit entry
+  compact <id> [keep]                    collapse old audit entries (default keep 10)
   watch <id>                             poll and print changes as they land
 
 flags:
@@ -224,6 +225,25 @@ func run(c *client.Client, args []string) error {
 			}
 			fmt.Println()
 		}
+		return nil
+
+	case "compact":
+		if len(rest) < 1 || len(rest) > 2 {
+			return fmt.Errorf("usage: compact <id> [keep]")
+		}
+		keep := 10
+		if len(rest) == 2 {
+			n, err := strconv.Atoi(rest[1])
+			if err != nil {
+				return fmt.Errorf("keep: %w", err)
+			}
+			keep = n
+		}
+		entries, err := c.Compact(rest[0], keep)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("audit log now holds %d entries\n", entries)
 		return nil
 
 	case "undo":

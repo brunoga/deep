@@ -31,6 +31,16 @@ All notable changes to this project are documented here, newest first.
   resumes from an existing document and `Client.Detach` hands the document
   out once the connection is over.
 
+  deep/ws v1.2.0 also carries two fixes the example's review shook out. A
+  handshake that failed partway used to have already applied the hub's
+  updates — harmless when the document was Dial's own, wrong once
+  `WithDocument` made it the caller's; updates now buffer until the handshake
+  can no longer fail. And the room eviction timer could delete a room between
+  another connection fetching it and registering — leaving that client
+  attached to a room the hub no longer knew, splitting one room's name across
+  two documents; retrieval now invalidates any armed eviction, and the timer
+  checks under both locks.
+
 ## v6.3.0
 
 ### Changed

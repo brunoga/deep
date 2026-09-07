@@ -155,3 +155,68 @@ func TestViewRenders(t *testing.T) {
 		}
 	}
 }
+
+func TestAdjustCursor(t *testing.T) {
+	cases := []struct {
+		name         string
+		old, new     string
+		cursor, want int
+	}{
+		{"insert before cursor shifts it", "world", "hello world", 3, 9},
+		{"insert after cursor leaves it", "hello", "hello world", 3, 3},
+		{"delete before cursor shifts it", "hello world", "world", 8, 2},
+		{"delete containing cursor pins to change end", "abcdef", "af", 3, 1},
+		{"unchanged text clamps only", "ab", "ab", 5, 2},
+		{"emoji count as one rune", "🙂🙂", "x🙂🙂", 1, 2},
+	}
+	for _, c := range cases {
+		if got := adjustCursor(c.old, c.new, c.cursor); got != c.want {
+			t.Errorf("%s: adjustCursor(%q, %q, %d) = %d, want %d", c.name, c.old, c.new, c.cursor, got, c.want)
+		}
+	}
+}
+
+// The reconnect path: the connection dies, the responder keeps typing, and
+// the TUI dials back in with the same document — nothing typed offline is
+// lost, and the room's history comes back down.
+func TestReconnectKeepsOfflineEdits(t *testing.T) {
+	m, _ := testModel(t)
+	m.focus = paneNotes
+
+	for _, r := range "before " {
+		_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		drain(t, m, cmd)
+	}
+
+	// The connection dies; typing continues into the dead client's document.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	m.notes.Close(ctx)
+	cancel()
+	old := m.notes
+	old.Edit(func(d *crdt.Document) { d.Insert(d.Len(), "offline ") })
+
+	// The death notice triggers the reconnect, which must resume that
+	// document.
+	_, cmd := m.Update(wsDeadMsg{})
+	drain(t, m, cmd)
+	if m.notes == old {
+		t.Fatal("reconnect did not swap in a new client")
+	}
+	if got := m.notes.Text(); got != "before offline " {
+		t.Fatalf("text after reconnect = %q", got)
+	}
+
+	// And the room has it: a fresh peer sees both halves.
+	peer, err := deepws.Dial[Presence](context.Background(), m.api.WSURL("inc-1"), "peer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		peer.Close(ctx)
+	}()
+	if got := peer.Text(); got != "before offline " {
+		t.Fatalf("peer text = %q", got)
+	}
+}

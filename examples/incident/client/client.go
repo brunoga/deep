@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	deep "github.com/brunoga/deep/v6"
@@ -40,11 +41,11 @@ func New(base, token, author string) *Client {
 // included — what deepws.Dial takes.
 func (c *Client) WSURL(id string) string {
 	ws := strings.Replace(c.base, "http", "ws", 1)
-	url := ws + "/ws?room=" + id
+	q := url.Values{"room": {id}}
 	if c.token != "" {
-		url += "&token=" + c.token
+		q.Set("token", c.token)
 	}
-	return url
+	return ws + "/ws?" + q.Encode()
 }
 
 // Author returns the name writes are attributed to.
@@ -144,4 +145,14 @@ func (c *Client) Undo(id string, seq int64) (server.Result, error) {
 	var res server.Result
 	err := c.do("POST", "/incidents/"+id+"/undo", map[string]int64{"seq": seq}, &res)
 	return res, err
+}
+
+// Compact collapses the audit log down to a baseline plus the last keep
+// entries, and reports how many remain.
+func (c *Client) Compact(id string, keep int) (int, error) {
+	var out struct {
+		Entries int `json:"entries"`
+	}
+	err := c.do("POST", "/incidents/"+id+"/compact", map[string]int{"keep": keep}, &out)
+	return out.Entries, err
 }

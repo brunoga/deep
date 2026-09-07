@@ -5,11 +5,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/brunoga/deep/v6/crdt"
+	"github.com/brunoga/deep/v6/crdt/hlc"
 	deepws "github.com/brunoga/deep/ws"
 )
 
@@ -140,4 +142,77 @@ func TestNotesAuth(t *testing.T) {
 	if _, err := deepws.Dial[presence](ctx, wsURL(srv, "inc-666", "sekrit"), "x"); err == nil {
 		t.Fatal("unknown incident accepted")
 	}
+}
+
+// A corrupt notes file is quarantined, not allowed to lock the room: joins
+// keep working and the broken bytes are set aside for inspection.
+func TestCorruptNotesFileIsQuarantined(t *testing.T) {
+	srv, notes, dir := newNotesServer(t, time.Hour)
+	if err := os.WriteFile(dir+"/inc-1.notes.bin", []byte("not a document"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	c, err := deepws.Dial[presence](ctx, wsURL(srv, "inc-1", "sekrit"), "ana")
+	if err != nil {
+		t.Fatalf("corrupt file locked the room out: %v", err)
+	}
+	defer c.Close(ctx)
+
+	quarantined, _ := filepath.Glob(dir + "/inc-1.notes.bin.corrupt-*")
+	if len(quarantined) != 1 {
+		t.Fatalf("corrupt file not quarantined: %v", quarantined)
+	}
+	_ = notes
+}
+
+// Writes merge with the file instead of overwriting it, across an
+// evict-and-reseed cycle. Disk content is checked directly through load():
+// reading through Text would touch the hub and defer the very eviction the
+// test is waiting on.
+func TestNotesWriteMergesWithDisk(t *testing.T) {
+	srv, notes, _ := newNotesServer(t, 50*time.Millisecond)
+	ctx := context.Background()
+
+	onDisk := func(want string) func() bool {
+		return func() bool {
+			u, ok := notes.load("inc-1")
+			if !ok {
+				return false
+			}
+			doc := crdt.NewDocument(hlc.NewClock("test"))
+			doc.Apply(u)
+			return strings.Contains(doc.String(), want)
+		}
+	}
+
+	// Session one writes and is evicted to disk.
+	first, err := deepws.Dial[presence](ctx, wsURL(srv, "inc-1", "sekrit"), "ana")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.Edit(func(d *crdt.Document) { d.Insert(0, "first session\n") })
+	if err := first.Publish(ctx); err != nil {
+		t.Fatal(err)
+	}
+	first.Close(ctx)
+	waitFor(t, "first session on disk", onDisk("first session"))
+
+	// Session two joins (seeded from disk), adds a line, is evicted again.
+	second, err := deepws.Dial[presence](ctx, wsURL(srv, "inc-1", "sekrit"), "bruno")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "seed", func() bool { return strings.Contains(second.Text(), "first session") })
+	second.Edit(func(d *crdt.Document) { d.Insert(d.Len(), "second session\n") })
+	if err := second.Publish(ctx); err != nil {
+		t.Fatal(err)
+	}
+	second.Close(ctx)
+
+	// The second eviction's write must have folded the first session in, not
+	// replaced the file with only what the second room held.
+	waitFor(t, "both sessions on disk", func() bool {
+		return onDisk("first session")() && onDisk("second session")()
+	})
 }
