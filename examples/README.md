@@ -76,6 +76,17 @@ If you are new to the library, these four cover the shape of everything else:
 | [`lww_fields`](lww_fields) | Per-field `LWW[T]` registers resolving a genuine write conflict |
 | [`text_sync`](text_sync) | Collaborative text: concurrent edits across a partition, merged with `MergeTextRuns` |
 
+## A complete system
+
+[`incident`](incident) is different from everything above: not a single-concept
+program but a working incident-management system — server, CLI, collaborative
+notes — built as its own module so its dependencies stay out of the core. It
+exists to show the whole library composed into one application: keyed
+collections, type families, conditional patches, the audit log as reversible
+patches, the CRDT text stack over websockets, and the protobuf companion, each
+carrying an actual responsibility. Its README maps every feature to the file
+that uses it.
+
 ## Generated code
 
 Examples whose model types have a `//go:generate` directive ship the generated
