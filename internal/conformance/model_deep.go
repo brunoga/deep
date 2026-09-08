@@ -759,6 +759,404 @@ func (t *Meta) Clone() *Meta {
 }
 
 // Patch applies p to t using the generated fast path.
+func (t *Odd) Patch(p deep.Patch[Odd], logger *slog.Logger) error {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	if p.Guard != nil {
+		ok, err := t.evaluateCondition(*p.Guard)
+		if err != nil {
+			return fmt.Errorf("global condition evaluation failed: %w", err)
+		}
+		if !ok {
+			return fmt.Errorf("global condition not met")
+		}
+	}
+	var errs []error
+	for _, op := range p.Operations {
+		op.Strict = p.Strict
+		handled, err := t.applyOperation(op, logger)
+		if err != nil {
+			errs = append(errs, err)
+		} else if !handled {
+			if err := gen.ApplyOpReflection(t, op, logger); err != nil {
+				errs = append(errs, err)
+			}
+		}
+	}
+	if len(errs) > 0 {
+		return &deep.ApplyError{Errors: errs}
+	}
+	return nil
+}
+
+func (t *Odd) applyOperation(op deep.Operation, logger *slog.Logger) (bool, error) {
+	if op.If != nil {
+		ok, err := t.evaluateCondition(*op.If)
+		if err != nil {
+			return true, fmt.Errorf("condition evaluation failed at %s: %w", op.Path, err)
+		}
+		if !ok {
+			return true, nil
+		}
+	}
+	if op.Unless != nil {
+		ok, err := t.evaluateCondition(*op.Unless)
+		if err != nil {
+			return true, fmt.Errorf("condition evaluation failed at %s: %w", op.Path, err)
+		}
+		if ok {
+			return true, nil
+		}
+	}
+	if op.Kind == deep.OpLog {
+		logger.Info("deep log", "message", op.New, "path", op.Path)
+		return true, nil
+	}
+
+	switch op.Path {
+	case "/":
+		if op.Strict && op.Old != nil && (op.Kind == deep.OpReplace || op.Kind == deep.OpRemove) {
+			_match := false
+			if old, ok := op.Old.(Odd); ok {
+				_match = deep.Equal(*t, old)
+			}
+			if !_match {
+				_match = deep.EqualCoerced(*t, op.Old)
+			}
+			if !_match {
+				return true, fmt.Errorf("strict check failed at root: expected %v, got %v", op.Old, *t)
+			}
+		}
+		if op.Kind == deep.OpReplace {
+			if v, ok := deep.ValueAs[Odd](op.New); ok {
+				*t = v
+				return true, nil
+			}
+		}
+		return true, fmt.Errorf("unsupported root operation: %s", op.Kind)
+	case "/a~1b", "/Ratio":
+		if op.Kind == deep.OpReplace && op.Strict && op.Old != nil {
+			_match := false
+			if _oldV, ok := op.Old.(int); ok {
+				_match = t.Ratio == _oldV
+			}
+			if !_match {
+				_match = deep.EqualCoerced(t.Ratio, op.Old)
+			}
+			if !_match {
+				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Ratio)
+			}
+		}
+		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
+			if v, ok := deep.ValueAs[int](op.New); ok {
+				t.Ratio = v
+				return true, nil
+			}
+		}
+	case "/c~0d", "/Tilde":
+		if op.Kind == deep.OpReplace && op.Strict && op.Old != nil {
+			_match := false
+			if _oldV, ok := op.Old.(int); ok {
+				_match = t.Tilde == _oldV
+			}
+			if !_match {
+				_match = deep.EqualCoerced(t.Tilde, op.Old)
+			}
+			if !_match {
+				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Tilde)
+			}
+		}
+		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
+			if v, ok := deep.ValueAs[int](op.New); ok {
+				t.Tilde = v
+				return true, nil
+			}
+		}
+	case "/plain", "/Plain":
+		if op.Kind == deep.OpReplace && op.Strict && op.Old != nil {
+			_match := false
+			if _oldV, ok := op.Old.(string); ok {
+				_match = t.Plain == _oldV
+			}
+			if !_match {
+				_match = deep.EqualCoerced(t.Plain, op.Old)
+			}
+			if !_match {
+				return true, fmt.Errorf("strict check failed at %s: expected %v, got %v", op.Path, op.Old, t.Plain)
+			}
+		}
+		if op.Kind == deep.OpAdd || op.Kind == deep.OpReplace {
+			if v, ok := deep.ValueAs[string](op.New); ok {
+				t.Plain = v
+				return true, nil
+			}
+		}
+	default:
+	}
+	return false, nil
+}
+
+// Diff compares t with other and returns a Patch.
+func (t *Odd) Diff(other *Odd) deep.Patch[Odd] {
+	p := deep.Patch[Odd]{}
+	if t.Ratio != other.Ratio {
+		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/a~1b", Old: t.Ratio, New: other.Ratio})
+	}
+	if t.Tilde != other.Tilde {
+		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/c~0d", Old: t.Tilde, New: other.Tilde})
+	}
+	if t.Plain != other.Plain {
+		p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/plain", Old: t.Plain, New: other.Plain})
+	}
+
+	return p
+}
+
+func (t *Odd) evaluateCondition(c condition.Condition) (bool, error) {
+	switch c.Op {
+	case "and":
+		for _, sub := range c.Sub {
+			ok, err := t.evaluateCondition(*sub)
+			if err != nil || !ok {
+				return false, err
+			}
+		}
+		return true, nil
+	case "or":
+		for _, sub := range c.Sub {
+			ok, err := t.evaluateCondition(*sub)
+			if err == nil && ok {
+				return true, nil
+			}
+		}
+		return false, nil
+	case "not":
+		if len(c.Sub) > 0 {
+			ok, err := t.evaluateCondition(*c.Sub[0])
+			if err != nil {
+				return false, err
+			}
+			return !ok, nil
+		}
+		return true, nil
+	}
+
+	switch c.Path {
+	case "/a~1b", "/Ratio":
+		if c.Op == "exists" {
+			return true, nil
+		}
+		if c.Op == "type" {
+			tn, ok := c.Value.(string)
+			if !ok {
+				return false, fmt.Errorf("type requires string value")
+			}
+			return condition.CheckType(t.Ratio, tn), nil
+		}
+		if c.Op == "matches" {
+			pat, ok := c.Value.(string)
+			if !ok {
+				return false, fmt.Errorf("matches requires string pattern")
+			}
+			return regexp.MatchString(pat, fmt.Sprintf("%v", t.Ratio))
+		}
+		var _cv float64
+		switch v := c.Value.(type) {
+		case int:
+			_cv = float64(v)
+		case float64:
+			_cv = v
+		default:
+			return false, fmt.Errorf("condition value type mismatch for field Ratio")
+		}
+		_fv := float64(t.Ratio)
+		switch c.Op {
+		case "==":
+			return _fv == _cv, nil
+		case "!=":
+			return _fv != _cv, nil
+		case ">":
+			return _fv > _cv, nil
+		case "<":
+			return _fv < _cv, nil
+		case ">=":
+			return _fv >= _cv, nil
+		case "<=":
+			return _fv <= _cv, nil
+		case "in":
+			switch vals := c.Value.(type) {
+			case []int:
+				for _, v := range vals {
+					if t.Ratio == v {
+						return true, nil
+					}
+				}
+			case []any:
+				for _, v := range vals {
+					switch iv := v.(type) {
+					case int:
+						if t.Ratio == iv {
+							return true, nil
+						}
+					case float64:
+						if float64(t.Ratio) == iv {
+							return true, nil
+						}
+					}
+				}
+			}
+			return false, nil
+		}
+	case "/c~0d", "/Tilde":
+		if c.Op == "exists" {
+			return true, nil
+		}
+		if c.Op == "type" {
+			tn, ok := c.Value.(string)
+			if !ok {
+				return false, fmt.Errorf("type requires string value")
+			}
+			return condition.CheckType(t.Tilde, tn), nil
+		}
+		if c.Op == "matches" {
+			pat, ok := c.Value.(string)
+			if !ok {
+				return false, fmt.Errorf("matches requires string pattern")
+			}
+			return regexp.MatchString(pat, fmt.Sprintf("%v", t.Tilde))
+		}
+		var _cv float64
+		switch v := c.Value.(type) {
+		case int:
+			_cv = float64(v)
+		case float64:
+			_cv = v
+		default:
+			return false, fmt.Errorf("condition value type mismatch for field Tilde")
+		}
+		_fv := float64(t.Tilde)
+		switch c.Op {
+		case "==":
+			return _fv == _cv, nil
+		case "!=":
+			return _fv != _cv, nil
+		case ">":
+			return _fv > _cv, nil
+		case "<":
+			return _fv < _cv, nil
+		case ">=":
+			return _fv >= _cv, nil
+		case "<=":
+			return _fv <= _cv, nil
+		case "in":
+			switch vals := c.Value.(type) {
+			case []int:
+				for _, v := range vals {
+					if t.Tilde == v {
+						return true, nil
+					}
+				}
+			case []any:
+				for _, v := range vals {
+					switch iv := v.(type) {
+					case int:
+						if t.Tilde == iv {
+							return true, nil
+						}
+					case float64:
+						if float64(t.Tilde) == iv {
+							return true, nil
+						}
+					}
+				}
+			}
+			return false, nil
+		}
+	case "/plain", "/Plain":
+		if c.Op == "exists" {
+			return true, nil
+		}
+		if c.Op == "type" {
+			tn, ok := c.Value.(string)
+			if !ok {
+				return false, fmt.Errorf("type requires string value")
+			}
+			return condition.CheckType(t.Plain, tn), nil
+		}
+		if c.Op == "matches" {
+			pat, ok := c.Value.(string)
+			if !ok {
+				return false, fmt.Errorf("matches requires string pattern")
+			}
+			return regexp.MatchString(pat, fmt.Sprintf("%v", t.Plain))
+		}
+		_sv, _ok := c.Value.(string)
+		if !_ok {
+			return false, fmt.Errorf("condition value type mismatch for field Plain")
+		}
+		switch c.Op {
+		case "==":
+			return t.Plain == _sv, nil
+		case "!=":
+			return t.Plain != _sv, nil
+		case ">":
+			return t.Plain > _sv, nil
+		case "<":
+			return t.Plain < _sv, nil
+		case ">=":
+			return t.Plain >= _sv, nil
+		case "<=":
+			return t.Plain <= _sv, nil
+		case "in":
+			switch vals := c.Value.(type) {
+			case []string:
+				for _, v := range vals {
+					if t.Plain == v {
+						return true, nil
+					}
+				}
+			case []any:
+				for _, v := range vals {
+					if sv, ok := v.(string); ok && t.Plain == sv {
+						return true, nil
+					}
+				}
+			}
+			return false, nil
+		}
+	}
+	// Anything the fast path does not model — nested paths, collection
+	// lookups, unusual ops — is evaluated by the reflection engine, which
+	// handles the full condition language.
+	return condition.Evaluate(reflect.ValueOf(t).Elem(), &c)
+}
+
+// Equal returns true if t and other are deeply equal.
+func (t *Odd) Equal(other *Odd) bool {
+	if t.Ratio != other.Ratio {
+		return false
+	}
+	if t.Tilde != other.Tilde {
+		return false
+	}
+	if t.Plain != other.Plain {
+		return false
+	}
+	return true
+}
+
+// Clone returns a deep copy of t.
+func (t *Odd) Clone() *Odd {
+	res := &Odd{
+		Ratio: t.Ratio,
+		Tilde: t.Tilde,
+		Plain: t.Plain,
+	}
+	return res
+}
+
+// Patch applies p to t using the generated fast path.
 func (t *Doc) Patch(p deep.Patch[Doc], logger *slog.Logger) error {
 	if logger == nil {
 		logger = slog.Default()

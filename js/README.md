@@ -104,15 +104,20 @@ Divergence between two implementations of a sync protocol is silent — the
 replicas simply disagree, with no error anywhere — so the corpus is a merge
 gate in CI rather than a nicety.
 
-Two rules for Go models that sync with JavaScript, both learned from that
-corpus and documented in [docs/wire-patch.md](../docs/wire-patch.md):
+One rule for Go models that sync with JavaScript, learned from that corpus and
+documented in [docs/wire-patch.md](../docs/wire-patch.md): **do not use
+`omitempty`** on fields patches address. It makes a zero value and an absent
+field identical on the wire, so the two replicas end up holding the same value
+and disagreeing about the document.
 
-1. **Generate code for synced types** (`deep-gen`), or name Go fields exactly
-   as the JSON does. The reflection engine emits Go field names in paths
-   (`/Status`), which only Go can resolve.
-2. **Do not use `omitempty`** on fields patches address. It makes a zero value
-   and an absent field identical on the wire, so the two replicas end up
-   holding the same value and disagreeing about the document.
+Paths name fields as the JSON does regardless of whether a type has generated
+code — the reflection engine, generated code and the type-safe selectors all
+agree since v6.6.0, escaping where RFC 6901 requires it.
+
+One shape still needs care: an anonymously embedded Go struct is addressed by
+its type name (`/embMeta/level`) while `encoding/json` promotes its fields to
+the outer object, so that path resolves against nothing here. Give such a
+field an explicit name and tag.
 
 ## Development
 

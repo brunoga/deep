@@ -155,4 +155,3 @@ func show(w world.World, at, total int) {
 	}
 	os.Stdout.WriteString(b.String())
 }
-

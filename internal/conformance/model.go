@@ -9,7 +9,7 @@
 // interop contract, and the corpus is generated through it.
 package conformance
 
-//go:generate go run github.com/brunoga/deep/v6/cmd/deep-gen -type=Doc,Item,Meta -output model_deep.go .
+//go:generate go run github.com/brunoga/deep/v6/cmd/deep-gen -type=Doc,Item,Meta,Odd -output model_deep.go .
 
 // Item is an element with an identity: diffs address it as /items/<id>.
 type Item struct {
@@ -23,6 +23,37 @@ type Item struct {
 type Meta struct {
 	Owner string `json:"owner"`
 	Level int    `json:"level"`
+}
+
+// Plain is deliberately absent from the go:generate list above, so a diff of
+// it goes through the reflection engine. Its cases prove that both engines
+// name fields the same way — a reflection engine that named them the Go way
+// would produce patches no other language could apply.
+type Plain struct {
+	Label  string         `json:"label"`
+	Depth  int            `json:"depth"`
+	Nested PlainNested    `json:"nested"`
+	Values map[string]int `json:"values"`
+	// No json tag: there is nothing to call this but its Go name.
+	Untagged string
+	// Kept out of the document, and so out of patches, equality and clones.
+	Secret string `json:"-"`
+}
+
+// PlainNested is likewise ungenerated.
+type PlainNested struct {
+	Owner string `json:"owner"`
+}
+
+// Odd carries JSON names that need RFC 6901 escaping when they become path
+// tokens. It is generated, so its case covers the generator's escaping; the
+// reflection engine's is covered by a unit test in the root package. Both
+// must produce the same paths, or a patch means one thing to a Go peer and
+// another to everyone else.
+type Odd struct {
+	Ratio int    `json:"a/b"`
+	Tilde int    `json:"c~d"`
+	Plain string `json:"plain"`
 }
 
 // Doc is the corpus model: scalars, a nested struct, a keyed slice, a plain

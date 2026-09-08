@@ -215,7 +215,7 @@ func (d *Differ) detectMovesRecursive(v reflect.Value, ctx *diffContext) {
 			if fInfo.Tag.Ignore {
 				continue
 			}
-			ctx.pathStack = append(ctx.pathStack, fInfo.Name)
+			ctx.pathStack = append(ctx.pathStack, fInfo.PathName())
 			d.detectMovesRecursive(v.Field(fInfo.Index), ctx)
 			ctx.pathStack = ctx.pathStack[:len(ctx.pathStack)-1]
 		}
@@ -407,7 +407,7 @@ func (d *Differ) indexValues(v reflect.Value, ctx *diffContext) {
 			if fInfo.Tag.Ignore {
 				continue
 			}
-			ctx.pathStack = append(ctx.pathStack, fInfo.Name)
+			ctx.pathStack = append(ctx.pathStack, fInfo.PathName())
 			d.indexValues(v.Field(fInfo.Index), ctx)
 			ctx.pathStack = ctx.pathStack[:len(ctx.pathStack)-1]
 		}
@@ -692,7 +692,7 @@ func (d *Differ) diffStruct(a, b reflect.Value, ctx *diffContext) (diffPatch, er
 			unsafe.DisableRO(&fB)
 		}
 
-		ctx.pathStack = append(ctx.pathStack, fInfo.Name)
+		ctx.pathStack = append(ctx.pathStack, fInfo.PathName())
 		patch, err := d.diffRecursive(fA, fB, fInfo.Tag.Atomic, ctx)
 		ctx.pathStack = ctx.pathStack[:len(ctx.pathStack)-1]
 
@@ -703,7 +703,7 @@ func (d *Differ) diffStruct(a, b reflect.Value, ctx *diffContext) (diffPatch, er
 			if fInfo.Tag.ReadOnly {
 				patch = &readOnlyPatch{inner: patch}
 			}
-			fields = append(fields, structField{fInfo.Name, patch})
+			fields = append(fields, structField{fInfo.PathName(), patch})
 		}
 	}
 

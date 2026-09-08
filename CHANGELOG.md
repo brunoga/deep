@@ -6,6 +6,55 @@ All notable changes to this project are documented here, newest first.
 > version's entry before tagging, so the tag, the GitHub release notes, and this
 > file always agree.
 
+## v6.6.0
+
+### Breaking
+
+- **`json:"-"` now hides a field from `Clone` and `Equal` under the reflection
+  engine, not just from `Diff`.** The tag has always meant "invisible to deep"
+  — the README's tag table says so, and generated code has always implemented
+  it — but the reflection engine ignored it entirely, so a type without
+  generated code kept such fields through a clone and compared them in
+  equality. Aligning the engines means a reflection `Clone` now *zeroes* them.
+
+  `json:"-"` is a common idiom for caches, loggers, mutexes and back-pointers,
+  so audit those fields before upgrading: anything that must survive a clone
+  needs a name in the document, and anything that must stay out of patches but
+  survive cloning has no tag that expresses both — copy it back after cloning.
+
+### Fixed
+
+- **The reflection engine names fields in paths the way everything else
+  does.** It emitted Go field names — `/Status`, `/Meta/Level` — where
+  generated code and the type-safe selectors emit JSON names. Both forms
+  apply, so this looked cosmetic; it was not. A server allowlisting a field
+  with the library's own selector (`deep.WithAllowedPaths(namePath.String())`)
+  *refused a patch changing exactly that field*, and adding generated code to
+  a type silently changed the paths it produced. All three producers now
+  agree. Patches written before this still apply, reverse and merge: the
+  appliers accept a Go field name as well.
+
+- **JSON names are escaped into paths.** A tag holding "/" or "~" —
+  `json:"a/b"` — was spliced into a path raw by both engines, producing an
+  operation that addresses a field `a` holding a `b`: nothing. `Diff` then did
+  not round-trip through `Apply`, and the failure came halfway through, leaving
+  the target partly patched. Both engines now escape per RFC 6901.
+
+- **`json:"-"` keeps a field out of patches under the reflection engine too.**
+  The tag was honoured only by generated code, so a type without it diffed its
+  excluded fields into the patch — old and new values included. The library's
+  own `ignored_fields` example advertises this for a password hash, which
+  meant following that advice without running `deep-gen` put the hash on the
+  wire, into logs and into replicas. The tag is now read where every part of
+  the engine sees it, so such a field stays out of diffs, out of equality, and
+  out of clones (which zero it, as generated code has always done).
+
+  Both defects came from the same root: the reflection engine did not read
+  `json` tags at all. They were found by building a second implementation
+  against the wire format — a JavaScript client cannot resolve `/Status`
+  against a document whose key is `status`, which is what made the divergence
+  visible.
+
 ## v6.5.0
 
 ### Changed

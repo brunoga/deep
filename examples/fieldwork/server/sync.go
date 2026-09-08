@@ -29,8 +29,8 @@ import (
 
 // Push is one asset's offline changes.
 type Push struct {
-	ID          string                   `json:"id"`
-	BaseVersion int64                    `json:"base_version"`
+	ID          string                  `json:"id"`
+	BaseVersion int64                   `json:"base_version"`
 	Patch       deep.Patch[model.Asset] `json:"patch"`
 }
 

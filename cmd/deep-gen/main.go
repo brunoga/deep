@@ -211,6 +211,19 @@ func mapVal(s string) string       { return s[strings.Index(s, "]")+1:] }
 func sliceElem(s string) string    { return s[2:] }
 func isMapStringKey(s string) bool { return strings.HasPrefix(s, "map[string]") }
 
+// escapePointer escapes a name for use as a JSON Pointer token. A JSON tag is
+// arbitrary text — `json:"a/b"` is legal — and a "/" or "~" spliced raw into
+// a path silently produces an operation that addresses something else, or
+// nothing. RFC 6901 escaping is applied here, at generation time, so the
+// emitted literals already carry it.
+func escapePointer(name string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(name, "~", "~0"), "/", "~1")
+}
+
+// PathName is the field's name as it appears in a path: its JSON name,
+// escaped. Go field names need no escaping, so only this one does.
+func (f FieldInfo) PathName() string { return escapePointer(f.JSONName) }
+
 func isNumericType(t string) bool {
 	switch t {
 	case "int", "int8", "int16", "int32", "int64",
@@ -257,7 +270,7 @@ func isBuiltinComparable(t string) bool {
 func fieldApplyCase(f FieldInfo, p string) string {
 	var b strings.Builder
 	if f.JSONName != f.Name {
-		fmt.Fprintf(&b, "\tcase \"/%s\", \"/%s\":\n", f.JSONName, f.Name)
+		fmt.Fprintf(&b, "\tcase \"/%s\", \"/%s\":\n", f.PathName(), f.Name)
 	} else {
 		fmt.Fprintf(&b, "\tcase \"/%s\":\n", f.Name)
 	}
@@ -310,7 +323,7 @@ func delegateCase(f FieldInfo, p string) string {
 	}
 	var b strings.Builder
 	if f.IsStruct {
-		fmt.Fprintf(&b, "\t\tif strings.HasPrefix(op.Path, \"/%s/\") {\n", f.JSONName)
+		fmt.Fprintf(&b, "\t\tif strings.HasPrefix(op.Path, \"/%s/\") {\n", f.PathName())
 		if f.ReadOnly {
 			b.WriteString("\t\t\treturn true, fmt.Errorf(\"field %s is read-only\", op.Path)\n")
 		} else {
@@ -318,10 +331,10 @@ func delegateCase(f FieldInfo, p string) string {
 			if isPtr(f.Type) {
 				selfArg = "t." + f.Name
 				fmt.Fprintf(&b, "\t\t\tif %s != nil {\n", selfArg)
-				fmt.Fprintf(&b, "\t\t\t\top.Path = op.Path[len(\"/%s/\")-1:]\n", f.JSONName)
+				fmt.Fprintf(&b, "\t\t\t\top.Path = op.Path[len(\"/%s/\")-1:]\n", f.PathName())
 				fmt.Fprintf(&b, "\t\t\t\treturn %s.applyOperation(op, logger)\n\t\t\t}\n", selfArg)
 			} else {
-				fmt.Fprintf(&b, "\t\t\top.Path = op.Path[len(\"/%s/\")-1:]\n", f.JSONName)
+				fmt.Fprintf(&b, "\t\t\top.Path = op.Path[len(\"/%s/\")-1:]\n", f.PathName())
 				fmt.Fprintf(&b, "\t\t\treturn %s.applyOperation(op, logger)\n", selfArg)
 			}
 		}
@@ -329,11 +342,11 @@ func delegateCase(f FieldInfo, p string) string {
 	}
 	if f.IsCollection && isMapStringKey(f.Type) {
 		vt := mapVal(f.Type)
-		fmt.Fprintf(&b, "\t\tif strings.HasPrefix(op.Path, \"/%s/\") {\n", f.JSONName)
+		fmt.Fprintf(&b, "\t\tif strings.HasPrefix(op.Path, \"/%s/\") {\n", f.PathName())
 		if f.ReadOnly {
 			b.WriteString("\t\t\treturn true, fmt.Errorf(\"field %s is read-only\", op.Path)\n")
 		} else if isPtr(vt) && f.ElemGenerated {
-			fmt.Fprintf(&b, "\t\t\tparts := strings.Split(op.Path[len(\"/%s/\"):], \"/\")\n", f.JSONName)
+			fmt.Fprintf(&b, "\t\t\tparts := strings.Split(op.Path[len(\"/%s/\"):], \"/\")\n", f.PathName())
 			fmt.Fprintf(&b, "\t\t\tkey := %sUnescapePathKey(parts[0])\n", p)
 			// Entry-level operations are handled here; deeper paths delegate to
 			// the element's own applyOperation. Anything else (e.g. a
@@ -355,7 +368,7 @@ func delegateCase(f FieldInfo, p string) string {
 			b.WriteString("\t\t\t\top.Path = \"/\" + strings.Join(parts[1:], \"/\")\n")
 			b.WriteString("\t\t\t\treturn val.applyOperation(op, logger)\n\t\t\t}\n")
 		} else {
-			fmt.Fprintf(&b, "\t\t\tparts := strings.Split(op.Path[len(\"/%s/\"):], \"/\")\n", f.JSONName)
+			fmt.Fprintf(&b, "\t\t\tparts := strings.Split(op.Path[len(\"/%s/\"):], \"/\")\n", f.PathName())
 			fmt.Fprintf(&b, "\t\t\tkey := %sUnescapePathKey(parts[0])\n", p)
 			// Only entry-level operations are handled here: a deeper path
 			// (e.g. removing one key inside a map-valued entry) must not
@@ -422,22 +435,22 @@ func diffFieldBody(f FieldInfo, p, g string, typeKeys map[string]string) string 
 		needsGuard := isPtr(f.Type)
 		if needsGuard {
 			fmt.Fprintf(&b, "\tif %s == nil && %s != nil {\n", self, other)
-			fmt.Fprintf(&b, "\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpAdd, Path: \"/%s\", New: %s})\n", p, p, f.JSONName, other)
+			fmt.Fprintf(&b, "\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpAdd, Path: \"/%s\", New: %s})\n", p, p, f.PathName(), other)
 			fmt.Fprintf(&b, "\t} else if %s != nil && %s == nil {\n", self, other)
-			fmt.Fprintf(&b, "\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpRemove, Path: \"/%s\", Old: %s})\n", p, p, f.JSONName, self)
+			fmt.Fprintf(&b, "\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpRemove, Path: \"/%s\", Old: %s})\n", p, p, f.PathName(), self)
 			fmt.Fprintf(&b, "\t} else if %s != nil && %s != nil {\n", self, other)
 		}
 		if f.TypeShared {
 			// The callee threads the memo and emits absolute paths itself, so
 			// its operations are appended as they are.
-			fmt.Fprintf(&b, "\t\tsub%s := %s.diffShared(%s, seen, at + \"/%s\")\n", f.Name, self, other, f.JSONName)
+			fmt.Fprintf(&b, "\t\tsub%s := %s.diffShared(%s, seen, at + \"/%s\")\n", f.Name, self, other, f.PathName())
 			fmt.Fprintf(&b, "\t\tp.Operations = append(p.Operations, sub%s.Operations...)\n", f.Name)
 		} else {
 			// Text and memo-free structs diff standalone with relative paths;
 			// their operations are re-rooted here.
 			fmt.Fprintf(&b, "\t\tsub%s := %s.Diff(%s)\n", f.Name, self, other)
 			fmt.Fprintf(&b, "\t\tfor _, op := range sub%s.Operations {\n", f.Name)
-			fmt.Fprintf(&b, "\t\t\tif op.Path == \"\" || op.Path == \"/\" { op.Path = \"/%s\" } else { op.Path = \"/%s\" + op.Path }\n", f.JSONName, f.JSONName)
+			fmt.Fprintf(&b, "\t\t\tif op.Path == \"\" || op.Path == \"/\" { op.Path = \"/%s\" } else { op.Path = \"/%s\" + op.Path }\n", f.PathName(), f.PathName())
 			b.WriteString("\t\t\tp.Operations = append(p.Operations, op)\n\t\t}\n")
 		}
 		if needsGuard {
@@ -457,12 +470,12 @@ func diffFieldBody(f FieldInfo, p, g string, typeKeys map[string]string) string 
 			b.WriteString("\t{\n")
 			b.WriteString("\t_mapFrom := len(p.Operations)\n")
 			fmt.Fprintf(&b, "\tif (t.%s == nil) != (other.%s == nil) {\n", f.Name, f.Name)
-			fmt.Fprintf(&b, "\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpReplace, Path: \"/%s\", Old: t.%s, New: other.%s})\n", p, p, f.JSONName, f.Name, f.Name)
+			fmt.Fprintf(&b, "\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpReplace, Path: \"/%s\", Old: t.%s, New: other.%s})\n", p, p, f.PathName(), f.Name, f.Name)
 			b.WriteString("\t} else {\n")
 			fmt.Fprintf(&b, "\tif other.%s != nil {\n", f.Name)
 			fmt.Fprintf(&b, "\t\tfor k, v := range other.%s {\n", f.Name)
 			fmt.Fprintf(&b, "\t\t\tif t.%s == nil {\n", f.Name)
-			fmt.Fprintf(&b, "\t\t\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpReplace, Path: \"/%s/\" + %sEscapePathKey(fmt.Sprintf(\"%%v\", k)), New: v})\n", p, p, f.JSONName, p)
+			fmt.Fprintf(&b, "\t\t\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpReplace, Path: \"/%s/\" + %sEscapePathKey(fmt.Sprintf(\"%%v\", k)), New: v})\n", p, p, f.PathName(), p)
 			b.WriteString("\t\t\t\tcontinue\n\t\t\t}\n")
 			if ptrVal && f.ElemGenerated && f.ElemShared {
 				// Pointer values of a shared type are diffed in place, like
@@ -472,11 +485,11 @@ func diffFieldBody(f FieldInfo, p, g string, typeKeys map[string]string) string 
 				fmt.Fprintf(&b, "\t\t\toldV, ok := t.%s[k]\n", f.Name)
 				b.WriteString("\t\t\tswitch {\n")
 				b.WriteString("\t\t\tcase !ok:\n")
-				fmt.Fprintf(&b, "\t\t\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpAdd, Path: \"/%s/\" + %sEscapePathKey(fmt.Sprintf(\"%%v\", k)), New: v})\n", p, p, f.JSONName, p)
+				fmt.Fprintf(&b, "\t\t\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpAdd, Path: \"/%s/\" + %sEscapePathKey(fmt.Sprintf(\"%%v\", k)), New: v})\n", p, p, f.PathName(), p)
 				b.WriteString("\t\t\tcase (oldV == nil) != (v == nil):\n")
-				fmt.Fprintf(&b, "\t\t\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpReplace, Path: \"/%s/\" + %sEscapePathKey(fmt.Sprintf(\"%%v\", k)), Old: oldV, New: v})\n", p, p, f.JSONName, p)
+				fmt.Fprintf(&b, "\t\t\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpReplace, Path: \"/%s/\" + %sEscapePathKey(fmt.Sprintf(\"%%v\", k)), Old: oldV, New: v})\n", p, p, f.PathName(), p)
 				b.WriteString("\t\t\tcase oldV != nil:\n")
-				fmt.Fprintf(&b, "\t\t\t\tsub := oldV.diffShared(v, seen, at + \"/%s/\" + %sEscapePathKey(fmt.Sprintf(\"%%v\", k)))\n", f.JSONName, p)
+				fmt.Fprintf(&b, "\t\t\t\tsub := oldV.diffShared(v, seen, at + \"/%s/\" + %sEscapePathKey(fmt.Sprintf(\"%%v\", k)))\n", f.PathName(), p)
 				b.WriteString("\t\t\t\tp.Operations = append(p.Operations, sub.Operations...)\n")
 				b.WriteString("\t\t\t}\n\t\t}\n\t}\n")
 			} else if f.ElemGenerated && f.ElemShared {
@@ -488,9 +501,9 @@ func diffFieldBody(f FieldInfo, p, g string, typeKeys map[string]string) string 
 				fmt.Fprintf(&b, "\t\t\toldV, ok := t.%s[k]\n", f.Name)
 				b.WriteString("\t\t\tswitch {\n")
 				b.WriteString("\t\t\tcase !ok:\n")
-				fmt.Fprintf(&b, "\t\t\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpAdd, Path: \"/%s/\" + %sEscapePathKey(fmt.Sprintf(\"%%v\", k)), New: v})\n", p, p, f.JSONName, p)
+				fmt.Fprintf(&b, "\t\t\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpAdd, Path: \"/%s/\" + %sEscapePathKey(fmt.Sprintf(\"%%v\", k)), New: v})\n", p, p, f.PathName(), p)
 				b.WriteString("\t\t\tcase !oldV.Equal(&v):\n")
-				fmt.Fprintf(&b, "\t\t\t\tsub := (&oldV).diffShared(&v, seen, at + \"/%s/\" + %sEscapePathKey(fmt.Sprintf(\"%%v\", k)))\n", f.JSONName, p)
+				fmt.Fprintf(&b, "\t\t\t\tsub := (&oldV).diffShared(&v, seen, at + \"/%s/\" + %sEscapePathKey(fmt.Sprintf(\"%%v\", k)))\n", f.PathName(), p)
 				b.WriteString("\t\t\t\tp.Operations = append(p.Operations, sub.Operations...)\n")
 				b.WriteString("\t\t\t}\n\t\t}\n\t}\n")
 			} else if f.ElemGenerated {
@@ -503,17 +516,17 @@ func diffFieldBody(f FieldInfo, p, g string, typeKeys map[string]string) string 
 				fmt.Fprintf(&b, "\t\t\toldV, ok := t.%s[k]\n", f.Name)
 				b.WriteString("\t\t\tswitch {\n")
 				b.WriteString("\t\t\tcase !ok:\n")
-				fmt.Fprintf(&b, "\t\t\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpAdd, Path: \"/%s/\" + %sEscapePathKey(fmt.Sprintf(\"%%v\", k)), New: v})\n", p, p, f.JSONName, p)
+				fmt.Fprintf(&b, "\t\t\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpAdd, Path: \"/%s/\" + %sEscapePathKey(fmt.Sprintf(\"%%v\", k)), New: v})\n", p, p, f.PathName(), p)
 				if ptrVal {
 					b.WriteString("\t\t\tcase (oldV == nil) != (v == nil):\n")
-					fmt.Fprintf(&b, "\t\t\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpReplace, Path: \"/%s/\" + %sEscapePathKey(fmt.Sprintf(\"%%v\", k)), Old: oldV, New: v})\n", p, p, f.JSONName, p)
+					fmt.Fprintf(&b, "\t\t\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpReplace, Path: \"/%s/\" + %sEscapePathKey(fmt.Sprintf(\"%%v\", k)), Old: oldV, New: v})\n", p, p, f.PathName(), p)
 					b.WriteString("\t\t\tcase oldV != nil && !oldV.Equal(v):\n")
 					b.WriteString("\t\t\t\tsub := oldV.Diff(v)\n")
 				} else {
 					b.WriteString("\t\t\tcase !oldV.Equal(&v):\n")
 					b.WriteString("\t\t\t\tsub := oldV.Diff(&v)\n")
 				}
-				fmt.Fprintf(&b, "\t\t\t\tprefix := \"/%s/\" + %sEscapePathKey(fmt.Sprintf(\"%%v\", k))\n", f.JSONName, p)
+				fmt.Fprintf(&b, "\t\t\t\tprefix := \"/%s/\" + %sEscapePathKey(fmt.Sprintf(\"%%v\", k))\n", f.PathName(), p)
 				b.WriteString("\t\t\t\tfor _, op := range sub.Operations {\n")
 				b.WriteString("\t\t\t\t\tif op.Path == \"\" || op.Path == \"/\" { op.Path = prefix } else { op.Path = prefix + op.Path }\n")
 				b.WriteString("\t\t\t\t\tp.Operations = append(p.Operations, op)\n\t\t\t\t}\n")
@@ -527,13 +540,13 @@ func diffFieldBody(f FieldInfo, p, g string, typeKeys map[string]string) string 
 					fmt.Fprintf(&b, "!%sEqual(oldV, v) {\n", p)
 				}
 				fmt.Fprintf(&b, "\t\t\t\tkind := %sOpReplace\n\t\t\t\tif !ok { kind = %sOpAdd }\n", p, p)
-				fmt.Fprintf(&b, "\t\t\t\tp.Operations = append(p.Operations, %sOperation{Kind: kind, Path: \"/%s/\" + %sEscapePathKey(fmt.Sprintf(\"%%v\", k)), Old: oldV, New: v})\n", p, f.JSONName, p)
+				fmt.Fprintf(&b, "\t\t\t\tp.Operations = append(p.Operations, %sOperation{Kind: kind, Path: \"/%s/\" + %sEscapePathKey(fmt.Sprintf(\"%%v\", k)), Old: oldV, New: v})\n", p, f.PathName(), p)
 				b.WriteString("\t\t\t}\n\t\t}\n\t}\n")
 			}
 			fmt.Fprintf(&b, "\tif t.%s != nil {\n", f.Name)
 			fmt.Fprintf(&b, "\t\tfor k, v := range t.%s {\n", f.Name)
 			fmt.Fprintf(&b, "\t\t\tif _, ok := other.%s[k]; !ok {\n", f.Name)
-			fmt.Fprintf(&b, "\t\t\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpRemove, Path: \"/%s/\" + %sEscapePathKey(fmt.Sprintf(\"%%v\", k)), Old: v})\n", p, p, f.JSONName, p)
+			fmt.Fprintf(&b, "\t\t\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpRemove, Path: \"/%s/\" + %sEscapePathKey(fmt.Sprintf(\"%%v\", k)), Old: v})\n", p, p, f.PathName(), p)
 			b.WriteString("\t\t\t}\n\t\t}\n\t}\n")
 			b.WriteString("\t}\n")
 			fmt.Fprintf(&b, "\t%sSortOperations(p.Operations[_mapFrom:])\n", g)
@@ -549,23 +562,23 @@ func diffFieldBody(f FieldInfo, p, g string, typeKeys map[string]string) string 
 				// As for maps: per-key operations cannot turn an empty keyed
 				// slice into a nil one.
 				fmt.Fprintf(&b, "\tif (t.%s == nil) != (other.%s == nil) {\n", f.Name, f.Name)
-				fmt.Fprintf(&b, "\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpReplace, Path: \"/%s\", Old: t.%s, New: other.%s})\n", p, p, f.JSONName, f.Name, f.Name)
+				fmt.Fprintf(&b, "\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpReplace, Path: \"/%s\", Old: t.%s, New: other.%s})\n", p, p, f.PathName(), f.Name, f.Name)
 				b.WriteString("\t} else {\n")
 				fmt.Fprintf(&b, "\totherByKey := make(map[any]int)\n")
 				fmt.Fprintf(&b, "\tfor i, v := range other.%s { otherByKey[v.%s] = i }\n", f.Name, keyField)
 				fmt.Fprintf(&b, "\tfor _, v := range t.%s {\n", f.Name)
 				fmt.Fprintf(&b, "\t\tif _, ok := otherByKey[v.%s]; !ok {\n", keyField)
-				fmt.Fprintf(&b, "\t\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpRemove, Path: \"/%s/\" + %sEscapePathKey(fmt.Sprintf(\"%%v\", v.%s)), Old: v})\n", p, p, f.JSONName, p, keyField)
+				fmt.Fprintf(&b, "\t\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpRemove, Path: \"/%s/\" + %sEscapePathKey(fmt.Sprintf(\"%%v\", v.%s)), Old: v})\n", p, p, f.PathName(), p, keyField)
 				b.WriteString("\t\t}\n\t}\n")
 				fmt.Fprintf(&b, "\ttByKey := make(map[any]int)\n")
 				fmt.Fprintf(&b, "\tfor i, v := range t.%s { tByKey[v.%s] = i }\n", f.Name, keyField)
 				fmt.Fprintf(&b, "\tfor j := range other.%s {\n", f.Name)
 				fmt.Fprintf(&b, "\t\ti, ok := tByKey[other.%s[j].%s]\n", f.Name, keyField)
 				b.WriteString("\t\tif !ok {\n")
-				fmt.Fprintf(&b, "\t\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpAdd, Path: \"/%s/\" + %sEscapePathKey(fmt.Sprintf(\"%%v\", other.%s[j].%s)), New: other.%s[j]})\n", p, p, f.JSONName, p, f.Name, keyField, f.Name)
+				fmt.Fprintf(&b, "\t\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpAdd, Path: \"/%s/\" + %sEscapePathKey(fmt.Sprintf(\"%%v\", other.%s[j].%s)), New: other.%s[j]})\n", p, p, f.PathName(), p, f.Name, keyField, f.Name)
 				b.WriteString("\t\t\tcontinue\n\t\t}\n")
 				// A key present on both sides may still have changed content.
-				fmt.Fprintf(&b, "\t\tprefix := \"/%s/\" + %sEscapePathKey(fmt.Sprintf(\"%%v\", other.%s[j].%s))\n", f.JSONName, p, f.Name, keyField)
+				fmt.Fprintf(&b, "\t\tprefix := \"/%s/\" + %sEscapePathKey(fmt.Sprintf(\"%%v\", other.%s[j].%s))\n", f.PathName(), p, f.Name, keyField)
 				if f.ElemGenerated && f.ElemShared {
 					fmt.Fprintf(&b, "\t\tsub := (&t.%s[i]).diffShared(&other.%s[j], seen, prefix)\n", f.Name, f.Name)
 					b.WriteString("\t\tp.Operations = append(p.Operations, sub.Operations...)\n")
@@ -584,16 +597,16 @@ func diffFieldBody(f FieldInfo, p, g string, typeKeys map[string]string) string 
 				b.WriteString("\t}\n")
 			} else {
 				fmt.Fprintf(&b, "\tif len(t.%s) != len(other.%s) || (t.%s == nil) != (other.%s == nil) {\n", f.Name, f.Name, f.Name, f.Name)
-				fmt.Fprintf(&b, "\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpReplace, Path: \"/%s\", Old: t.%s, New: other.%s})\n", p, p, f.JSONName, f.Name, f.Name)
+				fmt.Fprintf(&b, "\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpReplace, Path: \"/%s\", Old: t.%s, New: other.%s})\n", p, p, f.PathName(), f.Name, f.Name)
 				b.WriteString("\t} else {\n")
 				fmt.Fprintf(&b, "\t\tfor i := range t.%s {\n", f.Name)
 				if f.ElemGenerated && isPtr(elemType) && f.ElemShared {
 					// As for maps: shared pointer elements are diffed in
 					// place so the pair is tracked and aliases fire.
 					fmt.Fprintf(&b, "\t\t\tif (t.%s[i] == nil) != (other.%s[i] == nil) {\n", f.Name, f.Name)
-					fmt.Fprintf(&b, "\t\t\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpReplace, Path: fmt.Sprintf(\"/%s/%%d\", i), Old: t.%s[i], New: other.%s[i]})\n", p, p, f.JSONName, f.Name, f.Name)
+					fmt.Fprintf(&b, "\t\t\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpReplace, Path: fmt.Sprintf(\"/%s/%%d\", i), Old: t.%s[i], New: other.%s[i]})\n", p, p, f.PathName(), f.Name, f.Name)
 					fmt.Fprintf(&b, "\t\t\t} else if t.%s[i] != nil {\n", f.Name)
-					fmt.Fprintf(&b, "\t\t\t\tsub := t.%s[i].diffShared(other.%s[i], seen, at + fmt.Sprintf(\"/%s/%%d\", i))\n", f.Name, f.Name, f.JSONName)
+					fmt.Fprintf(&b, "\t\t\t\tsub := t.%s[i].diffShared(other.%s[i], seen, at + fmt.Sprintf(\"/%s/%%d\", i))\n", f.Name, f.Name, f.PathName())
 					b.WriteString("\t\t\t\tp.Operations = append(p.Operations, sub.Operations...)\n")
 					b.WriteString("\t\t\t}\n\t\t}\n\t}\n")
 					return b.String()
@@ -609,7 +622,7 @@ func diffFieldBody(f FieldInfo, p, g string, typeKeys map[string]string) string 
 				default:
 					fmt.Fprintf(&b, "\t\t\tif !%sEqual(t.%s[i], other.%s[i]) {\n", p, f.Name, f.Name)
 				}
-				fmt.Fprintf(&b, "\t\t\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpReplace, Path: fmt.Sprintf(\"/%s/%%d\", i), Old: t.%s[i], New: other.%s[i]})\n", p, p, f.JSONName, f.Name, f.Name)
+				fmt.Fprintf(&b, "\t\t\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpReplace, Path: fmt.Sprintf(\"/%s/%%d\", i), Old: t.%s[i], New: other.%s[i]})\n", p, p, f.PathName(), f.Name, f.Name)
 				b.WriteString("\t\t\t}\n\t\t}\n\t}\n")
 			}
 		}
@@ -617,7 +630,7 @@ func diffFieldBody(f FieldInfo, p, g string, typeKeys map[string]string) string 
 		// Atomic composite fields diff as a single whole-value replace; == is
 		// not even defined for most of them.
 		fmt.Fprintf(&b, "\tif !%sEqual(t.%s, other.%s) {\n", p, f.Name, f.Name)
-		fmt.Fprintf(&b, "\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpReplace, Path: \"/%s\", Old: t.%s, New: other.%s})\n", p, p, f.JSONName, f.Name, f.Name)
+		fmt.Fprintf(&b, "\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpReplace, Path: \"/%s\", Old: t.%s, New: other.%s})\n", p, p, f.PathName(), f.Name, f.Name)
 		b.WriteString("\t}\n")
 	} else if f.Generic() {
 		// A field the generator cannot see inside. DiffOpaque emits nothing
@@ -625,10 +638,10 @@ func diffFieldBody(f FieldInfo, p, g string, typeKeys map[string]string) string 
 		// — and, when a type family owns the value, the family's own
 		// fine-grained operations: a one-field change to a protobuf message
 		// held here becomes one operation naming that field.
-		fmt.Fprintf(&b, "\tp.Operations = append(p.Operations, %sDiffOpaque(\"/%s\", t.%s, other.%s)...)\n", g, f.JSONName, f.Name, f.Name)
+		fmt.Fprintf(&b, "\tp.Operations = append(p.Operations, %sDiffOpaque(\"/%s\", t.%s, other.%s)...)\n", g, f.PathName(), f.Name, f.Name)
 	} else {
 		fmt.Fprintf(&b, "\tif t.%s != other.%s {\n", f.Name, f.Name)
-		fmt.Fprintf(&b, "\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpReplace, Path: \"/%s\", Old: t.%s, New: other.%s})\n", p, p, f.JSONName, f.Name, f.Name)
+		fmt.Fprintf(&b, "\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpReplace, Path: \"/%s\", Old: t.%s, New: other.%s})\n", p, p, f.PathName(), f.Name, f.Name)
 		b.WriteString("\t}\n")
 	}
 	return b.String()
@@ -1171,7 +1184,7 @@ var evalCondTmpl = template.Must(template.New("evalCond").Funcs(tmplFuncs).Parse
 
 	switch c.Path {
 {{range .Fields}}{{if .HasCondCase -}}
-	{{if ne .JSONName .Name}}case "/{{.JSONName}}", "/{{.Name}}":{{else}}case "/{{.Name}}":{{end}}
+	{{if ne .JSONName .Name}}case "/{{.PathName}}", "/{{.Name}}":{{else}}case "/{{.Name}}":{{end}}
 {{evalCondCase . $.P}}{{end}}{{end -}}
 	}
 	// Anything the fast path does not model — nested paths, collection

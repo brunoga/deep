@@ -13,12 +13,25 @@ type StructTag struct {
 }
 
 func ParseTag(field reflect.StructField) StructTag {
-	tag := field.Tag.Get("deep")
-	if tag == "" {
-		return StructTag{}
+	st := StructTag{}
+
+	// A field kept out of the JSON document is kept out of deep as well: it
+	// stays out of diffs, out of equality and out of clones. The rule lives
+	// here so that every reader of a field's tags sees it — diffing, cloning
+	// and applying each ask separately, and a field that is invisible to one
+	// of them but not the others is worse than no rule at all.
+	// Exactly `json:"-"`. The similar-looking `json:"-,"` names a field that
+	// really is called "-", which encoding/json includes in the document —
+	// and so does deep.
+	if field.Tag.Get("json") == "-" {
+		st.Ignore = true
 	}
 
-	st := StructTag{}
+	tag := field.Tag.Get("deep")
+	if tag == "" {
+		return st
+	}
+
 	parts := strings.Split(tag, ",")
 	for _, part := range parts {
 		part = strings.TrimSpace(part)

@@ -32,9 +32,9 @@ var (
 // engine needs to know what the office changed while a technician was in
 // the field.
 type VersionEntry struct {
-	Version int64                    `json:"version"`
-	Author  string                   `json:"author"`
-	Time    time.Time                `json:"time"`
+	Version int64                   `json:"version"`
+	Author  string                  `json:"author"`
+	Time    time.Time               `json:"time"`
 	Patch   deep.Patch[model.Asset] `json:"patch"`
 }
 

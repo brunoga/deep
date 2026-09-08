@@ -48,7 +48,7 @@ func doc() Doc {
 
 // build assembles a case from a starting document and a patch, recording what
 // this implementation does with it.
-func build(t *testing.T, name string, before Doc, patch deep.Patch[Doc]) Case {
+func build[T any](t *testing.T, name string, before T, patch deep.Patch[T]) Case {
 	t.Helper()
 	after := deep.Clone(before)
 	res, _ := deep.ApplyWithResult(&after, patch)
@@ -71,16 +71,23 @@ func build(t *testing.T, name string, before Doc, patch deep.Patch[Doc]) Case {
 		}
 		return data
 	}
+	// The key descriptor describes the model, so only the model that has a
+	// keyed array carries one. A reader that validates the descriptor against
+	// the document should not be handed paths the document does not have.
+	var keys map[string]string
+	if _, ok := any(before).(Doc); ok {
+		keys = map[string]string{"/items": "id"}
+	}
 	return Case{
 		Name: name, Before: marshal(before), Patch: marshal(patch), After: marshal(after),
 		Applied: applied, Skipped: skipped, Failed: failed, Reversible: reversible,
-		Keys: map[string]string{"/items": "id"},
+		Keys: keys,
 	}
 }
 
 // diffCase builds a case from two documents, which is how a patch usually
 // comes to exist.
-func diffCase(t *testing.T, name string, before Doc, edit func(*Doc)) Case {
+func diffCase[T any](t *testing.T, name string, before T, edit func(*T)) Case {
 	t.Helper()
 	after := deep.Clone(before)
 	edit(&after)
@@ -225,6 +232,42 @@ func cases(t *testing.T) []Case {
 		build(t, "root replaced", base, deep.Patch[Doc]{Operations: []deep.Operation{
 			{Kind: deep.OpReplace, Path: "/", Old: base, New: replacement},
 		}}),
+	)
+
+	// A patch from the reflection engine, which produces the same paths as
+	// generated code does. Every other case here goes through generated code,
+	// so without this one a reflection engine that went back to naming fields
+	// the Go way would produce patches no other language could apply, and
+	// nothing would notice.
+	plain := Plain{
+		Label:    "first",
+		Depth:    1,
+		Nested:   PlainNested{Owner: "ana"},
+		Values:   map[string]int{"a": 1},
+		Untagged: "keeps its Go name",
+		Secret:   "must never appear",
+	}
+	out = append(out,
+		diffCase(t, "reflection engine names fields as the document does", plain, func(p *Plain) {
+			p.Label = "second"
+			p.Nested.Owner = "bo"
+			p.Values["a"] = 2
+			p.Untagged = "still its Go name"
+		}),
+		diffCase(t, "reflection engine keeps an excluded field out", plain, func(p *Plain) {
+			p.Secret = "changed, and invisible"
+		}),
+	)
+
+	// A JSON tag is arbitrary text, and one containing "/" or "~" must be
+	// escaped into the path or it addresses something else entirely.
+	odd := Odd{Ratio: 1, Tilde: 1, Plain: "a"}
+	out = append(out,
+		diffCase(t, "field names needing pointer escaping", odd, func(o *Odd) {
+			o.Ratio = 2
+			o.Tilde = 2
+			o.Plain = "b"
+		}),
 	)
 
 	// Hand-built structural operations.

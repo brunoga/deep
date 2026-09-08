@@ -108,8 +108,8 @@ func TestMapKeyEscapesJSONPointerSpecials(t *testing.T) {
 // cause infinite recursion during path resolution.
 func TestSelectorCircularType(t *testing.T) {
 	type Node struct {
-		Value int    `json:"value"`
-		Next  *Node  `json:"next"`
+		Value int   `json:"value"`
+		Next  *Node `json:"next"`
 	}
 
 	path := deep.Field(func(n *Node) *int { return &n.Value })
