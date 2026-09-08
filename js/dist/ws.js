@@ -56,8 +56,12 @@ export class Room {
         const pending = this.document.since(this.published);
         if (pending.runs.length === 0 && pending.deleted.length === 0)
             return;
-        this.published = this.document.stateVector();
+        // Marked published only once the socket has actually taken the bytes. A
+        // browser silently discards a send on a closing socket, and recording the
+        // edit as sent beforehand would mean `since` never offers it again — the
+        // edit would be lost to every peer while still sitting on screen.
         this.send(FRAME_UPDATE, encodeUpdate(pending));
+        this.published = this.document.stateVector();
     }
     /**
      * Announces this client's presence. It is also the heartbeat: call it
@@ -137,6 +141,9 @@ export class Room {
     }
     /** @internal */
     send(kind, payload) {
+        if (this.socket.readyState !== 1 /* OPEN */) {
+            throw new Error('deepws: the connection is not open');
+        }
         const frame = new Uint8Array(payload.length + 1);
         frame[0] = kind;
         frame.set(payload, 1);

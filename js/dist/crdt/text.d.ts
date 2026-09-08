@@ -18,8 +18,14 @@ export declare function runes(s: string): string[];
 export declare function runeCount(run: TextRun): number;
 /** Splits a run at an offset, giving the tail the identifier it must have. */
 export declare function splitRun(run: TextRun, offset: number): [TextRun, TextRun];
-/** The text of a document, skipping tombstones. */
-export declare function toString(text: TextRun[]): string;
+/**
+ * The text of a document, skipping tombstones.
+ *
+ * The runs are ordered first, as Go's Text.String does: a caller holding runs
+ * in some other order — and Document.text hands them out — must read the same
+ * text here as it would there.
+ */
+export declare function toString(runs: TextRun[]): string;
 /** The number of visible characters. */
 export declare function length(text: TextRun[]): number;
 /**

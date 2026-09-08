@@ -31,6 +31,16 @@ const api = {
   },
 };
 
+/**
+ * This tab's identity in the notes room.
+ *
+ * The display name is whatever the user typed; the *node id* must be unique,
+ * because presence is keyed by it and so are the identifiers the CRDT
+ * allocates. Two tabs sharing one would show as a single peer and, worse,
+ * write characters that collide.
+ */
+const nodeID = `${Math.random().toString(36).slice(2, 8)}`;
+
 function author() {
   const headers = { 'X-Author': document.getElementById('who').value || 'web' };
   const token = document.getElementById('token').value;
@@ -113,23 +123,39 @@ function showWire(patch, result) {
     out.textContent = '';
     return;
   }
+  // Built from elements rather than markup. The server's message can quote
+  // anything a client put into the data — a task id, a note — and writing
+  // that into innerHTML would execute it.
+  const part = (cls, text) => {
+    const span = document.createElement('span');
+    if (cls) span.className = cls;
+    span.textContent = text;
+    return span;
+  };
+  const separated = (nodes) => {
+    const frag = document.createDocumentFragment();
+    nodes.forEach((node, i) => {
+      if (i > 0) frag.append(' · ');
+      frag.append(node);
+    });
+    return frag;
+  };
+
   if (result.ok) {
     const { applied = 0, skipped = 0, failed = 0, seq } = result.body;
-    // A skip is not a failure. It is the server saying the condition met
-    // reality — somebody else got there first — which is a thing to show the
-    // user, not an error to retry.
     const parts = [];
-    if (applied) parts.push(`<span class="applied">${applied} applied</span>`);
+    if (applied) parts.push(part('applied', `${applied} applied`));
     // A skip means the operation's condition met reality: the task was
     // already claimed, the severity was already worse. Worth showing, and not
     // an error.
-    if (skipped) parts.push(`<span class="skipped">${skipped} skipped — condition not met</span>`);
-    if (failed) parts.push(`<span class="failed">${failed} failed</span>`);
-    if (!parts.length) parts.push('no change');
-    out.innerHTML = parts.join(' · ') + (seq ? ` · audit entry #${seq}` : '');
+    if (skipped) parts.push(part('skipped', `${skipped} skipped — condition not met`));
+    if (failed) parts.push(part('failed', `${failed} failed`));
+    if (!parts.length) parts.push(part('', 'no change'));
+    if (seq) parts.push(part('', `audit entry #${seq}`));
+    out.replaceChildren(separated(parts));
     return;
   }
-  out.innerHTML = `<span class="failed">${result.status}: ${result.body.error ?? 'refused'}</span>`;
+  out.replaceChildren(part('failed', `${result.status}: ${result.body.error ?? 'refused'}`));
 }
 
 // ── actions ─────────────────────────────────────────────────────────────────
@@ -164,10 +190,11 @@ async function select(id) {
   try {
     state.notes = await joinNotes({
       url,
-      node: author()['X-Author'],
+      node: `${author()['X-Author']}-${nodeID}`,
       textarea: notes,
       onPeers: (peers) => {
-        el('peers').textContent = peers.length > 1 ? `with ${peers.filter((p) => p !== author()['X-Author']).join(', ')}` : '';
+        const others = peers.filter((p) => p !== `${author()['X-Author']}-${nodeID}`);
+        el('peers').textContent = others.length ? `with ${others.join(', ')}` : '';
       },
       onStatus: (text) => {
         el('status').textContent = text;

@@ -48,10 +48,16 @@ export function splitRun(run: TextRun, offset: number): [TextRun, TextRun] {
   return [left, right];
 }
 
-/** The text of a document, skipping tombstones. */
-export function toString(text: TextRun[]): string {
+/**
+ * The text of a document, skipping tombstones.
+ *
+ * The runs are ordered first, as Go's Text.String does: a caller holding runs
+ * in some other order — and Document.text hands them out — must read the same
+ * text here as it would there.
+ */
+export function toString(runs: TextRun[]): string {
   let out = '';
-  for (const run of text) if (!run.deleted) out += run.value;
+  for (const run of ordered(runs)) if (!run.deleted) out += run.value;
   return out;
 }
 

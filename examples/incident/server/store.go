@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -391,16 +390,10 @@ func (s *Store) Compact(id string, keep int) error {
 	return s.rewriteLog(id, rec.log)
 }
 
-// idPattern is the shape of every identifier that reaches the filesystem or
-// a path segment. The incident ID names a directory and a websocket room;
-// anything beyond this alphabet is a traversal risk ("../../etc") or a
-// reload-keying hazard, not a name.
-var idPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)
-
 // validate is the rulebook patch guards cannot express: it judges the whole
 // resulting incident, not one path.
 func validate(inc *model.Incident) error {
-	if !idPattern.MatchString(inc.ID) {
+	if !model.IDPattern.MatchString(inc.ID) {
 		return fmt.Errorf("%w: id %q (want letters, digits, '_', '.', '-'; max 64)", ErrValidation, inc.ID)
 	}
 	if strings.TrimSpace(inc.Title) == "" {
@@ -414,8 +407,9 @@ func validate(inc *model.Incident) error {
 	}
 	seen := map[string]bool{}
 	for _, task := range inc.Tasks {
-		if task.ID == "" {
-			return fmt.Errorf("%w: task with empty id", ErrValidation)
+		if !model.IDPattern.MatchString(task.ID) {
+			return fmt.Errorf("%w: task id %q (want letters, digits, '_', '.', '-'; max 64)",
+				ErrValidation, task.ID)
 		}
 		if seen[task.ID] {
 			return fmt.Errorf("%w: duplicate task id %q", ErrValidation, task.ID)

@@ -155,6 +155,7 @@ jobs:
       # it.
       - name: Check the built package is current
         run: |
+          rm -rf dist
           npm run build
           if [ -n "$(git status --porcelain dist)" ]; then
             echo "js/dist is stale — run npm run build in js/ and commit:"

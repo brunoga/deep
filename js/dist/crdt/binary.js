@@ -130,6 +130,25 @@ class Reader {
         const l = Number(this.uvarint());
         return { w, l, n };
     }
+    /**
+     * Checks a claimed count against the bytes that remain before anything is
+     * allocated for it. Every entry costs at least one byte, so a count larger
+     * than what is left cannot be honest — and honouring it would let a short
+     * payload ask for an enormous allocation.
+     */
+    count(what) {
+        const n = this.uvarint();
+        if (n > BigInt(this.buf.length - this.pos)) {
+            throw new Error(`crdt: payload claims ${n} ${what} but holds ${this.buf.length - this.pos} bytes`);
+        }
+        return Number(n);
+    }
+    /** Rejects anything left over, as Go does: a frame is exactly one value. */
+    end() {
+        if (this.pos !== this.buf.length) {
+            throw new Error(`crdt: ${this.buf.length - this.pos} bytes left over after decoding`);
+        }
+    }
 }
 /** Encodes an update. */
 export function encodeUpdate(u) {
@@ -161,7 +180,7 @@ export function encodeUpdate(u) {
 /** Decodes an update. */
 export function decodeUpdate(data) {
     const r = new Reader(data);
-    const runCount = Number(r.uvarint());
+    const runCount = r.count('runs');
     const runs = [];
     for (let i = 0; i < runCount; i++) {
         const flags = r.byte();
@@ -176,11 +195,12 @@ export function decodeUpdate(data) {
             run.deleted = true;
         runs.push(run);
     }
-    const deletedCount = Number(r.uvarint());
+    const deletedCount = r.count('deleted ranges');
     const deleted = [];
     for (let i = 0; i < deletedCount; i++) {
         deleted.push({ id: r.clock(), n: Number(r.uvarint()) });
     }
+    r.end();
     return { runs, deleted };
 }
 /**
@@ -190,7 +210,11 @@ export function decodeUpdate(data) {
  */
 export function encodeStateVector(sv) {
     const w = new Writer();
-    const origins = [...sv.keys()].sort();
+    // Sorted by UTF-8 bytes, which is what Go compares — ordinary string
+    // comparison here sorts by UTF-16 code unit, and the two disagree for any
+    // node id above the basic plane, which would make the same vector encode
+    // differently on the two sides.
+    const origins = [...sv.keys()].sort(compareUTF8);
     w.uvarint(origins.length);
     for (const o of origins) {
         w.uvarint(w.intern(o));
@@ -201,13 +225,25 @@ export function encodeStateVector(sv) {
 /** Decodes a state vector. */
 export function decodeStateVector(data) {
     const r = new Reader(data);
-    const count = Number(r.uvarint());
+    const count = r.count('entries');
     const sv = new Map();
     for (let i = 0; i < count; i++) {
         const node = r.node();
         sv.set(node, Number(r.uvarint()));
     }
+    r.end();
     return sv;
+}
+/** Orders strings by their UTF-8 bytes, as Go's string comparison does. */
+function compareUTF8(a, b) {
+    const x = encoder.encode(a);
+    const y = encoder.encode(b);
+    const n = Math.min(x.length, y.length);
+    for (let i = 0; i < n; i++) {
+        if (x[i] !== y[i])
+            return x[i] - y[i];
+    }
+    return x.length - y.length;
 }
 /** Hex helpers, for fixtures and debugging. */
 export function toHex(data) {

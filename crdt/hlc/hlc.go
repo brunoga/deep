@@ -76,6 +76,17 @@ type Clock struct {
 }
 
 // NewClock creates a new clock for the given node ID.
+func NewClock(nodeID string) *Clock {
+	return &Clock{
+		NodeID: nodeID,
+		Latest: HLC{
+			WallTime: 0,
+			Logical:  0,
+			NodeID:   nodeID,
+		},
+	}
+}
+
 // NewClockAt returns a clock whose identifiers start from a chosen wall time
 // rather than the current one.
 //
@@ -89,17 +100,6 @@ func NewClockAt(nodeID string, wallTime int64) *Clock {
 		NodeID: nodeID,
 		Latest: HLC{WallTime: wallTime, NodeID: nodeID},
 		seq:    HLC{WallTime: wallTime, NodeID: nodeID},
-	}
-}
-
-func NewClock(nodeID string) *Clock {
-	return &Clock{
-		NodeID: nodeID,
-		Latest: HLC{
-			WallTime: 0,
-			Logical:  0,
-			NodeID:   nodeID,
-		},
 	}
 }
 

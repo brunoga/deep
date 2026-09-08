@@ -57,6 +57,23 @@ export function origin(h: HLC): string {
 }
 
 /**
+ * A wall time to allocate identifiers from, in nanoseconds.
+ *
+ * Two replicas that share an origin — the node id together with this number —
+ * allocate the same identifiers for different characters, and the merge then
+ * collapses them onto each other: text disappears, with no error anywhere. Go
+ * reads a nanosecond clock, which makes that vanishingly unlikely; JavaScript
+ * only offers milliseconds, so the sub-millisecond digits carry randomness
+ * instead. Two tabs that start in the same millisecond under the same name
+ * still get different origins.
+ */
+function freshOrigin(): bigint {
+  const millis = BigInt(Date.now()) * 1_000_000n;
+  const nonce = BigInt(Math.floor(Math.random() * 1_000_000));
+  return millis + nonce;
+}
+
+/**
  * Clock allocates identifiers for one node.
  *
  * Sequence identifiers come from their own range, anchored once at the
@@ -70,8 +87,7 @@ export class Clock {
 
   constructor(nodeID: string, wallTime?: bigint) {
     this.nodeID = nodeID;
-    const w = wallTime ?? BigInt(Date.now()) * 1_000_000n;
-    this.seq = { w, l: 0, n: nodeID };
+    this.seq = { w: wallTime ?? freshOrigin(), l: 0, n: nodeID };
   }
 
   /** Reserves n consecutive identifiers and returns the first. */

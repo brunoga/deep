@@ -11,6 +11,7 @@ import {
   fromHex,
   toHex,
 } from '../src/crdt/binary.ts';
+import { origin as originOf } from '../src/crdt/hlc.ts';
 
 /**
  * The CRDT corpus, replayed.
@@ -131,3 +132,38 @@ for (const file of files) {
     }
   });
 }
+
+// The decoder is network-facing, so it refuses what it cannot trust rather
+// than doing its best with it — the same guards the Go decoder carries, one
+// of which was added there after a seven-byte payload could exhaust memory.
+test('the decoder refuses malformed payloads', () => {
+  assert.throws(() => decodeUpdate(new Uint8Array()), /empty payload/);
+  assert.throws(() => decodeUpdate(Uint8Array.from([9, 0])), /unsupported wire format/);
+
+  // A count larger than the bytes that remain cannot be honest, and honouring
+  // it would allocate for entries that are not there.
+  assert.throws(() => decodeUpdate(Uint8Array.from([1, 0, 0xff, 0xff, 0xff, 0x7f])), /claims/);
+  assert.throws(() => decodeStateVector(Uint8Array.from([1, 0, 0xff, 0xff, 0xff, 0x7f])), /claims/);
+  // Likewise a node table promising more entries than the payload can hold.
+  assert.throws(() => decodeUpdate(Uint8Array.from([1, 0xff, 0xff, 0xff, 0x7f])), /node table/);
+
+  // Trailing bytes mean the sender and receiver disagree about the frame.
+  const valid = encodeUpdate({ runs: [], deleted: [] });
+  const extra = new Uint8Array(valid.length + 1);
+  extra.set(valid);
+  assert.throws(() => decodeUpdate(extra), /left over/);
+});
+
+// Two replicas that share an origin allocate the same identifiers for
+// different characters, and the merge silently collapses them. The clock
+// makes that vanishingly unlikely even for two tabs started together under
+// one name.
+test('clocks started together still get distinct origins', () => {
+  const origins = new Set<string>();
+  for (let i = 0; i < 200; i++) {
+    const doc = new Document('same-name');
+    doc.insert(0, 'x');
+    origins.add(originOf(doc.text[0]!.id));
+  }
+  assert.equal(origins.size, 200, 'origins collided');
+});
