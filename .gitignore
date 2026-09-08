@@ -24,3 +24,6 @@ coverage.out
 /examples/*/incident
 /examples/*/incidentd
 /examples/*/statusbot
+
+# JavaScript package
+/js/node_modules

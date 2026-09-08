@@ -1,0 +1,82 @@
+{
+  "name": "keyed id that looks like an index",
+  "keys": {
+    "/items": "id"
+  },
+  "before": {
+    "title": "quarterly report",
+    "status": "open",
+    "score": 3,
+    "meta": {
+      "owner": "ana",
+      "level": 2
+    },
+    "items": [
+      {
+        "id": "7",
+        "label": "seven",
+        "count": 7,
+        "done": false
+      },
+      {
+        "id": "0",
+        "label": "zero",
+        "count": 0,
+        "done": false
+      }
+    ],
+    "tags": [
+      "x",
+      "y"
+    ],
+    "fields": {
+      "odd/key~here": "yes",
+      "region": "north"
+    }
+  },
+  "patch": {
+    "ops": [
+      {
+        "k": "replace",
+        "p": "/items/0/count",
+        "o": 0,
+        "n": 100
+      }
+    ]
+  },
+  "after": {
+    "title": "quarterly report",
+    "status": "open",
+    "score": 3,
+    "meta": {
+      "owner": "ana",
+      "level": 2
+    },
+    "items": [
+      {
+        "id": "7",
+        "label": "seven",
+        "count": 7,
+        "done": false
+      },
+      {
+        "id": "0",
+        "label": "zero",
+        "count": 100,
+        "done": false
+      }
+    ],
+    "tags": [
+      "x",
+      "y"
+    ],
+    "fields": {
+      "odd/key~here": "yes",
+      "region": "north"
+    }
+  },
+  "applied": 1,
+  "skipped": 0,
+  "failed": 0,
+  "reversible": true
+}

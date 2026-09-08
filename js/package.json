@@ -1,0 +1,31 @@
+{
+  "name": "@brunoga/deep-patch",
+  "version": "0.1.0",
+  "description": "Produce and apply deep patches from JavaScript — the wire format of github.com/brunoga/deep",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test test/",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "diff",
+    "patch",
+    "json-pointer",
+    "sync",
+    "crdt"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^26.5.0",
+    "typescript": "^5.9.0"
+  }
+}
