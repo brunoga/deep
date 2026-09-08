@@ -233,12 +233,12 @@ func cases(t *testing.T) []Case {
 	// the Go way would produce patches no other language could apply, and
 	// nothing would notice.
 	plain := Plain{
-		Label:  "first",
-		Depth:  1,
-		Nested: PlainNested{Owner: "ana"},
-		Values: map[string]int{"a": 1},
+		Label:    "first",
+		Depth:    1,
+		Nested:   PlainNested{Owner: "ana"},
+		Values:   map[string]int{"a": 1},
 		Untagged: "keeps its Go name",
-		Secret: "must never appear",
+		Secret:   "must never appear",
 	}
 	out = append(out,
 		diffCase(t, "reflection engine names fields as the document does", plain, func(p *Plain) {

@@ -56,8 +56,8 @@ func main() {
 }
 
 type (
-	tickMsg   struct{}
-	deadMsg   struct{}
+	tickMsg     struct{}
+	deadMsg     struct{}
 	replayFrame struct{}
 )
 
@@ -212,8 +212,8 @@ func renderWorld(w world.World, you string) string {
 
 	// The scoreboard, best first.
 	type entry struct {
-		id    string
-		p     world.Player
+		id string
+		p  world.Player
 	}
 	entries := make([]entry, 0, len(w.Players))
 	for id, p := range w.Players {

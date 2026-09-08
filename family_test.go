@@ -254,7 +254,6 @@ func TestFamilyStrictAndReverse(t *testing.T) {
 	}
 }
 
-
 func TestFamilyConditionsLookInside(t *testing.T) {
 	// A condition path crossing the family boundary is resolved by the family,
 	// not by walking the sealed value's Go struct.
