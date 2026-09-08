@@ -5,7 +5,7 @@ go 1.27
 require (
 	github.com/brunoga/deep/proto v1.3.0
 	github.com/brunoga/deep/v6 v6.4.0
-	github.com/brunoga/deep/ws v1.2.0
+	github.com/brunoga/deep/ws v1.2.1
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
 	google.golang.org/protobuf v1.36.12
