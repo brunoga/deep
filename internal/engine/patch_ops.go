@@ -562,7 +562,7 @@ func (p *structPatch) apply(root, v reflect.Value, path string) {
 		info := icore.GetTypeInfo(v.Type())
 		var f reflect.Value
 		for _, fInfo := range info.Fields {
-			if fInfo.Name == name {
+			if fInfo.PathName() == name || fInfo.Name == name {
 				f = v.Field(fInfo.Index)
 				break
 			}
@@ -590,7 +590,7 @@ func (p *structPatch) applyChecked(root, v reflect.Value, strict bool, path stri
 		info := icore.GetTypeInfo(v.Type())
 		var f reflect.Value
 		for _, fInfo := range info.Fields {
-			if fInfo.Name == name {
+			if fInfo.PathName() == name || fInfo.Name == name {
 				f = v.Field(fInfo.Index)
 				break
 			}
@@ -630,7 +630,7 @@ func (p *structPatch) applyResolved(root, v reflect.Value, path string, resolver
 		info := icore.GetTypeInfo(v.Type())
 		var f reflect.Value
 		for _, fInfo := range info.Fields {
-			if fInfo.Name == name {
+			if fInfo.PathName() == name || fInfo.Name == name {
 				f = v.Field(fInfo.Index)
 				break
 			}

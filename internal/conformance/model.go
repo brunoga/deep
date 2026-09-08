@@ -25,6 +25,26 @@ type Meta struct {
 	Level int    `json:"level"`
 }
 
+// Plain is deliberately absent from the go:generate list above, so a diff of
+// it goes through the reflection engine. Its cases prove that both engines
+// name fields the same way — a reflection engine that named them the Go way
+// would produce patches no other language could apply.
+type Plain struct {
+	Label  string         `json:"label"`
+	Depth  int            `json:"depth"`
+	Nested PlainNested    `json:"nested"`
+	Values map[string]int `json:"values"`
+	// No json tag: there is nothing to call this but its Go name.
+	Untagged string
+	// Kept out of the document, and so out of patches, equality and clones.
+	Secret string `json:"-"`
+}
+
+// PlainNested is likewise ungenerated.
+type PlainNested struct {
+	Owner string `json:"owner"`
+}
+
 // Doc is the corpus model: scalars, a nested struct, a keyed slice, a plain
 // slice, and a map — one of each shape a patch has to address.
 //

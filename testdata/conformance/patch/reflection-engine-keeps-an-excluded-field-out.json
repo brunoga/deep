@@ -1,0 +1,35 @@
+{
+  "name": "reflection engine keeps an excluded field out",
+  "keys": {
+    "/items": "id"
+  },
+  "before": {
+    "label": "first",
+    "depth": 1,
+    "nested": {
+      "owner": "ana"
+    },
+    "values": {
+      "a": 1
+    },
+    "Untagged": "keeps its Go name"
+  },
+  "patch": {
+    "ops": null
+  },
+  "after": {
+    "label": "first",
+    "depth": 1,
+    "nested": {
+      "owner": "ana"
+    },
+    "values": {
+      "a": 1
+    },
+    "Untagged": "keeps its Go name"
+  },
+  "applied": 0,
+  "skipped": 0,
+  "failed": 0,
+  "reversible": true
+}

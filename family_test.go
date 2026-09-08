@@ -165,10 +165,11 @@ func TestFamilyDiffProducesOnlyFamilyOperations(t *testing.T) {
 		t.Fatalf("got %d operations, want 1: %v", len(p.Operations), p)
 	}
 	op := p.Operations[0]
-	// The reflection engine addresses fields by Go name (apply accepts json
-	// names too); the family's relative "/text" is rooted at that position.
-	if op.Path != "/Doc/text" {
-		t.Errorf("path = %q, want /Doc/text", op.Path)
+	// Fields are addressed by their JSON name, the same way generated code and
+	// the type-safe selectors address them; the family's relative "/text" is
+	// rooted at that position.
+	if op.Path != "/doc/text" {
+		t.Errorf("path = %q, want /doc/text", op.Path)
 	}
 
 	got := deep.Clone(a)

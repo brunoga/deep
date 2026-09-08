@@ -6,6 +6,35 @@ All notable changes to this project are documented here, newest first.
 > version's entry before tagging, so the tag, the GitHub release notes, and this
 > file always agree.
 
+## v6.6.0
+
+### Fixed
+
+- **The reflection engine names fields in paths the way everything else
+  does.** It emitted Go field names — `/Status`, `/Meta/Level` — where
+  generated code and the type-safe selectors emit JSON names. Both forms
+  apply, so this looked cosmetic; it was not. A server allowlisting a field
+  with the library's own selector (`deep.WithAllowedPaths(namePath.String())`)
+  *refused a patch changing exactly that field*, and adding generated code to
+  a type silently changed the paths it produced. All three producers now
+  agree. Patches written before this still apply, reverse and merge: the
+  appliers accept a Go field name as well.
+
+- **`json:"-"` keeps a field out of patches under the reflection engine too.**
+  The tag was honoured only by generated code, so a type without it diffed its
+  excluded fields into the patch — old and new values included. The library's
+  own `ignored_fields` example advertises this for a password hash, which
+  meant following that advice without running `deep-gen` put the hash on the
+  wire, into logs and into replicas. The tag is now read where every part of
+  the engine sees it, so such a field stays out of diffs, out of equality, and
+  out of clones (which zero it, as generated code has always done).
+
+  Both defects came from the same root: the reflection engine did not read
+  `json` tags at all. They were found by building a second implementation
+  against the wire format — a JavaScript client cannot resolve `/Status`
+  against a document whose key is `status`, which is what made the divergence
+  visible.
+
 ## v6.5.0
 
 ### Changed

@@ -1,0 +1,60 @@
+{
+  "name": "reflection engine names fields as the document does",
+  "keys": {
+    "/items": "id"
+  },
+  "before": {
+    "label": "first",
+    "depth": 1,
+    "nested": {
+      "owner": "ana"
+    },
+    "values": {
+      "a": 1
+    },
+    "Untagged": "keeps its Go name"
+  },
+  "patch": {
+    "ops": [
+      {
+        "k": "replace",
+        "p": "/label",
+        "o": "first",
+        "n": "second"
+      },
+      {
+        "k": "replace",
+        "p": "/nested/owner",
+        "o": "ana",
+        "n": "bo"
+      },
+      {
+        "k": "replace",
+        "p": "/values/a",
+        "o": 1,
+        "n": 2
+      },
+      {
+        "k": "replace",
+        "p": "/Untagged",
+        "o": "keeps its Go name",
+        "n": "still its Go name"
+      }
+    ]
+  },
+  "after": {
+    "label": "second",
+    "depth": 1,
+    "nested": {
+      "owner": "bo"
+    },
+    "values": {
+      "a": 2
+    },
+    "Untagged": "still its Go name"
+  },
+  "applied": 4,
+  "skipped": 0,
+  "failed": 0,
+  "reversible": true
+}

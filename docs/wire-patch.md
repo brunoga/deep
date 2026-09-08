@@ -107,23 +107,27 @@ descriptor naming the key field per array path; the TypeScript client takes one
 as an option. A patch that addresses keyed elements positionally will still
 *apply*, but it will conflict where a keyed one would not.
 
-## Two rules for models that cross the language boundary
+## Field names in paths
 
-Both of these were found by running the conformance corpus against a second
-implementation, and both are invisible until you do.
+A struct field is named in a path by its **JSON name** where it has one, and
+by its Go name otherwise — `/status`, `/meta/level`. This is true of every
+producer: the reflection engine, generated code, and the type-safe selectors
+(`deep.Field`) all agree, so a patch describes the same field the same way
+however it was made.
 
-### Paths use JSON names only when the type has generated code
+Both appliers also accept the Go field name, so patches written before v6.6.0
+— when the reflection engine emitted `/Status` — still apply, reverse and
+merge. Only what is *emitted* changed.
 
-The reflection engine names struct fields by their **Go** names:
-`Diff` on a type with no generated code emits `/Status`, `/Meta/Level`. The
-generated fast path names them by their **JSON** tags: `/status`,
-`/meta/level`. Both *apply* correctly in Go — the appliers accept either — but
-only the JSON form means anything to a receiver that holds the document as
-JSON.
+A field tagged `json:"-"` is not part of the document, and deep treats that as
+invisibility: it stays out of diffs, out of equality, and out of clones (which
+zero it). Do not expect such a field to survive a `Clone`, and do not expect a
+patch to carry it — that is what the tag is for.
 
-So: run `deep-gen` for the types you sync across languages, or name the Go
-fields exactly as the JSON does. The conformance corpus is generated through
-generated code for this reason.
+## One rule for models that cross the language boundary
+
+Found by running the conformance corpus against a second implementation, and
+invisible until you do.
 
 ### Do not use `omitempty` on fields a patch addresses
 
