@@ -7,3 +7,5 @@ go 1.27
 replace github.com/brunoga/deep/v6 => ../../
 
 require github.com/brunoga/deep/v6 v6.4.0
+
+require github.com/coder/websocket v1.8.13 // indirect
