@@ -7,7 +7,7 @@ go 1.27
 replace github.com/brunoga/deep/v6 => ../../
 
 require (
-	github.com/brunoga/deep/v6 v6.4.0
+	github.com/brunoga/deep/v6 v6.5.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/coder/websocket v1.8.13
