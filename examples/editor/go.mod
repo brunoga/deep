@@ -4,7 +4,7 @@ go 1.27
 
 require (
 	github.com/brunoga/deep/v6 v6.7.0
-	github.com/brunoga/deep/ws v1.2.1
+	github.com/brunoga/deep/ws v1.2.2
 )
 
 require github.com/coder/websocket v1.8.13 // indirect
