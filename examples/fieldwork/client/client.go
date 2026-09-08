@@ -8,6 +8,9 @@ import (
 	"net/http"
 	"strings"
 
+	deep "github.com/brunoga/deep/v6"
+
+	"github.com/brunoga/deep/examples/fieldwork/model"
 	"github.com/brunoga/deep/examples/fieldwork/server"
 )
 
@@ -167,5 +170,20 @@ func (c *Client) Get(id string) (server.GetResponse, error) {
 func (c *Client) History(id string) ([]server.VersionEntry, error) {
 	var out []server.VersionEntry
 	err := c.do("GET", "/assets/"+id+"/history", nil, &out)
+	return out, err
+}
+
+// Create registers a new asset — the office's tool, not the field's.
+func (c *Client) Create(a model.Asset) (server.GetResponse, error) {
+	var out server.GetResponse
+	err := c.do("POST", "/assets", a, &out)
+	return out, err
+}
+
+// Change applies a patch directly, without the sync machinery: the office is
+// always online and always working from the current version.
+func (c *Client) Change(id string, p deep.Patch[model.Asset]) (server.GetResponse, error) {
+	var out server.GetResponse
+	err := c.do("POST", "/assets/"+id+"/change", p, &out)
 	return out, err
 }

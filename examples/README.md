@@ -78,9 +78,10 @@ If you are new to the library, these four cover the shape of everything else:
 
 ## Complete systems
 
-Two examples are working applications rather than single-concept programs,
+Three examples are working applications rather than single-concept programs,
 each its own module so its dependencies stay out of the core, each with a
-README mapping every feature to the file that uses it.
+README mapping every feature to the file that uses it. Together they give
+three different answers to "how do two people change the same data at once".
 
 [`incident`](incident) is an incident-management system — server, CLI,
 collaborative notes. It shows the whole library composed into one
@@ -95,6 +96,14 @@ generated fast path's reason to exist), player actions are conditional
 patches racing for the same gems, and the replay file is nothing but the
 patch stream — played forward with `Apply`, rewound with `Reverse`, collapsed
 into keyframes by diffing boundary states.
+
+[`fieldwork`](fieldwork) is an offline-first sync engine — technicians
+editing asset records with no signal, dispatch editing them from the office.
+The device keeps a shadow and a working copy, so its outbox is *derived*
+(`Diff(shadow, working)`) rather than maintained as a queue; the server
+reconstructs any past version by reversing its log and reconciles with
+`deep.Merge` under a domain policy, reporting every decision it makes. Its
+README contrasts the trade against the CRDT approach.
 
 ## Generated code
 

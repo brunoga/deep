@@ -798,6 +798,11 @@ server broadcasts only what changed each tick, player actions travel as
 conditional patches, and the replay file is the patch stream itself —
 applied forward, reversed backward, collapsed into keyframes.
 
+[`fieldwork`](examples/fieldwork) is an offline-first sync engine: devices
+keep a shadow and a working copy so the outbox is a diff rather than a
+queue, and the server reconciles stale pushes with a three-way `Merge` under
+a domain policy — `Merge` in the concurrent role it was designed for.
+
 ## Migrating from v5
 
 - **Import path**: `github.com/brunoga/deep/v6`. Regenerate with deep-gen —
