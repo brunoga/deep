@@ -6,6 +6,7 @@
 // cannot tell the two clients apart.
 import { applyPatch, diff } from '@brunoga/deep-patch';
 import * as patches from './patches.js';
+import { joinNotes } from './notes.js';
 
 const api = {
   async get(path) {
@@ -42,6 +43,8 @@ const state = {
   selected: null,
   /** The incident as the server last showed it to us. */
   shadow: null,
+  /** The notes room for the selected incident, once joined. */
+  notes: null,
 };
 
 // ── rendering ───────────────────────────────────────────────────────────────
@@ -73,8 +76,6 @@ function renderDetail() {
   const bits = [`SEV${inc.severity}`, inc.status];
   if (inc.commander) bits.push(`IC ${inc.commander}`);
   el('summary').textContent = bits.join(' · ');
-  el('notes').textContent = inc.notes ?? '(no notes yet)';
-
   el('tasks').replaceChildren(
     ...(inc.tasks ?? []).map((task) => {
       const li = document.createElement('li');
@@ -141,10 +142,40 @@ async function send(patch) {
 }
 
 async function select(id) {
+  if (state.notes) {
+    state.notes.leave();
+    state.notes = null;
+  }
   state.selected = id;
   state.shadow = await api.get(`/incidents/${id}`);
   renderList();
   renderDetail();
+
+  // The notes are not part of the incident record: they are a CRDT document
+  // in a room of their own, which this page joins as a peer of the Go
+  // clients rather than as a reader of the server's copy.
+  const notes = el('notes');
+  notes.disabled = true;
+  notes.value = '';
+  const token = el('token').value;
+  const url =
+    `${location.origin.replace(/^http/, 'ws')}/ws?room=${encodeURIComponent(id)}` +
+    (token ? `&token=${encodeURIComponent(token)}` : '');
+  try {
+    state.notes = await joinNotes({
+      url,
+      node: author()['X-Author'],
+      textarea: notes,
+      onPeers: (peers) => {
+        el('peers').textContent = peers.length > 1 ? `with ${peers.filter((p) => p !== author()['X-Author']).join(', ')}` : '';
+      },
+      onStatus: (text) => {
+        el('status').textContent = text;
+      },
+    });
+  } catch (err) {
+    notes.placeholder = `notes unavailable: ${err.message}`;
+  }
 }
 
 /**

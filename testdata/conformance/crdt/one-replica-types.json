@@ -1,0 +1,32 @@
+{
+  "name": "one replica types",
+  "nodes": [
+    "a"
+  ],
+  "steps": [
+    {
+      "node": "a",
+      "op": "insert",
+      "value": "hello"
+    },
+    {
+      "node": "a",
+      "op": "insert",
+      "pos": 5,
+      "value": " world"
+    }
+  ],
+  "exchanges": null,
+  "text": {
+    "a": "hello world"
+  },
+  "full": {
+    "a": "0101016101040080897a000b68656c6c6f20776f726c640b00"
+  },
+  "state_vectors": {
+    "a": "01010961403130303030303001000b"
+  },
+  "walls": {
+    "a": 1000000
+  }
+}

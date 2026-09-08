@@ -14,6 +14,16 @@
  * const result = applyPatch(replica, patch); // on the other side
  * applyPatch(replica, reverse(patch));       // and undo it
  * ```
+ *
+ * The CRDT half is here too, for text several people edit at once:
+ *
+ * ```ts
+ * import { connect } from '@brunoga/deep-patch';
+ *
+ * const room = await connect({ url: 'ws://host/ws?room=notes', node: 'ana' });
+ * room.onUpdate(() => render(room.text));
+ * room.insert(0, 'typing');
+ * ```
  */
 export { applyPatch, GuardNotMetError, PathNotAllowedError } from "./apply.js";
 export { diff } from "./diff.js";
@@ -21,4 +31,11 @@ export { reverse } from "./reverse.js";
 export { merge } from "./merge.js";
 export { evaluate, checkType } from "./conditions.js";
 export { equal, clone } from "./equal.js";
+// The CRDT half: a collaborative document, presence, and the websocket
+// client that keeps them in step with a Go hub.
+export { Document } from "./crdt/document.js";
+export { Awareness } from "./crdt/awareness.js";
+export { Clock } from "./crdt/hlc.js";
+export { decodeStateVector, decodeUpdate, encodeStateVector, encodeUpdate, fromHex, toHex, } from "./crdt/binary.js";
+export { connect, Room } from "./ws.js";
 export { buildPath, encloses, escapeKey, lastToken, parentPath, parsePath, removeAt, resolve, setAt, unescapeKey, } from "./path.js";

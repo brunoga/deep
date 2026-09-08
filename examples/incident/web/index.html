@@ -39,8 +39,15 @@
     <h3>tasks</h3>
     <ul id="tasks"></ul>
 
-    <h3>notes</h3>
-    <pre id="notes"></pre>
+    <h3>notes <span id="peers" class="peers"></span></h3>
+    <p class="hint" id="notes-hint">
+      Shared with everyone in this incident, character by character. Type here
+      and in <code>incident open</code> at the same time — this pane and that
+      terminal are the same CRDT document, reconciled without either side
+      asking permission.
+    </p>
+    <textarea id="notes" rows="8" spellcheck="false"
+      placeholder="connecting to the notes room…" disabled></textarea>
   </section>
 
   <aside id="wire-pane">

@@ -46,3 +46,12 @@ pre { background: var(--panel); border: 1px solid var(--line); border-radius: 6p
 .skipped { color: var(--warn); }
 .failed { color: var(--bad); }
 .sev1 { color: var(--bad); } .sev2 { color: var(--warn); }
+textarea {
+  width: 100%; background: var(--panel); border: 1px solid var(--line);
+  color: var(--text); border-radius: 6px; padding: 0.7rem; resize: vertical;
+  font: 13px/1.6 ui-monospace, monospace;
+}
+textarea:focus { outline: none; border-color: var(--accent); }
+textarea:disabled { color: var(--dim); }
+.peers { font-size: 0.75rem; letter-spacing: 0; text-transform: none; color: var(--ok); margin-left: 0.5rem; }
+.peers:empty::before { content: 'nobody else here'; color: var(--dim); }

@@ -14,6 +14,16 @@
  * const result = applyPatch(replica, patch); // on the other side
  * applyPatch(replica, reverse(patch));       // and undo it
  * ```
+ *
+ * The CRDT half is here too, for text several people edit at once:
+ *
+ * ```ts
+ * import { connect } from '@brunoga/deep-patch';
+ *
+ * const room = await connect({ url: 'ws://host/ws?room=notes', node: 'ana' });
+ * room.onUpdate(() => render(room.text));
+ * room.insert(0, 'typing');
+ * ```
  */
 export type { ApplyResult, Condition, KeySchema, OpKind, Operation, Outcome, OutcomeStatus, Patch, } from './types.ts';
 export { applyPatch, GuardNotMetError, PathNotAllowedError } from './apply.ts';
@@ -25,4 +35,13 @@ export { merge } from './merge.ts';
 export type { ConflictResolver } from './merge.ts';
 export { evaluate, checkType } from './conditions.ts';
 export { equal, clone } from './equal.ts';
+export { Document } from './crdt/document.ts';
+export { Awareness } from './crdt/awareness.ts';
+export type { AwarenessEntry, AwarenessUpdate, AwarenessOptions } from './crdt/awareness.ts';
+export { Clock } from './crdt/hlc.ts';
+export type { HLC } from './crdt/hlc.ts';
+export type { DeletedRange, StateVector, TextRun, Update } from './crdt/types.ts';
+export { decodeStateVector, decodeUpdate, encodeStateVector, encodeUpdate, fromHex, toHex, } from './crdt/binary.ts';
+export { connect, Room } from './ws.ts';
+export type { ConnectOptions } from './ws.ts';
 export { buildPath, encloses, escapeKey, lastToken, parentPath, parsePath, removeAt, resolve, setAt, unescapeKey, } from './path.ts';
