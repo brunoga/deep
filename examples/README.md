@@ -78,10 +78,12 @@ If you are new to the library, these four cover the shape of everything else:
 
 ## Complete systems
 
-Three examples are working applications rather than single-concept programs,
+Four examples are working applications rather than single-concept programs,
 each its own module so its dependencies stay out of the core, each with a
 README mapping every feature to the file that uses it. Together they give
-three different answers to "how do two people change the same data at once".
+four different answers to "how do two people change the same data at once":
+an authoritative server, a diff per tick, a three-way merge, and a document
+that needs no arbitration at all.
 
 [`incident`](incident) is an incident-management system — server, CLI,
 collaborative notes. It shows the whole library composed into one
@@ -104,6 +106,13 @@ The device keeps a shadow and a working copy, so its outbox is *derived*
 reconstructs any past version by reversing its log and reconciles with
 `deep.Merge` under a domain policy, reporting every decision it makes. Its
 README contrasts the trade against the CRDT approach.
+
+[`editor`](editor) is a collaborative text editor in the browser: several
+people in one document, each other's carets and selections visible, no server
+arbitration. It is the CRDT stack with a real interface on it — the editor
+core is ordinary (lines, selection, a goal column) and the collaborative part
+is three small things: the room is the document, every caret moves through
+every arriving edit, and presence carries a selection.
 
 ## Generated code
 

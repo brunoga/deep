@@ -803,6 +803,10 @@ keep a shadow and a working copy so the outbox is a diff rather than a
 queue, and the server reconciles stale pushes with a three-way `Merge` under
 a domain policy — `Merge` in the concurrent role it was designed for.
 
+[`editor`](examples/editor) is a collaborative text editor in the browser,
+with everybody's carets and selections drawn where they are: the CRDT stack
+and the JavaScript client with a real interface on top.
+
 ## Migrating from v5
 
 - **Import path**: `github.com/brunoga/deep/v6`. Regenerate with deep-gen —

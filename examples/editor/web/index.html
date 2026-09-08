@@ -1,0 +1,52 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>deep editor</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="stylesheet" href="editor.css" />
+
+<script type="importmap">
+  { "imports": { "@brunoga/deep-patch": "./deep-patch/index.js" } }
+</script>
+
+<header>
+  <strong>deep editor</strong>
+  <label>you are <input id="who" size="10" /></label>
+  <span id="doc-name"></span>
+  <span id="peers" class="peers"></span>
+  <span id="status">connecting…</span>
+</header>
+
+<main>
+  <nav>
+    <h2>documents</h2>
+    <ul id="documents"></ul>
+    <form id="new-doc">
+      <input id="new-name" placeholder="new-document" size="14" />
+      <button type="submit">create</button>
+    </form>
+    <p class="hint">
+      Open the same document in another window — or run the Go client against
+      the same room — and watch the carets move.
+    </p>
+  </nav>
+
+  <!--
+    The editor: a scroller holding a gutter, the text, and an overlay for
+    carets and selections. Keystrokes go to a hidden textarea, which is what
+    keeps the browser's own input handling — IME, dictation, mobile keyboards
+    — working while the visible text is drawn by hand.
+  -->
+  <section id="editor" class="editor" tabindex="-1">
+    <div class="scroll" data-scroll>
+      <div class="gutter" data-gutter></div>
+      <div class="text">
+        <div class="lines" data-lines></div>
+        <div class="overlay" data-overlay></div>
+      </div>
+    </div>
+    <textarea id="input" class="hidden-input" autocomplete="off" autocapitalize="off"
+      autocorrect="off" spellcheck="false"></textarea>
+  </section>
+</main>
+
+<script type="module" src="app.js"></script>
