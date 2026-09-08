@@ -107,6 +107,9 @@ func NewHub(opts ...HubOption) *Hub {
 // first client arrives, or snapshots one for persistence — clients apply
 // updates to the same document concurrently, so access goes through here.
 //
+// fn runs under the room's lock, so it must not call back into the hub —
+// that inverts the lock order the eviction timer takes and can deadlock.
+//
 // Looking at a room does not keep it alive: being in one does. A host that
 // reads its rooms on a schedule — a document listing, a metrics sweep — would
 // otherwise postpone every eviction it touched. The consequence for seeding
@@ -141,11 +144,21 @@ func (h *Hub) roomFor(name string, joining bool) (*room, bool) {
 		h.rooms[name] = r
 		mark := r.emptySince
 		h.mu.Unlock()
-		// A room begins empty, so it begins on the eviction clock: one that
-		// is created and then never joined — seeded speculatively, or made by
-		// a request that never finished its upgrade — is collected like any
-		// other rather than held for the life of the process.
-		h.armEviction(name, r, mark)
+		if !joining {
+			// A room created without a connection starts on the eviction
+			// clock at once: one seeded speculatively, or made by a request
+			// that never finished its upgrade, is collected like any other
+			// rather than held for the life of the process.
+			//
+			// A room created *by* a joiner is not armed here. That connection
+			// has not finished its handshake yet and holds no slot in the
+			// room, so arming would let a slow client have its own room
+			// evicted out from under it — it would then sync into a room the
+			// hub has already forgotten, invisible to everybody else. Its
+			// departure arms the clock instead, and every connection reaches
+			// its departure.
+			h.armEviction(name, r, mark)
+		}
 		return r, false
 	}
 	if joining {
