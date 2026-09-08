@@ -31,8 +31,10 @@ function reverseOne(op: Operation): Operation {
       return { k: 'replace', p: op.p, o: op.n, n: op.o };
     case 'move': {
       const rev: Operation = { k: 'move', p: op.f ?? '', f: op.p };
-      // Restore whatever the move displaced at its destination; without this
-      // the reversal strands that value.
+      // What the move displaced at its destination is carried along, as Go's
+      // Reverse does. Note that neither applier restores it today: reversing
+      // a move onto an occupied path returns the moved value and drops what
+      // it displaced.
       if (op.o !== undefined) rev.n = op.o;
       return rev;
     }

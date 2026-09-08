@@ -41,20 +41,21 @@ for (const file of files) {
 
     // Applying the patch must reach the state Go reached, operation for
     // operation — the same counts of applied, skipped and failed.
-    const got = clone(c.before);
-    const result = applyPatch(got, c.patch, opts);
+    // Assert on the returned value rather than the input: an operation on the
+    // root cannot mutate in place and returns a new value instead, so reading
+    // the input would let such a case pass while comparing before to before.
+    const result = applyPatch(clone(c.before), c.patch, opts);
 
-    assert.deepEqual(got, c.after, 'resulting document differs from Go');
+    assert.deepEqual(result.value, c.after, 'resulting document differs from Go');
     assert.equal(result.applied, c.applied, 'applied count differs');
     assert.equal(result.skipped, c.skipped, 'skipped count differs');
     assert.equal(result.failed, c.failed, 'failed count differs');
 
     // And where Go says the patch reverses exactly, it must reverse here too.
     if (c.reversible) {
-      const back = clone(c.after);
-      const undone = applyPatch(back, reverse(c.patch), opts);
+      const undone = applyPatch(clone(c.after), reverse(c.patch), opts);
       assert.equal(undone.failed, 0, `reverse failed: ${undone.errors.map(String).join('; ')}`);
-      assert.ok(equal(back, c.before), 'reverse did not return to the starting document');
+      assert.ok(equal(undone.value, c.before), 'reverse did not return to the starting document');
     }
   });
 }

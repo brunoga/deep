@@ -74,7 +74,7 @@ export function applyPatch<T>(target: T, patch: Patch, opts: ApplyOptions = {}):
     }
   }
 
-  if (patch.cond && !evaluate(result.value, patch.cond)) {
+  if (patch.cond && !evaluate(result.value, patch.cond, opts.keys)) {
     result.errors.push(new GuardNotMetError());
     return result;
   }
@@ -82,13 +82,13 @@ export function applyPatch<T>(target: T, patch: Patch, opts: ApplyOptions = {}):
   ops.forEach((op, index) => {
     const outcome: Outcome = { index, path: op.p, kind: op.k, status: 'applied' };
     try {
-      if (op.if && !evaluate(result.value, op.if)) {
+      if (op.if && !evaluate(result.value, op.if, opts.keys)) {
         outcome.status = 'skipped';
         result.skipped++;
         result.outcomes.push(outcome);
         return;
       }
-      if (op.un && evaluate(result.value, op.un)) {
+      if (op.un && evaluate(result.value, op.un, opts.keys)) {
         outcome.status = 'skipped';
         result.skipped++;
         result.outcomes.push(outcome);

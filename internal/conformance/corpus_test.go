@@ -177,6 +177,56 @@ func cases(t *testing.T) []Case {
 		}),
 	)
 
+	// Keyed arrays whose ids look like indexes. The key is consulted first,
+	// so "/items/0" names the element whose id is "0" — not the element that
+	// happens to sit at position 0. An implementation that checks for a
+	// numeric segment first writes to the wrong element and says nothing.
+	numeric := base
+	numeric.Items = []Item{
+		{ID: "7", Label: "seven", Count: 7},
+		{ID: "0", Label: "zero", Count: 0},
+	}
+	out = append(out,
+		build(t, "keyed id that looks like an index", numeric, deep.Patch[Doc]{Operations: []deep.Operation{
+			{Kind: deep.OpReplace, Path: "/items/0/count", Old: 0, New: 100},
+		}}),
+		build(t, "keyed id absent despite being a valid index", numeric, deep.Patch[Doc]{Operations: []deep.Operation{
+			{Kind: deep.OpReplace, Path: "/items/1/count", New: 100},
+		}}),
+		diffCase(t, "keyed diff with numeric ids", numeric, func(d *Doc) { d.Items[0].Count = 70 }),
+	)
+
+	// A condition that reads a keyed element. Resolving it needs the same key
+	// knowledge applying does; without it the condition cannot be evaluated,
+	// and an implementation reports a failure where this one reports a skip
+	// or an apply — the very distinction conditional writes rest on.
+	out = append(out,
+		build(t, "condition on a keyed path holds", base, deep.Patch[Doc]{Operations: []deep.Operation{{
+			Kind: deep.OpReplace, Path: "/items/b2/count", Old: 2, New: 42,
+			If: &condition.Condition{Path: "/items/b2/count", Op: condition.Eq, Value: 2},
+		}}}),
+		build(t, "condition on a keyed path does not hold", base, deep.Patch[Doc]{Operations: []deep.Operation{{
+			Kind: deep.OpReplace, Path: "/items/b2/count", Old: 2, New: 42,
+			If: &condition.Condition{Path: "/items/a1/done", Op: condition.Eq, Value: true},
+		}}}),
+		build(t, "guard on a keyed path", base, deep.Patch[Doc]{
+			Guard:      &condition.Condition{Path: "/items/a1/label", Op: condition.Eq, Value: "draft"},
+			Operations: []deep.Operation{{Kind: deep.OpReplace, Path: "/score", Old: 3, New: 8}},
+		}),
+	)
+
+	// The root. An operation on "/" cannot mutate a container in place, so an
+	// implementation that reads back its input rather than the applier's
+	// result quietly compares the starting document with itself.
+	replacement := doc()
+	replacement.Title = "replaced wholesale"
+	replacement.Items = nil
+	out = append(out,
+		build(t, "root replaced", base, deep.Patch[Doc]{Operations: []deep.Operation{
+			{Kind: deep.OpReplace, Path: "/", Old: base, New: replacement},
+		}}),
+	)
+
 	// Hand-built structural operations.
 	out = append(out,
 		build(t, "add map key", base, deep.Patch[Doc]{Operations: []deep.Operation{

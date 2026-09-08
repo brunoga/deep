@@ -1,0 +1,81 @@
+{
+  "name": "keyed id absent despite being a valid index",
+  "keys": {
+    "/items": "id"
+  },
+  "before": {
+    "title": "quarterly report",
+    "status": "open",
+    "score": 3,
+    "meta": {
+      "owner": "ana",
+      "level": 2
+    },
+    "items": [
+      {
+        "id": "7",
+        "label": "seven",
+        "count": 7,
+        "done": false
+      },
+      {
+        "id": "0",
+        "label": "zero",
+        "count": 0,
+        "done": false
+      }
+    ],
+    "tags": [
+      "x",
+      "y"
+    ],
+    "fields": {
+      "odd/key~here": "yes",
+      "region": "north"
+    }
+  },
+  "patch": {
+    "ops": [
+      {
+        "k": "replace",
+        "p": "/items/1/count",
+        "n": 100
+      }
+    ]
+  },
+  "after": {
+    "title": "quarterly report",
+    "status": "open",
+    "score": 3,
+    "meta": {
+      "owner": "ana",
+      "level": 2
+    },
+    "items": [
+      {
+        "id": "7",
+        "label": "seven",
+        "count": 7,
+        "done": false
+      },
+      {
+        "id": "0",
+        "label": "zero",
+        "count": 0,
+        "done": false
+      }
+    ],
+    "tags": [
+      "x",
+      "y"
+    ],
+    "fields": {
+      "odd/key~here": "yes",
+      "region": "north"
+    }
+  },
+  "applied": 0,
+  "skipped": 0,
+  "failed": 1,
+  "reversible": false
+}

@@ -179,3 +179,48 @@ test('equality and cloning are structural and independent', () => {
   (copy.a[1] as { b: number }).b = 3;
   assert.ok(!equal(v, copy), 'the clone must not share structure');
 });
+
+test('a keyed array is addressed by identity even when ids look like indexes', () => {
+  const keys = { '/items': 'id' };
+  const doc = { items: [{ id: '7', n: 7 }, { id: '0', n: 0 }] };
+
+  // "/items/0" is the element whose id is "0" — the second one — not the
+  // element sitting at position 0. Go resolves it the same way.
+  const result = applyPatch(clone(doc), { ops: [{ k: 'replace', p: '/items/0/n', n: 100 }] }, { keys });
+  assert.equal(result.failed, 0);
+  assert.deepEqual(result.value, { items: [{ id: '7', n: 7 }, { id: '0', n: 100 }] });
+
+  // And a token that is a valid index but no element's key resolves to
+  // nothing, rather than falling back to the position.
+  const missing = applyPatch(clone(doc), { ops: [{ k: 'replace', p: '/items/1/n', n: 100 }] }, { keys });
+  assert.equal(missing.failed, 1);
+});
+
+test('conditions resolve keyed paths too', () => {
+  const keys = { '/items': 'id' };
+  const doc = { items: [{ id: 'a1', done: false }] };
+  const patch = {
+    ops: [
+      { k: 'replace' as const, p: '/items/a1/done', n: true, if: { p: '/items/a1/done', o: '==', v: false } },
+    ],
+  };
+  const result = applyPatch(clone(doc), patch, { keys });
+  assert.equal(result.failed, 0, 'a condition on a keyed path must be answerable');
+  assert.equal(result.applied, 1);
+});
+
+test('an allowlist entry may carry a trailing slash', () => {
+  const target = { user: { name: 'ana' } };
+  const result = applyPatch(
+    target,
+    { ops: [{ k: 'replace', p: '/user/name', n: 'bo' }] },
+    { allowedPaths: ['/user/'] },
+  );
+  assert.equal(result.failed, 0);
+  assert.equal(target.user.name, 'bo');
+});
+
+test('an operation on the root returns the new value', () => {
+  const result = applyPatch({ a: 1 }, { ops: [{ k: 'replace', p: '/', n: { b: 2 } }] });
+  assert.deepEqual(result.value, { b: 2 });
+});

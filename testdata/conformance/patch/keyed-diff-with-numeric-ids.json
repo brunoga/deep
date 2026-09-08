@@ -1,0 +1,82 @@
+{
+  "name": "keyed diff with numeric ids",
+  "keys": {
+    "/items": "id"
+  },
+  "before": {
+    "title": "quarterly report",
+    "status": "open",
+    "score": 3,
+    "meta": {
+      "owner": "ana",
+      "level": 2
+    },
+    "items": [
+      {
+        "id": "7",
+        "label": "seven",
+        "count": 7,
+        "done": false
+      },
+      {
+        "id": "0",
+        "label": "zero",
+        "count": 0,
+        "done": false
+      }
+    ],
+    "tags": [
+      "x",
+      "y"
+    ],
+    "fields": {
+      "odd/key~here": "yes",
+      "region": "north"
+    }
+  },
+  "patch": {
+    "ops": [
+      {
+        "k": "replace",
+        "p": "/items/7/count",
+        "o": 7,
+        "n": 70
+      }
+    ]
+  },
+  "after": {
+    "title": "quarterly report",
+    "status": "open",
+    "score": 3,
+    "meta": {
+      "owner": "ana",
+      "level": 2
+    },
+    "items": [
+      {
+        "id": "7",
+        "label": "seven",
+        "count": 70,
+        "done": false
+      },
+      {
+        "id": "0",
+        "label": "zero",
+        "count": 0,
+        "done": false
+      }
+    ],
+    "tags": [
+      "x",
+      "y"
+    ],
+    "fields": {
+      "odd/key~here": "yes",
+      "region": "north"
+    }
+  },
+  "applied": 1,
+  "skipped": 0,
+  "failed": 0,
+  "reversible": true
+}

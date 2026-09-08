@@ -1,4 +1,4 @@
-import type { Condition } from './types.ts';
+import type { Condition, KeySchema } from './types.ts';
 import { resolve } from './path.ts';
 import { equal, compareOrdered } from './equal.ts';
 
@@ -8,23 +8,33 @@ import { equal, compareOrdered } from './equal.ts';
  * A path that does not resolve is an error for every operator but `exists`,
  * which reports false — matching Go, where an unresolvable path means the
  * condition cannot be judged rather than that it failed.
+ *
+ * `keys` is needed for the same reason applying needs it: a condition may
+ * read a keyed array element (/tasks/t3/done), and without the schema that
+ * path does not resolve — turning a condition Go can answer into a failure
+ * here, which is exactly the skip-versus-fail confusion conditional writes
+ * exist to avoid.
  */
-export function evaluate(root: unknown, c: Condition | undefined | null): boolean {
+export function evaluate(
+  root: unknown,
+  c: Condition | undefined | null,
+  keys?: KeySchema,
+): boolean {
   if (!c) return true;
 
   switch (c.o) {
     case 'and':
-      return (c.apply ?? []).every((sub) => evaluate(root, sub));
+      return (c.apply ?? []).every((sub) => evaluate(root, sub, keys));
     case 'or':
-      return (c.apply ?? []).some((sub) => evaluate(root, sub));
+      return (c.apply ?? []).some((sub) => evaluate(root, sub, keys));
     case 'not': {
       const sub = c.apply?.[0];
       if (!sub) throw new Error('malformed not condition: missing sub-condition');
-      return !evaluate(root, sub);
+      return !evaluate(root, sub, keys);
     }
   }
 
-  const at = resolve(root, c.p ?? '');
+  const at = resolve(root, c.p ?? '', keys);
   if (c.o === 'exists') return at.found && at.value !== undefined;
   if (!at.found) throw new Error(`condition path ${c.p} does not resolve`);
   const value = at.value;

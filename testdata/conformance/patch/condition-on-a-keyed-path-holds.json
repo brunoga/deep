@@ -1,0 +1,87 @@
+{
+  "name": "condition on a keyed path holds",
+  "keys": {
+    "/items": "id"
+  },
+  "before": {
+    "title": "quarterly report",
+    "status": "open",
+    "score": 3,
+    "meta": {
+      "owner": "ana",
+      "level": 2
+    },
+    "items": [
+      {
+        "id": "a1",
+        "label": "draft",
+        "count": 1,
+        "done": false
+      },
+      {
+        "id": "b2",
+        "label": "review",
+        "count": 2,
+        "done": false
+      }
+    ],
+    "tags": [
+      "x",
+      "y"
+    ],
+    "fields": {
+      "odd/key~here": "yes",
+      "region": "north"
+    }
+  },
+  "patch": {
+    "ops": [
+      {
+        "k": "replace",
+        "p": "/items/b2/count",
+        "o": 2,
+        "n": 42,
+        "if": {
+          "p": "/items/b2/count",
+          "o": "==",
+          "v": 2
+        }
+      }
+    ]
+  },
+  "after": {
+    "title": "quarterly report",
+    "status": "open",
+    "score": 3,
+    "meta": {
+      "owner": "ana",
+      "level": 2
+    },
+    "items": [
+      {
+        "id": "a1",
+        "label": "draft",
+        "count": 1,
+        "done": false
+      },
+      {
+        "id": "b2",
+        "label": "review",
+        "count": 42,
+        "done": false
+      }
+    ],
+    "tags": [
+      "x",
+      "y"
+    ],
+    "fields": {
+      "odd/key~here": "yes",
+      "region": "north"
+    }
+  },
+  "applied": 1,
+  "skipped": 0,
+  "failed": 0,
+  "reversible": true
+}
