@@ -21,6 +21,24 @@ All notable changes to this project are documented here, newest first.
   graph from recursing forever. Found building the arena example, whose
   per-tick diffs are all map entries.
 
+  Two semantic consequences, both aligning generated types with what
+  reflection-diffed types already did. A patch naming a field inside a map
+  entry the receiver does not hold now fails to apply, where the old
+  whole-entry replace incidentally upserted the entry — a receiver that has
+  diverged should resynchronize, not invent an entry from one field. And a
+  strict patch verifies the Old of each changed field rather than the whole
+  previous entry, so a concurrent change to a *different* field of the same
+  entry no longer registers as a conflict — the same narrowing of the
+  conflict unit that per-field diffs bring everywhere else.
+
+- **`deep:"readonly"` and `deep:"-"` are enforced along the whole apply
+  path.** The reflection applier checked struct tags only on a path's first
+  segment, so an operation reaching a protected field through a map entry or
+  slice element — `/players/ana/joinedAt` — wrote straight through it.
+  Nested readonly fields now refuse the operation and nested ignored fields
+  skip it, at any depth. Fine-grained map diffs made such paths common, but
+  the hole predates them.
+
 ### Added
 
 - **A second complete example system.** `examples/arena` is a multiplayer

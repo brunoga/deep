@@ -37,7 +37,7 @@ type Client struct {
 
 // Dial joins an arena. The hello frame carries this client's id and the
 // exact world the patch stream continues from.
-func Dial(ctx context.Context, url, name string) (*Client, error) {
+func Dial(ctx context.Context, url string) (*Client, error) {
 	sock, _, err := websocket.Dial(ctx, url, nil)
 	if err != nil {
 		return nil, err
@@ -73,14 +73,16 @@ func (c *Client) World() world.World {
 	return deep.Clone(c.replica)
 }
 
-// Ring returns the retained tick patches, oldest first — apply their
-// Reverses backward from World() and you are watching the past.
-func (c *Client) Ring() []transport.Patch {
+// Snapshot returns the replica and the retained tick patches (oldest first)
+// as one consistent pair — the material for instant replay. Taking them in
+// separate calls would let a tick land in between, leaving patches that do
+// not match the world they are meant to rewind.
+func (c *Client) Snapshot() (world.World, []transport.Patch) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	out := make([]transport.Patch, len(c.ring))
-	copy(out, c.ring)
-	return out
+	ring := make([]transport.Patch, len(c.ring))
+	copy(ring, c.ring)
+	return deep.Clone(c.replica), ring
 }
 
 // Drift reports how many snapshot checks found the replica out of sync. It
@@ -188,6 +190,10 @@ func (c *Client) readLoop() {
 			if !deep.Equal(c.replica, snap) {
 				c.drift++
 				c.replica = snap
+				// The retained patches describe the abandoned timeline;
+				// rewinding the resynchronized world through them would render
+				// states that never existed.
+				c.ring = nil
 			}
 			c.mu.Unlock()
 		default:

@@ -796,7 +796,7 @@ with a feature map pointing at where each library feature does its job.
 [`arena`](examples/arena) is a multiplayer game built on per-tick diffs: the
 server broadcasts only what changed each tick, player actions travel as
 conditional patches, and the replay file is the patch stream itself —
-applied forward, reversed backward, merged into keyframes.
+applied forward, reversed backward, collapsed into keyframes.
 
 ## Migrating from v5
 

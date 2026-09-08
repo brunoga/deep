@@ -13,7 +13,6 @@ import (
 	"log"
 	"math/rand/v2"
 	"net/http"
-	"sync"
 	"time"
 
 	"github.com/coder/websocket"
@@ -71,13 +70,16 @@ type Server struct {
 	w             world.World
 	lastBroadcast world.World
 	conns         map[*conn]struct{}
+	// dropped holds players disconnected mid-broadcast; their departure is
+	// applied to the world at the top of the next tick, so it travels in a
+	// patch like every other change.
+	dropped []string
 
 	joins     chan joinReq
 	leaves    chan *conn
 	actions   chan actionReq
 	mutations chan func(*world.World)
 
-	mu   sync.Mutex
 	done chan struct{}
 }
 
@@ -141,6 +143,14 @@ func (s *Server) Mutate(fn func(*world.World)) {
 // join.
 func (s *Server) Run(ctx context.Context) error {
 	defer close(s.done)
+	// On exit, release every connection's writer: their handlers wait on the
+	// writer, the writer waits on the send channel, and nothing else will
+	// ever close it once this loop stops.
+	defer func() {
+		for c := range s.conns {
+			close(c.send)
+		}
+	}()
 	if s.replay != nil {
 		if err := s.replay.Init(s.lastBroadcast); err != nil {
 			return err
@@ -191,13 +201,26 @@ func (s *Server) Run(ctx context.Context) error {
 			}
 
 		case <-ticker.C:
-			spawner.Refill(&s.w)
-			s.w.Tick++
-			if err := s.tick(); err != nil {
+			if err := s.step(spawner); err != nil {
 				return err
 			}
 		}
 	}
+}
+
+// step is one tick: departures queued during the previous broadcast join the
+// world's changes, the spawner drips, the clock advances, and the diff goes
+// out.
+func (s *Server) step(spawner *game.Spawner) error {
+	for _, name := range s.dropped {
+		game.Leave(&s.w, name)
+	}
+	s.dropped = s.dropped[:0]
+	if spawner != nil {
+		spawner.Refill(&s.w)
+	}
+	s.w.Tick++
+	return s.tick()
 }
 
 // tick diffs, broadcasts, records.
@@ -232,15 +255,22 @@ func (s *Server) tick() error {
 }
 
 // broadcast queues a frame for every connection. One that cannot keep up is
-// dropped from the world rather than allowed to stall the tick; it can
-// reconnect and get a fresh hello.
+// dropped rather than allowed to stall the tick; it can reconnect and get a
+// fresh hello.
+//
+// The drop must not touch the world here: this runs after the tick's diff
+// was computed and recorded, and a change made now would be absorbed into
+// lastBroadcast without ever travelling in a patch — every other client
+// would render a ghost player, and the replay tape would diverge from the
+// world it claims to describe. The departure is queued instead and becomes
+// part of the next tick's diff.
 func (s *Server) broadcast(frame []byte) {
 	for c := range s.conns {
 		select {
 		case c.send <- frame:
 		default:
 			delete(s.conns, c)
-			game.Leave(&s.w, c.name)
+			s.dropped = append(s.dropped, c.name)
 			close(c.send)
 		}
 	}
@@ -279,7 +309,10 @@ func (s *Server) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 	if err := sock.Write(ctx, websocket.MessageBinary, hello); err != nil {
-		s.leaves <- c
+		select {
+		case s.leaves <- c:
+		case <-s.done:
+		}
 		return
 	}
 

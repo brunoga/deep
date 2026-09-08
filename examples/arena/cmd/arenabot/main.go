@@ -43,7 +43,7 @@ func main() {
 }
 
 func runBot(ctx context.Context, server, name string, pace time.Duration) error {
-	c, err := client.Dial(ctx, server+"/?name="+name, name)
+	c, err := client.Dial(ctx, server+"/?name="+name)
 	if err != nil {
 		return err
 	}

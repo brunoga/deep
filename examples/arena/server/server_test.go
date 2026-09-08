@@ -14,6 +14,7 @@ import (
 
 	"github.com/brunoga/deep/examples/arena/client"
 	"github.com/brunoga/deep/examples/arena/replay"
+	"github.com/brunoga/deep/examples/arena/transport"
 	"github.com/brunoga/deep/examples/arena/world"
 )
 
@@ -54,7 +55,7 @@ func TestReplicasConverge(t *testing.T) {
 	names := []string{"ana", "bob", "cyn", "dee"}
 	clients := make([]*client.Client, len(names))
 	for i, name := range names {
-		c, err := client.Dial(ctx, url+name, name)
+		c, err := client.Dial(ctx, url+name)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -106,12 +107,12 @@ func TestGemRaceOneWinner(t *testing.T) {
 	s, url, _ := startArena(t, WithGemTarget(0)) // no random gems in the way
 	ctx := context.Background()
 
-	ana, err := client.Dial(ctx, url+"ana", "ana")
+	ana, err := client.Dial(ctx, url+"ana")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer ana.Close()
-	bob, err := client.Dial(ctx, url+"bob", "bob")
+	bob, err := client.Dial(ctx, url+"bob")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +166,7 @@ func TestReplayRoundTrip(t *testing.T) {
 	s, url, cancel := startArena(t, WithReplay(writer))
 	ctx := context.Background()
 
-	c, err := client.Dial(ctx, url+"ana", "ana")
+	c, err := client.Dial(ctx, url+"ana")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,12 +229,12 @@ func TestCheaterChangesNothing(t *testing.T) {
 	_, url, _ := startArena(t, WithGemTarget(0))
 	ctx := context.Background()
 
-	honest, err := client.Dial(ctx, url+"ana", "ana")
+	honest, err := client.Dial(ctx, url+"ana")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer honest.Close()
-	cheat, err := client.Dial(ctx, url+"eve", "eve")
+	cheat, err := client.Dial(ctx, url+"eve")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,5 +258,67 @@ func TestCheaterChangesNothing(t *testing.T) {
 	after := honest.World().Players["eve"]
 	if after.Score != 0 || after != before {
 		t.Fatalf("cheat leaked into the world: %+v", after)
+	}
+}
+
+// The drop path's contract: disconnecting a slow client mid-broadcast must
+// not leak an unbroadcast change. The departure travels in the next tick's
+// patch, so every replica — and the replay tape — stays exactly in step.
+func TestSlowClientDropTravelsInAPatch(t *testing.T) {
+	s := New(world.New(8, 8), WithGemTarget(0), WithSnapshotEvery(0))
+	s.w.Players["slow"] = world.Player{X: 1, Y: 1}
+	s.w.Players["obs"] = world.Player{X: 5, Y: 5}
+	s.lastBroadcast = deep.Clone(s.w)
+
+	slow := &conn{name: "slow", send: make(chan []byte)} // unbuffered: always full
+	obs := &conn{name: "obs", send: make(chan []byte, 16)}
+	s.conns[slow] = struct{}{}
+	s.conns[obs] = struct{}{}
+
+	replica := deep.Clone(s.lastBroadcast)
+
+	// Tick 1: something changes, the broadcast finds slow's buffer full and
+	// drops the connection. The world must not change under the diff's feet.
+	s.w.Gems["g"] = world.Gem{X: 0, Y: 0, Value: 1}
+	if err := s.step(nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := s.conns[slow]; ok {
+		t.Fatal("slow connection was not dropped")
+	}
+	if _, ok := s.w.Players["slow"]; !ok {
+		t.Fatal("drop mutated the world mid-tick — this change can never reach a patch")
+	}
+
+	// Tick 2: the departure rides the normal diff.
+	if err := s.step(nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// The observer's received patches replay to exactly the broadcast state:
+	// no ghost player, nothing missing.
+	for {
+		select {
+		case frame := <-obs.send:
+			if frame[0] != transport.KindTick {
+				continue
+			}
+			var p transport.Patch
+			if err := transport.Decode(frame[1:], &p); err != nil {
+				t.Fatal(err)
+			}
+			if err := deep.Apply(&replica, p); err != nil {
+				t.Fatal(err)
+			}
+			continue
+		default:
+		}
+		break
+	}
+	if _, ok := replica.Players["slow"]; ok {
+		t.Fatalf("replica still holds the dropped player: %+v", replica.Players)
+	}
+	if !deep.Equal(replica, s.lastBroadcast) {
+		t.Fatalf("replica diverged from broadcast state:\n got  %+v\n want %+v", replica, s.lastBroadcast)
 	}
 }

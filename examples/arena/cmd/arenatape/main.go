@@ -60,6 +60,9 @@ func main() {
 		}
 		fmt.Printf("ok: %d ticks; forward replay and full rewind agree\n", len(patches))
 
+	case *keyframes == 1:
+		log.Fatal("-keyframes needs an interval of at least 2")
+
 	case *keyframes > 1:
 		compacted, err := replay.Compact(initial, patches, *keyframes)
 		if err != nil {

@@ -93,8 +93,8 @@ clients, bots, and a replay tool. It is the diff/patch story under load: the
 server diffs the world every tick and broadcasts only the patch (the
 generated fast path's reason to exist), player actions are conditional
 patches racing for the same gems, and the replay file is nothing but the
-patch stream — played forward with `Apply`, rewound with `Reverse`, compacted
-with `Merge`.
+patch stream — played forward with `Apply`, rewound with `Reverse`, collapsed
+into keyframes by diffing boundary states.
 
 ## Generated code
 

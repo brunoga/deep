@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -35,7 +36,7 @@ func main() {
 	flag.Parse()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	c, err := client.Dial(ctx, *server+"/?name="+*name, *name)
+	c, err := client.Dial(ctx, *server+"/?name="+*name)
 	cancel()
 	if err != nil {
 		log.Fatalf("joining: %v", err)
@@ -124,13 +125,17 @@ func (m *model) move(dx, dy int) tea.Cmd {
 // startReplay builds the strip of past worlds by walking the ring of applied
 // patches backward with Reverse, then plays it oldest-first.
 func (m *model) startReplay() tea.Cmd {
-	ring := m.c.Ring()
+	// One consistent pair: taking the world and the ring separately would let
+	// a tick land in between, and the rewind would reverse patches that do
+	// not match the world it starts from.
+	w, ring := m.c.Snapshot()
 	if len(ring) == 0 {
 		m.status = "nothing to replay yet"
 		return nil
 	}
-	w := m.c.World()
-	frames := []world.World{w}
+	// Clone the first frame: Apply below mutates w's maps in place, and a
+	// frame that shares them would quietly rewind along with it.
+	frames := []world.World{deep.Clone(w)}
 	for i := len(ring) - 1; i >= 0; i-- {
 		if err := deep.Apply(&w, ring[i].Reverse()); err != nil {
 			m.status = "replay unavailable: " + err.Error()
@@ -140,9 +145,7 @@ func (m *model) startReplay() tea.Cmd {
 	}
 	// frames is now newest-to-oldest; flip it so the replay runs forward
 	// from the past to the present.
-	for i, j := 0, len(frames)-1; i < j; i, j = i+1, j-1 {
-		frames[i], frames[j] = frames[j], frames[i]
-	}
+	slices.Reverse(frames)
 	m.frames = frames
 	m.frame = 0
 	m.replaying = true

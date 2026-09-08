@@ -74,24 +74,63 @@ func ApplyOpReflectionValue(v reflect.Value, op Operation, logger *slog.Logger) 
 		}
 	}
 
-	// Struct tag enforcement.
+	// Struct tag enforcement, along the whole path: a readonly or ignored
+	// field is just as protected when the operation reaches it through a map
+	// entry or a slice element as when it names it directly —
+	// "/players/ana/joinedAt" must answer to joinedAt's tag, not escape
+	// scrutiny because the path started at a map.
 	if v.Kind() == reflect.Struct {
-		parts := icore.ParsePath(op.Path)
-		if len(parts) > 0 {
-			info := icore.GetTypeInfo(v.Type())
+		if skip, err := checkPathTags(v.Type(), op); skip || err != nil {
+			return err
+		}
+	}
+
+	return applyOpKind(v, op, logger)
+}
+
+// checkPathTags walks op.Path through the static type structure and enforces
+// deep struct tags at every level. skip reports an ignored field (the
+// operation is silently a no-op, matching how diffs never produce it);
+// a readonly field is an error. The walk is static: it stops at an interface,
+// whose dynamic type it cannot know.
+func checkPathTags(t reflect.Type, op Operation) (skip bool, err error) {
+	for _, part := range icore.ParsePath(op.Path) {
+		for t.Kind() == reflect.Pointer {
+			t = t.Elem()
+		}
+		switch t.Kind() {
+		case reflect.Struct:
+			info := icore.GetTypeInfo(t)
+			matched := false
 			for _, fInfo := range info.Fields {
-				if fInfo.Name == parts[0].Key || (fInfo.JSONTag != "" && fInfo.JSONTag == parts[0].Key) {
+				if fInfo.Name == part.Key || (fInfo.JSONTag != "" && fInfo.JSONTag == part.Key) {
 					if fInfo.Tag.Ignore {
-						return nil
+						return true, nil
 					}
 					if fInfo.Tag.ReadOnly && op.Kind != OpLog {
-						return fmt.Errorf("field %s is read-only", op.Path)
+						return false, fmt.Errorf("field %s is read-only", op.Path)
 					}
+					t = t.Field(fInfo.Index).Type
+					matched = true
 					break
 				}
 			}
+			if !matched {
+				// An addressing form this walk does not model (an embedded
+				// type name, a family boundary); the apply itself will judge
+				// the path.
+				return false, nil
+			}
+		case reflect.Map, reflect.Slice, reflect.Array:
+			t = t.Elem()
+		default:
+			return false, nil
 		}
 	}
+	return false, nil
+}
+
+func applyOpKind(v reflect.Value, op Operation, logger *slog.Logger) error {
 
 	var err error
 	switch op.Kind {
