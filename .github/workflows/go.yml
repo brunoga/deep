@@ -167,3 +167,19 @@ jobs:
       - name: Test the browser client
         run: node --test web/test/*.test.js
         working-directory: examples/incident
+
+      - name: Build editor example
+        run: go build -v ./...
+        working-directory: examples/editor
+
+      - name: Vet editor example
+        run: go vet ./...
+        working-directory: examples/editor
+
+      - name: Test editor example
+        run: go test -race -v ./...
+        working-directory: examples/editor
+
+      - name: Test the editor client
+        run: node --test web/test/*.test.js
+        working-directory: examples/editor
