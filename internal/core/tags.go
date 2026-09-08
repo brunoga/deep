@@ -20,7 +20,10 @@ func ParseTag(field reflect.StructField) StructTag {
 	// here so that every reader of a field's tags sees it — diffing, cloning
 	// and applying each ask separately, and a field that is invisible to one
 	// of them but not the others is worse than no rule at all.
-	if name, _, _ := strings.Cut(field.Tag.Get("json"), ","); name == "-" {
+	// Exactly `json:"-"`. The similar-looking `json:"-,"` names a field that
+	// really is called "-", which encoding/json includes in the document —
+	// and so does deep.
+	if field.Tag.Get("json") == "-" {
 		st.Ignore = true
 	}
 

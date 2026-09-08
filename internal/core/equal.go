@@ -179,7 +179,7 @@ func equalRecursive(a, b reflect.Value, visited map[VisitKey]bool, config *equal
 
 			var newStack []string
 			if pathStack != nil {
-				newStack = append(pathStack, fInfo.Name)
+				newStack = append(pathStack, EscapeKey(fInfo.PathName()))
 			}
 			if !equalRecursive(fA, fB, visited, config, newStack) {
 				return false

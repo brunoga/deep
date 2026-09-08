@@ -71,10 +71,17 @@ func build[T any](t *testing.T, name string, before T, patch deep.Patch[T]) Case
 		}
 		return data
 	}
+	// The key descriptor describes the model, so only the model that has a
+	// keyed array carries one. A reader that validates the descriptor against
+	// the document should not be handed paths the document does not have.
+	var keys map[string]string
+	if _, ok := any(before).(Doc); ok {
+		keys = map[string]string{"/items": "id"}
+	}
 	return Case{
 		Name: name, Before: marshal(before), Patch: marshal(patch), After: marshal(after),
 		Applied: applied, Skipped: skipped, Failed: failed, Reversible: reversible,
-		Keys: map[string]string{"/items": "id"},
+		Keys: keys,
 	}
 }
 
@@ -249,6 +256,17 @@ func cases(t *testing.T) []Case {
 		}),
 		diffCase(t, "reflection engine keeps an excluded field out", plain, func(p *Plain) {
 			p.Secret = "changed, and invisible"
+		}),
+	)
+
+	// A JSON tag is arbitrary text, and one containing "/" or "~" must be
+	// escaped into the path or it addresses something else entirely.
+	odd := Odd{Ratio: 1, Tilde: 1, Plain: "a"}
+	out = append(out,
+		diffCase(t, "field names needing pointer escaping", odd, func(o *Odd) {
+			o.Ratio = 2
+			o.Tilde = 2
+			o.Plain = "b"
 		}),
 	)
 

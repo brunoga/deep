@@ -1,0 +1,39 @@
+{
+  "name": "field names needing pointer escaping",
+  "before": {
+    "a/b": 1,
+    "c~d": 1,
+    "plain": "a"
+  },
+  "patch": {
+    "ops": [
+      {
+        "k": "replace",
+        "p": "/a~1b",
+        "o": 1,
+        "n": 2
+      },
+      {
+        "k": "replace",
+        "p": "/c~0d",
+        "o": 1,
+        "n": 2
+      },
+      {
+        "k": "replace",
+        "p": "/plain",
+        "o": "a",
+        "n": "b"
+      }
+    ]
+  },
+  "after": {
+    "a/b": 2,
+    "c~d": 2,
+    "plain": "b"
+  },
+  "applied": 3,
+  "skipped": 0,
+  "failed": 0,
+  "reversible": true
+}

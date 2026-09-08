@@ -1,8 +1,5 @@
 {
   "name": "reflection engine names fields as the document does",
-  "keys": {
-    "/items": "id"
-  },
   "before": {
     "label": "first",
     "depth": 1,

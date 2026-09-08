@@ -462,7 +462,9 @@ func recursiveCopyStruct(v reflect.Value, pointers PointersMap,
 		}
 
 		var fieldPath string
-		fieldName := field.Name
+		// The same name Diff uses, so an IgnorePath written once applies to
+		// diffing, cloning and equality alike.
+		fieldName := EscapeKey(FieldPathName(field))
 		if hasIgnoredPaths {
 			if path != "" {
 				fieldPath = path + "/" + fieldName

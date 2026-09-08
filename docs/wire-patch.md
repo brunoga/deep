@@ -115,9 +115,19 @@ producer: the reflection engine, generated code, and the type-safe selectors
 (`deep.Field`) all agree, so a patch describes the same field the same way
 however it was made.
 
+Names that need it are RFC 6901 escaped: `json:"a/b"` becomes the token
+`a~1b`, not two tokens.
+
 Both appliers also accept the Go field name, so patches written before v6.6.0
 — when the reflection engine emitted `/Status` — still apply, reverse and
 merge. Only what is *emitted* changed.
+
+**Embedded structs are the exception.** An anonymous embedded field is
+addressed by its *type* name — `/embMeta/level` — while `encoding/json`
+promotes its fields to the outer object, so the document has no `embMeta` key
+to resolve that against. A model that syncs across languages should name its
+embedded field explicitly (`Meta embMeta \`json:"meta"\``) rather than
+embedding it anonymously.
 
 A field tagged `json:"-"` is not part of the document, and deep treats that as
 invisibility: it stays out of diffs, out of equality, and out of clones (which

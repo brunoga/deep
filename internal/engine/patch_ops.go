@@ -537,6 +537,10 @@ func (p *interfacePatch) summary(path string) string {
 }
 
 // structField is one field's patch, kept alongside its name.
+// structField names one field of a struct patch. Since field names in paths
+// are JSON names, the name is arbitrary text rather than a Go identifier —
+// every site that splices it into a path escapes it, and every site that
+// matches a path token against it compares unescaped text.
 type structField struct {
 	name  string
 	patch diffPatch
@@ -571,7 +575,7 @@ func (p *structPatch) apply(root, v reflect.Value, path string) {
 			if !f.CanSet() {
 				unsafe.DisableRO(&f)
 			}
-			subPath := icore.JoinPath(path, name)
+			subPath := icore.JoinPath(path, icore.EscapeKey(name))
 			patch.apply(root, f, subPath)
 		}
 	}
@@ -603,7 +607,7 @@ func (p *structPatch) applyChecked(root, v reflect.Value, strict bool, path stri
 			unsafe.DisableRO(&f)
 		}
 
-		subPath := icore.JoinPath(path, name)
+		subPath := icore.JoinPath(path, icore.EscapeKey(name))
 
 		if err := patch.applyChecked(root, f, strict, subPath); err != nil {
 			errs = append(errs, fmt.Errorf("field %s: %w", name, err))
@@ -642,7 +646,7 @@ func (p *structPatch) applyResolved(root, v reflect.Value, path string, resolver
 			unsafe.DisableRO(&f)
 		}
 
-		subPath := icore.JoinPath(path, name)
+		subPath := icore.JoinPath(path, icore.EscapeKey(name))
 
 		if err := patch.applyResolved(root, f, subPath, resolver); err != nil {
 			return fmt.Errorf("field %s: %w", name, err)
@@ -661,7 +665,7 @@ func (p *structPatch) applyResolved(root, v reflect.Value, path string, resolver
 func (p *structPatch) dependencies(path string) (reads []string, writes []string) {
 	for _, sf := range p.fields {
 		name, patch := sf.name, sf.patch
-		fieldPath := icore.JoinPath(path, name)
+		fieldPath := icore.JoinPath(path, icore.EscapeKey(name))
 
 		r, w := patch.dependencies(fieldPath)
 		reads = append(reads, r...)
@@ -680,7 +684,7 @@ func (p *structPatch) reverse() diffPatch {
 
 func (p *structPatch) walk(path string, fn func(path string, op OpKind, old, new any) error) error {
 	for _, f := range p.fields {
-		fullPath := path + "/" + f.name
+		fullPath := path + "/" + icore.EscapeKey(f.name)
 		if err := f.patch.walk(fullPath, fn); err != nil {
 			return err
 		}
@@ -704,7 +708,7 @@ func (p *structPatch) toJSONPatch(path string) []map[string]any {
 	var ops []map[string]any
 	for _, sf := range p.fields {
 		name, patch := sf.name, sf.patch
-		fullPath := path + "/" + name
+		fullPath := path + "/" + icore.EscapeKey(name)
 		subOps := patch.toJSONPatch(fullPath)
 		ops = append(ops, subOps...)
 	}
@@ -719,7 +723,7 @@ func (p *structPatch) summary(path string) string {
 		if !strings.HasSuffix(subPath, "/") {
 			subPath += "/"
 		}
-		subPath += name
+		subPath += icore.EscapeKey(name)
 		summaries = append(summaries, patch.summary(subPath))
 	}
 	return strings.Join(summaries, "\n")

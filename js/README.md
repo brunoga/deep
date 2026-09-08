@@ -112,7 +112,12 @@ and disagreeing about the document.
 
 Paths name fields as the JSON does regardless of whether a type has generated
 code — the reflection engine, generated code and the type-safe selectors all
-agree since v6.6.0.
+agree since v6.6.0, escaping where RFC 6901 requires it.
+
+One shape still needs care: an anonymously embedded Go struct is addressed by
+its type name (`/embMeta/level`) while `encoding/json` promotes its fields to
+the outer object, so that path resolves against nothing here. Give such a
+field an explicit name and tag.
 
 ## Development
 

@@ -13,6 +13,19 @@ type FieldInfo struct {
 	Tag     StructTag
 }
 
+// FieldPathName is [FieldInfo.PathName] for a field the caller holds
+// directly, without going through the type cache.
+func FieldPathName(field reflect.StructField) string {
+	full := field.Tag.Get("json")
+	if full == "-" {
+		return field.Name
+	}
+	if name, _, _ := strings.Cut(full, ","); name != "" {
+		return name
+	}
+	return field.Name
+}
+
 // PathName is the name this field takes in a patch path: its JSON name where
 // it has one, and its Go name otherwise.
 //
@@ -50,14 +63,12 @@ func GetTypeInfo(typ reflect.Type) *TypeInfo {
 		for i := 0; i < typ.NumField(); i++ {
 			field := typ.Field(i)
 			tag := ParseTag(field)
-			jsonTag := field.Tag.Get("json")
-			if jsonTag != "" {
-				jsonTag = strings.Split(jsonTag, ",")[0]
-			}
-			// ParseTag has already turned `json:"-"` into Ignore; clearing the
-			// name here keeps PathName from ever offering "-" as a path.
-			if jsonTag == "-" {
-				jsonTag = ""
+			// `json:"-"` names no field at all, so it contributes no path
+			// name; `json:"-,"` names a field that really is called "-",
+			// which is the one case where the two spellings differ.
+			jsonTag := ""
+			if full := field.Tag.Get("json"); full != "-" {
+				jsonTag, _, _ = strings.Cut(full, ",")
 			}
 			info.Fields = append(info.Fields, FieldInfo{
 				Index:   i,

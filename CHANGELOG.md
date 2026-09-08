@@ -8,6 +8,20 @@ All notable changes to this project are documented here, newest first.
 
 ## v6.6.0
 
+### Breaking
+
+- **`json:"-"` now hides a field from `Clone` and `Equal` under the reflection
+  engine, not just from `Diff`.** The tag has always meant "invisible to deep"
+  — the README's tag table says so, and generated code has always implemented
+  it — but the reflection engine ignored it entirely, so a type without
+  generated code kept such fields through a clone and compared them in
+  equality. Aligning the engines means a reflection `Clone` now *zeroes* them.
+
+  `json:"-"` is a common idiom for caches, loggers, mutexes and back-pointers,
+  so audit those fields before upgrading: anything that must survive a clone
+  needs a name in the document, and anything that must stay out of patches but
+  survive cloning has no tag that expresses both — copy it back after cloning.
+
 ### Fixed
 
 - **The reflection engine names fields in paths the way everything else
@@ -19,6 +33,12 @@ All notable changes to this project are documented here, newest first.
   a type silently changed the paths it produced. All three producers now
   agree. Patches written before this still apply, reverse and merge: the
   appliers accept a Go field name as well.
+
+- **JSON names are escaped into paths.** A tag holding "/" or "~" —
+  `json:"a/b"` — was spliced into a path raw by both engines, producing an
+  operation that addresses a field `a` holding a `b`: nothing. `Diff` then did
+  not round-trip through `Apply`, and the failure came halfway through, leaving
+  the target partly patched. Both engines now escape per RFC 6901.
 
 - **`json:"-"` keeps a field out of patches under the reflection engine too.**
   The tag was honoured only by generated code, so a type without it diffed its

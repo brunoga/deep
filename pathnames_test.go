@@ -157,3 +157,78 @@ func TestConditionsAcceptBothNameForms(t *testing.T) {
 		}
 	}
 }
+
+// escapeNeeded has no generated code, so this exercises the reflection
+// engine. A JSON tag is arbitrary text, and one holding "/" or "~" has to be
+// escaped into the path or it addresses a different place — or nothing.
+type escapeNeeded struct {
+	Ratio int    `json:"a/b"`
+	Tilde int    `json:"c~d"`
+	Plain string `json:"plain"`
+}
+
+func TestJSONNamesAreEscapedIntoPaths(t *testing.T) {
+	a := escapeNeeded{Ratio: 1, Tilde: 1, Plain: "a"}
+	b := escapeNeeded{Ratio: 2, Tilde: 2, Plain: "b"}
+
+	p, err := deep.Diff(a, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, op := range p.Operations {
+		got[op.Path] = true
+	}
+	for _, want := range []string{"/a~1b", "/c~0d", "/plain"} {
+		if !got[want] {
+			t.Errorf("missing %s in %v", want, got)
+		}
+	}
+
+	// The round trip is the point: an unescaped "/a/b" addresses a field "a"
+	// holding a "b", which is nothing, and the apply fails halfway.
+	target := a
+	if err := deep.Apply(&target, p); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if target != b {
+		t.Fatalf("diff and apply did not round-trip: %+v", target)
+	}
+
+	back := target
+	if err := deep.Apply(&back, p.Reverse()); err != nil {
+		t.Fatalf("reverse: %v", err)
+	}
+	if back != a {
+		t.Fatalf("reverse did not return to the start: %+v", back)
+	}
+}
+
+// json:"-," is not json:"-": encoding/json reads it as a field genuinely
+// named "-", and deep has to agree about what the document contains.
+type dashNamed struct {
+	Kept    string `json:"-,"`
+	Skipped string `json:"-"`
+}
+
+func TestDashCommaNamesAFieldRatherThanHidingIt(t *testing.T) {
+	a := dashNamed{Kept: "old", Skipped: "secret-old"}
+	b := dashNamed{Kept: "new", Skipped: "secret-new"}
+
+	p, err := deep.Diff(a, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Operations) != 1 || p.Operations[0].Path != "/-" {
+		t.Fatalf("want one operation at /-, got %s", p)
+	}
+
+	// And the document agrees: encoding/json emits the field as "-" too.
+	data, err := json.Marshal(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"-":"old"`) {
+		t.Fatalf("encoding/json disagrees about the document: %s", data)
+	}
+}

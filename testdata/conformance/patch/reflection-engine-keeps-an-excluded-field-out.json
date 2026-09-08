@@ -1,8 +1,5 @@
 {
   "name": "reflection engine keeps an excluded field out",
-  "keys": {
-    "/items": "id"
-  },
   "before": {
     "label": "first",
     "depth": 1,
