@@ -6,6 +6,38 @@ All notable changes to this project are documented here, newest first.
 > version's entry before tagging, so the tag, the GitHub release notes, and this
 > file always agree.
 
+## v6.5.0
+
+### Changed
+
+- **Generated code diffs into map values of generated types.** A changed
+  entry in a `map[string]Player` used to diff as one whole-entry replace
+  where the reflection engine produced `/players/ana/x` — the generated and
+  reflection paths disagreed on granularity. Generated diffs now descend:
+  cycle-free values through the element's own `Diff` (guarded by `Equal`, so
+  unchanged entries still cost a comparison and no allocation), values of
+  shared — possibly cyclic — types through the memo-threading `diffShared`,
+  which is what keeps a `map[string]Edge` whose edges point back into the
+  graph from recursing forever. Found building the arena example, whose
+  per-tick diffs are all map entries.
+
+### Added
+
+- **A second complete example system.** `examples/arena` is a multiplayer
+  game whose netcode is the library's hot path: the server diffs the world
+  each tick and broadcasts only the patch (gob frames), replicas prove
+  themselves drift-free against periodic snapshots, actions are conditional
+  patches (stale moves skip; two players racing for one gem produce exactly
+  one winner), and the replay file is the patch stream itself — played with
+  `Apply`, rewound with `Reverse`, compacted into keyframes by diffing
+  boundary states.
+
+  That last point is a lesson the example codifies: `Merge` resolves
+  *concurrent* edits, and composing *sequential* patches with it drops an
+  add in favour of a later edit under the added path. Both examples now
+  compact by diffing boundary states instead; the incident example's log
+  compaction carried exactly this flaw and is fixed in the same release.
+
 ## v6.4.0
 
 ### Added
