@@ -1291,12 +1291,23 @@ func (t *Doc) diffShared(other *Doc, seen *gen.DiffMemo, at string) deep.Patch[D
 						p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/stages/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
 						continue
 					}
-					if oldV, ok := t.Stages[k]; !ok || !oldV.Equal(v) {
-						kind := deep.OpReplace
-						if !ok {
-							kind = deep.OpAdd
+					oldV, ok := t.Stages[k]
+					switch {
+					case !ok:
+						p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpAdd, Path: at + "/stages/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
+					case (oldV == nil) != (v == nil):
+						p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/stages/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: oldV, New: v})
+					case oldV != nil && !oldV.Equal(v):
+						sub := oldV.Diff(v)
+						prefix := at + "/stages/" + deep.EscapePathKey(fmt.Sprintf("%v", k))
+						for _, op := range sub.Operations {
+							if op.Path == "" || op.Path == "/" {
+								op.Path = prefix
+							} else {
+								op.Path = prefix + op.Path
+							}
+							p.Operations = append(p.Operations, op)
 						}
-						p.Operations = append(p.Operations, deep.Operation{Kind: kind, Path: at + "/stages/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: oldV, New: v})
 					}
 				}
 			}

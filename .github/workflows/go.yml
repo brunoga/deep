@@ -90,3 +90,15 @@ jobs:
       - name: Test incident example
         run: go test -race -v ./...
         working-directory: examples/incident
+
+      - name: Build arena example
+        run: go build -v ./...
+        working-directory: examples/arena
+
+      - name: Vet arena example
+        run: go vet ./...
+        working-directory: examples/arena
+
+      - name: Test arena example
+        run: go test -race -v ./...
+        working-directory: examples/arena

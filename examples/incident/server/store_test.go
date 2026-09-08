@@ -267,3 +267,54 @@ func TestTraversalIDsRejected(t *testing.T) {
 		}
 	}
 }
+
+// The compaction shape Merge gets wrong: an entry that adds a task followed
+// by entries editing it. The baseline must still carry the task itself —
+// replaying baseline + tail over the pre-compaction origin state must land
+// exactly on the current incident.
+func TestCompactionSurvivesAddThenEdit(t *testing.T) {
+	s := newTestStore(t)
+	origin, _ := s.Get("inc-1")
+
+	steps := []deep.Patch[model.Incident]{
+		{Operations: []deep.Operation{{Kind: deep.OpAdd, Path: "/tasks/t3",
+			New: model.Task{ID: "t3", Text: "new task"}}}},
+		deep.NewPatch[model.Incident]().With(
+			deep.Set(deep.PathString[model.Incident, string]("/tasks/t3/owner"), "ana")).Build(),
+		deep.NewPatch[model.Incident]().With(
+			deep.Set(deep.PathString[model.Incident, bool]("/tasks/t3/done"), true)).Build(),
+		deep.NewPatch[model.Incident]().With(
+			deep.Set(deep.PathString[model.Incident, string]("/title"), "renamed")).Build(),
+	}
+	for _, p := range steps {
+		if _, err := s.ApplyPatch("inc-1", "ana", wirePatch(t, p)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	current, _ := s.Get("inc-1")
+
+	if err := s.Compact("inc-1", 1); err != nil {
+		t.Fatal(err)
+	}
+	history, _ := s.History("inc-1")
+	if len(history) != 2 {
+		t.Fatalf("want baseline + 1 entry, got %d", len(history))
+	}
+
+	// Replay the compacted log over the origin.
+	replayed := deep.Clone(origin)
+	for _, entry := range history {
+		if err := deep.Apply(&replayed, entry.Patch); err != nil {
+			t.Fatalf("replaying compacted entry #%d: %v", entry.Seq, err)
+		}
+	}
+	// Entries never carry /updated (the server stamps it outside the
+	// canonical diff), so align it before comparing.
+	replayed.Updated = current.Updated
+	if !deep.Equal(replayed, current) {
+		t.Fatalf("compacted log does not reproduce the incident:\n got  %+v\n want %+v", replayed, current)
+	}
+	if replayed.Tasks[len(replayed.Tasks)-1].ID != "t3" || !replayed.Tasks[len(replayed.Tasks)-1].Done {
+		t.Fatalf("t3 lost in compaction: %+v", replayed.Tasks)
+	}
+}

@@ -457,3 +457,59 @@ func BenchmarkApplyGeneratedWirePatch(b *testing.B) {
 		}
 	}
 }
+
+type shieldedInner struct {
+	Open   string `json:"open"`
+	Sealed string `json:"sealed" deep:"readonly"`
+	Hidden string `json:"hidden" deep:"-"`
+}
+
+type shieldedOuter struct {
+	Items map[string]shieldedInner `json:"items"`
+	Rows  []shieldedInner          `json:"rows"`
+}
+
+// deep tags hold at every path depth: a readonly field is refused and an
+// ignored one is a silent no-op whether the operation names it directly or
+// reaches it through a map entry or slice element.
+func TestTagsEnforcedAlongNestedPaths(t *testing.T) {
+	base := shieldedOuter{
+		Items: map[string]shieldedInner{"a": {Open: "x", Sealed: "locked", Hidden: "secret"}},
+		Rows:  []shieldedInner{{Open: "x", Sealed: "locked"}},
+	}
+
+	for _, path := range []string{"/items/a/sealed", "/rows/0/sealed"} {
+		w := deep.Clone(base)
+		err := deep.Apply(&w, deep.Patch[shieldedOuter]{Operations: []deep.Operation{
+			{Kind: deep.OpReplace, Path: path, New: "overwritten"}}})
+		if err == nil {
+			t.Errorf("%s: readonly write accepted", path)
+		}
+		if !deep.Equal(w, base) {
+			t.Errorf("%s: readonly write mutated the value", path)
+		}
+	}
+
+	// Ignored fields: silently skipped, like diffs never emitting them. Built
+	// by hand, not cloned — deep:"-" is invisible to Clone as well, which
+	// would empty the field before the apply had anything to prove.
+	w := shieldedOuter{
+		Items: map[string]shieldedInner{"a": {Open: "x", Sealed: "locked", Hidden: "secret"}},
+	}
+	if err := deep.Apply(&w, deep.Patch[shieldedOuter]{Operations: []deep.Operation{
+		{Kind: deep.OpReplace, Path: "/items/a/hidden", New: "seen"}}}); err != nil {
+		t.Fatalf("ignored write errored: %v", err)
+	}
+	if w.Items["a"].Hidden != "secret" {
+		t.Fatalf("ignored field written through a nested path: %+v", w.Items["a"])
+	}
+
+	// Open fields on the same routes still write.
+	if err := deep.Apply(&w, deep.Patch[shieldedOuter]{Operations: []deep.Operation{
+		{Kind: deep.OpReplace, Path: "/items/a/open", New: "written"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if w.Items["a"].Open != "written" {
+		t.Fatalf("open nested write lost: %+v", w.Items["a"])
+	}
+}

@@ -6,6 +6,56 @@ All notable changes to this project are documented here, newest first.
 > version's entry before tagging, so the tag, the GitHub release notes, and this
 > file always agree.
 
+## v6.5.0
+
+### Changed
+
+- **Generated code diffs into map values of generated types.** A changed
+  entry in a `map[string]Player` used to diff as one whole-entry replace
+  where the reflection engine produced `/players/ana/x` — the generated and
+  reflection paths disagreed on granularity. Generated diffs now descend:
+  cycle-free values through the element's own `Diff` (guarded by `Equal`, so
+  unchanged entries still cost a comparison and no allocation), values of
+  shared — possibly cyclic — types through the memo-threading `diffShared`,
+  which is what keeps a `map[string]Edge` whose edges point back into the
+  graph from recursing forever. Found building the arena example, whose
+  per-tick diffs are all map entries.
+
+  Two semantic consequences, both aligning generated types with what
+  reflection-diffed types already did. A patch naming a field inside a map
+  entry the receiver does not hold now fails to apply, where the old
+  whole-entry replace incidentally upserted the entry — a receiver that has
+  diverged should resynchronize, not invent an entry from one field. And a
+  strict patch verifies the Old of each changed field rather than the whole
+  previous entry, so a concurrent change to a *different* field of the same
+  entry no longer registers as a conflict — the same narrowing of the
+  conflict unit that per-field diffs bring everywhere else.
+
+- **`deep:"readonly"` and `deep:"-"` are enforced along the whole apply
+  path.** The reflection applier checked struct tags only on a path's first
+  segment, so an operation reaching a protected field through a map entry or
+  slice element — `/players/ana/joinedAt` — wrote straight through it.
+  Nested readonly fields now refuse the operation and nested ignored fields
+  skip it, at any depth. Fine-grained map diffs made such paths common, but
+  the hole predates them.
+
+### Added
+
+- **A second complete example system.** `examples/arena` is a multiplayer
+  game whose netcode is the library's hot path: the server diffs the world
+  each tick and broadcasts only the patch (gob frames), replicas prove
+  themselves drift-free against periodic snapshots, actions are conditional
+  patches (stale moves skip; two players racing for one gem produce exactly
+  one winner), and the replay file is the patch stream itself — played with
+  `Apply`, rewound with `Reverse`, compacted into keyframes by diffing
+  boundary states.
+
+  That last point is a lesson the example codifies: `Merge` resolves
+  *concurrent* edits, and composing *sequential* patches with it drops an
+  add in favour of a later edit under the added path. Both examples now
+  compact by diffing boundary states instead; the incident example's log
+  compaction carried exactly this flaw and is fixed in the same release.
+
 ## v6.4.0
 
 ### Added

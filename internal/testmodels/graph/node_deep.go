@@ -1083,12 +1083,13 @@ func (t *Node) diffShared(other *Node, seen *gen.DiffMemo, at string) deep.Patch
 						p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: at + "/links/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
 						continue
 					}
-					if oldV, ok := t.Links[k]; !ok || !oldV.Equal(&v) {
-						kind := deep.OpReplace
-						if !ok {
-							kind = deep.OpAdd
-						}
-						p.Operations = append(p.Operations, deep.Operation{Kind: kind, Path: at + "/links/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: oldV, New: v})
+					oldV, ok := t.Links[k]
+					switch {
+					case !ok:
+						p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpAdd, Path: at + "/links/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
+					case !oldV.Equal(&v):
+						sub := (&oldV).diffShared(&v, seen, at+"/links/"+deep.EscapePathKey(fmt.Sprintf("%v", k)))
+						p.Operations = append(p.Operations, sub.Operations...)
 					}
 				}
 			}

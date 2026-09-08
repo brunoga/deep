@@ -358,9 +358,27 @@ func (s *Store) Compact(id string, keep int) error {
 	head := rec.log[:len(rec.log)-keep]
 	tail := rec.log[len(rec.log)-keep:]
 
-	merged := head[0].Patch
-	for _, entry := range head[1:] {
-		merged = deep.Merge(merged, entry.Patch, nil) // nil resolver: later wins
+	// The baseline is a diff between the head's boundary states, not a merge
+	// of its patches: Merge resolves *concurrent* edits, and its collision
+	// rule would drop an entry's "Add /tasks/t3" in favour of a later
+	// entry's "/tasks/t3/done" — a baseline that cannot apply. The boundary
+	// states are reconstructed by reversing canonical entries back from the
+	// current state, which is what canonical entries are for.
+	afterHead := deep.Clone(*rec.inc)
+	for i := len(rec.log) - 1; i >= len(head); i-- {
+		if err := deep.Apply(&afterHead, rec.log[i].Patch.Reverse()); err != nil {
+			return fmt.Errorf("compacting %s: reversing #%d: %w", id, rec.log[i].Seq, err)
+		}
+	}
+	beforeHead := deep.Clone(afterHead)
+	for i := len(head) - 1; i >= 0; i-- {
+		if err := deep.Apply(&beforeHead, head[i].Patch.Reverse()); err != nil {
+			return fmt.Errorf("compacting %s: reversing #%d: %w", id, head[i].Seq, err)
+		}
+	}
+	merged, err := deep.Diff(beforeHead, afterHead)
+	if err != nil {
+		return fmt.Errorf("compacting %s: %w", id, err)
 	}
 	base := LogEntry{
 		Seq:    head[len(head)-1].Seq,

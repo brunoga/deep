@@ -786,12 +786,17 @@ Every directory under [`examples/`](examples/) is a runnable program (`go run ./
 | [`lww_fields`](examples/lww_fields) | Per-field `LWW[T]` registers resolving a write conflict |
 | [`text_sync`](examples/text_sync) | Collaborative text with `crdt.Text` |
 
-**A complete system**
+**Complete systems**
 
 [`incident`](examples/incident) composes the whole library into one working
 application — an incident-management server with a patch-driven API, an audit
 log of reversible patches, collaborative notes over websockets, and a CLI —
 with a feature map pointing at where each library feature does its job.
+
+[`arena`](examples/arena) is a multiplayer game built on per-tick diffs: the
+server broadcasts only what changed each tick, player actions travel as
+conditional patches, and the replay file is the patch stream itself —
+applied forward, reversed backward, collapsed into keyframes.
 
 ## Migrating from v5
 

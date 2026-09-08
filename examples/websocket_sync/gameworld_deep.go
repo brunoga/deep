@@ -163,12 +163,21 @@ func (t *GameWorld) Diff(other *GameWorld) deep.Patch[GameWorld] {
 						p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpReplace, Path: "/players/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
 						continue
 					}
-					if oldV, ok := t.Players[k]; !ok || !oldV.Equal(&v) {
-						kind := deep.OpReplace
-						if !ok {
-							kind = deep.OpAdd
+					oldV, ok := t.Players[k]
+					switch {
+					case !ok:
+						p.Operations = append(p.Operations, deep.Operation{Kind: deep.OpAdd, Path: "/players/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), New: v})
+					case !oldV.Equal(&v):
+						sub := oldV.Diff(&v)
+						prefix := "/players/" + deep.EscapePathKey(fmt.Sprintf("%v", k))
+						for _, op := range sub.Operations {
+							if op.Path == "" || op.Path == "/" {
+								op.Path = prefix
+							} else {
+								op.Path = prefix + op.Path
+							}
+							p.Operations = append(p.Operations, op)
 						}
-						p.Operations = append(p.Operations, deep.Operation{Kind: kind, Path: "/players/" + deep.EscapePathKey(fmt.Sprintf("%v", k)), Old: oldV, New: v})
 					}
 				}
 			}
