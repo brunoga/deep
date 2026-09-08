@@ -55,6 +55,21 @@ Positions are counted in **code points**: an astral character is one
 character, as it is in Go, so an editor that counted UTF-16 units would place
 every later edit one position off.
 
+Two rules that are easy to miss, and quiet when broken:
+
+- **`node` must be unique per replica**, not per person. Two tabs sharing one
+  identity are one peer as far as presence is concerned, and — worse — they
+  allocate colliding identifiers for the characters they insert, so text goes
+  missing with no error anywhere. A per-tab random string is enough.
+- **`onUpdate` fires for changes that arrive, not for your own.** `insert` and
+  `delete` publish and mutate the document in place, so redraw after calling
+  them; the listener is for everyone else. An editor drawing peers' cursors
+  wants both paths, since its own typing moves their positions too.
+
+[`examples/editor`](https://github.com/brunoga/deep/tree/main/examples/editor)
+is a working editor built on exactly this: carets and selections for
+everybody in the room, and no server arbitration.
+
 ## API
 
 | Function | Does |
