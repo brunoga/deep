@@ -1,20 +1,25 @@
 {
   "name": "@brunoga/deep-patch",
   "version": "0.1.0",
-  "description": "Produce and apply deep patches from JavaScript — the wire format of github.com/brunoga/deep",
+  "description": "Produce and apply deep patches from JavaScript \u2014 the wire format of github.com/brunoga/deep",
   "type": "module",
-  "main": "./src/index.ts",
-  "types": "./src/index.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
   },
   "files": [
+    "dist",
     "src",
     "README.md"
   ],
   "scripts": {
-    "test": "node --test test/",
-    "typecheck": "tsc --noEmit"
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json"
   },
   "keywords": [
     "diff",

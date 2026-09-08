@@ -1,0 +1,58 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>commandpost</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="stylesheet" href="app.css" />
+
+<!--
+  The package is served beside this page, so it is imported by its real name
+  rather than by a relative path into somebody's node_modules.
+-->
+<script type="importmap">
+  { "imports": { "@brunoga/deep-patch": "./deep-patch/index.js" } }
+</script>
+
+<header>
+  <h1>commandpost</h1>
+  <label>you are <input id="who" value="web" size="8" /></label>
+  <label>token <input id="token" size="8" placeholder="none" /></label>
+  <span id="status">connecting…</span>
+</header>
+
+<main>
+  <section id="list-pane">
+    <h2>incidents</h2>
+    <ul id="incidents"></ul>
+  </section>
+
+  <section id="detail-pane" hidden>
+    <h2 id="title"></h2>
+    <p id="summary"></p>
+
+    <div id="controls">
+      <button data-act="escalate" data-arg="1">escalate to SEV1</button>
+      <button data-act="status" data-arg="mitigated">mitigated</button>
+      <button data-act="status" data-arg="resolved">resolved</button>
+      <button data-act="close">close</button>
+    </div>
+
+    <h3>tasks</h3>
+    <ul id="tasks"></ul>
+
+    <h3>notes</h3>
+    <pre id="notes"></pre>
+  </section>
+
+  <aside id="wire-pane">
+    <h2>on the wire</h2>
+    <p class="hint">
+      Every button builds a patch here and posts it. The server has no idea
+      whether it came from this page or from the Go CLI — it is the same
+      format, with the same conditions.
+    </p>
+    <pre id="wire">nothing sent yet</pre>
+    <div id="outcome"></div>
+  </aside>
+</main>
+
+<script type="module" src="app.js"></script>

@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/brunoga/deep/examples/incident/server"
@@ -26,6 +27,9 @@ func main() {
 	data := flag.String("data", "./data", "data directory")
 	token := flag.String("token", "", "bearer token required on every request (empty: no auth)")
 	evict := flag.Duration("evict", 5*time.Minute, "how long an empty notes room lingers before persisting to disk")
+	defaultWeb, defaultPkg := server.DefaultWebDirs()
+	webDir := flag.String("web", defaultWeb, "directory holding the browser client")
+	pkgDir := flag.String("js", defaultPkg, "directory holding the JavaScript patch package (js/dist)")
 	flag.Parse()
 
 	store, err := server.Open(filepath.Join(*data, "incidents"))
@@ -49,11 +53,19 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.Handle("/ws", notes)
+	// The browser client lives under /app/; everything else is the API, which
+	// both it and the Go clients speak.
+	mux.Handle("/app/", http.StripPrefix("/app", server.WebHandler(*webDir, *pkgDir)))
 	mux.Handle("/", api)
 
 	srv := &http.Server{Addr: *addr, Handler: mux}
 	go func() {
 		log.Printf("incidentd listening on %s (data: %s)", *addr, *data)
+		hint := *addr
+		if strings.HasPrefix(hint, ":") {
+			hint = "localhost" + hint
+		}
+		log.Printf("browser client at http://%s/app/", hint)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatalf("serving: %v", err)
 		}

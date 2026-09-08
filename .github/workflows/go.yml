@@ -145,3 +145,20 @@ jobs:
       - name: Test JavaScript package
         run: node --test test/*.test.ts
         working-directory: js
+
+      # dist/ is committed so the browser client works from a checkout with no
+      # build step, the way generated Go code does. Rebuilding must not change
+      # it.
+      - name: Check the built package is current
+        run: |
+          npm run build
+          if [ -n "$(git status --porcelain dist)" ]; then
+            echo "js/dist is stale — run npm run build in js/ and commit:"
+            git status --porcelain dist
+            exit 1
+          fi
+        working-directory: js
+
+      - name: Test the browser client
+        run: node --test web/test/*.test.js
+        working-directory: examples/incident
