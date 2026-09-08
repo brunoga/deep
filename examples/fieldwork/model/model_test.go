@@ -139,8 +139,13 @@ func TestGeneratedAgreesWithReflection(t *testing.T) {
 }
 
 func TestWorse(t *testing.T) {
-	if Worse(StatusOK, StatusFault) != StatusFault || Worse(StatusOffline, StatusAttention) != StatusOffline {
+	if Worse(StatusOK, StatusFault) != StatusFault || Worse(StatusOffline, StatusAttention) != StatusAttention {
 		t.Fatal("severity ordering broken")
+	}
+	// The ordering exists to protect observations from silence: a fault
+	// somebody saw outranks telemetry that merely lost contact.
+	if Worse(StatusFault, StatusOffline) != StatusFault {
+		t.Fatal("offline outranked an observed fault")
 	}
 	if Worse(Status("garbage"), StatusOK) != Status("garbage") {
 		t.Fatal("unknown status must rank worst, not vanish")

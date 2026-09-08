@@ -27,7 +27,7 @@ func main() {
 	store := server.NewStore()
 	if *seed {
 		for _, a := range demoAssets() {
-			if err := store.Create(a); err != nil {
+			if _, _, err := store.Create(a); err != nil {
 				log.Fatalf("seeding %s: %v", a.ID, err)
 			}
 		}

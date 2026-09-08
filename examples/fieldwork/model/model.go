@@ -27,10 +27,15 @@ const (
 	StatusOffline   Status = "offline"
 )
 
-// severity orders statuses worst-last for comparison; unknown is worst of
-// all, so garbage never wins a merge.
+// severity ranks statuses for merging. The ordering is a judgement, and the
+// judgement is that a fault outranks silence: "offline" says only that
+// nobody can reach the asset, while "attention" and "fault" are things
+// somebody actually observed — and a technician standing in front of a
+// leaking pump must not have their report overruled by telemetry that
+// merely lost contact. Unknown statuses rank worst of all, so garbage never
+// wins a merge quietly.
 var severity = map[Status]int{
-	StatusOK: 0, StatusAttention: 1, StatusFault: 2, StatusOffline: 3,
+	StatusOK: 0, StatusOffline: 1, StatusAttention: 2, StatusFault: 3,
 }
 
 // Valid reports whether s is a defined status.

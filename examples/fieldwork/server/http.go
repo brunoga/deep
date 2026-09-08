@@ -95,11 +95,7 @@ func (a *API) create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid asset: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := a.store.Create(asset); err != nil {
-		writeError(w, err)
-		return
-	}
-	created, version, err := a.store.Get(asset.ID)
+	created, version, err := a.store.Create(asset)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -128,12 +124,7 @@ func (a *API) change(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid patch: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	version, err := a.store.Change(r.PathValue("id"), author(r), p)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	asset, _, err := a.store.Get(r.PathValue("id"))
+	asset, version, err := a.store.Change(r.PathValue("id"), author(r), p)
 	if err != nil {
 		writeError(w, err)
 		return

@@ -97,7 +97,7 @@ func (s *Store) syncOne(author string, push Push) PushResult {
 			var serverSince deep.Patch[model.Asset]
 			serverSince, err = deep.Diff(base, *rec.asset)
 			if err == nil {
-				merged, conflicts := mergeWithPolicy(serverSince, push.Patch)
+				merged, conflicts := mergeWithPolicy(base, serverSince, push.Patch)
 				res.Conflicts = conflicts
 				work, err = apply(base, merged)
 			}
@@ -119,11 +119,14 @@ func (s *Store) syncOne(author string, push Push) PushResult {
 // settles. deep.Merge consults the resolver only where both sides wrote the
 // same path; enclosing collisions keep the technician's operation (Merge's
 // other-wins rule) and are reported as such.
-func mergeWithPolicy(server, client deep.Patch[model.Asset]) (deep.Patch[model.Asset], []Conflict) {
+//
+// base is the state both sides diverged from, which the policy needs to tell
+// what each side *added* from what each side merely carried along.
+func mergeWithPolicy(base model.Asset, server, client deep.Patch[model.Asset]) (deep.Patch[model.Asset], []Conflict) {
 	var conflicts []Conflict
 
 	resolver := deep.ResolverFunc(func(path string, theirs, mine any) any {
-		chosen, kept := policy(path, theirs, mine)
+		chosen, kept := policy(base, path, theirs, mine)
 		conflicts = append(conflicts, Conflict{
 			Path:   path,
 			Mine:   toJSON(mine),
@@ -136,14 +139,21 @@ func mergeWithPolicy(server, client deep.Patch[model.Asset]) (deep.Patch[model.A
 
 	// Enclosing collisions — one side wrote /checks, the other /checks/x/done
 	// — are settled structurally by Merge (the client's operation survives);
-	// find and report them so no overridden edit disappears in silence.
-	serverPaths := map[string]bool{}
+	// find and report them so no overridden edit disappears in silence. One
+	// report per overridden server path, however many client operations
+	// happened to fall inside it.
+	serverPaths := make([]string, 0, len(server.Operations))
 	for _, op := range server.Operations {
-		serverPaths[op.Path] = true
+		serverPaths = append(serverPaths, op.Path)
 	}
+	reported := map[string]bool{}
 	for _, op := range client.Operations {
-		for sp := range serverPaths {
-			if sp != op.Path && (encloses(sp, op.Path) || encloses(op.Path, sp)) {
+		for _, sp := range serverPaths {
+			if reported[sp] || sp == op.Path {
+				continue
+			}
+			if encloses(sp, op.Path) || encloses(op.Path, sp) {
+				reported[sp] = true
 				conflicts = append(conflicts, Conflict{Path: sp, Kept: "mine"})
 			}
 		}
@@ -152,7 +162,7 @@ func mergeWithPolicy(server, client deep.Patch[model.Asset]) (deep.Patch[model.A
 }
 
 // policy is the field rulebook for head-on collisions.
-func policy(path string, theirs, mine any) (any, string) {
+func policy(base model.Asset, path string, theirs, mine any) (any, string) {
 	switch {
 	case strings.HasPrefix(path, "/readings/"):
 		// Measurements come from whoever stood at the asset.
@@ -165,20 +175,50 @@ func policy(path string, theirs, mine any) (any, string) {
 		}
 		return theirs, "theirs"
 	case path == "/notes":
-		// Nobody's field notes get thrown away.
-		a, b := asString(theirs), asString(mine)
-		if a == "" || b == "" || a == b {
-			if b != "" {
-				return mine, "mine"
-			}
-			return theirs, "theirs"
-		}
-		return a + "\n" + b, "combined"
+		// Nobody's field notes get thrown away — but neither side's copy of
+		// what was already there gets duplicated. Notes are appended to on
+		// both sides, so the merge keeps the shared text once and then each
+		// side's addition to it.
+		return mergeNotes(base.Notes, asString(theirs), asString(mine))
 	default:
 		// Everything else — assignment, naming, checklist edits — is the
 		// office's call.
 		return theirs, "theirs"
 	}
+}
+
+// mergeNotes combines two edits of the same note field against the text they
+// both started from. When both sides appended — the normal case — the result
+// is the shared text plus each addition, once. When a side rewrote the text
+// instead of appending, there is no shared prefix to preserve and both
+// versions are kept whole rather than guessing.
+func mergeNotes(base, theirs, mine string) (any, string) {
+	switch {
+	case theirs == mine:
+		return mine, "mine"
+	case mine == base:
+		return theirs, "theirs"
+	case theirs == base:
+		return mine, "mine"
+	}
+	if strings.HasPrefix(theirs, base) && strings.HasPrefix(mine, base) {
+		out := base
+		for _, add := range []string{
+			strings.TrimPrefix(theirs, base),
+			strings.TrimPrefix(mine, base),
+		} {
+			add = strings.Trim(add, "\n")
+			if add == "" {
+				continue
+			}
+			if out != "" {
+				out += "\n"
+			}
+			out += add
+		}
+		return out, "combined"
+	}
+	return theirs + "\n" + mine, "combined"
 }
 
 func toJSON(v any) json.RawMessage {

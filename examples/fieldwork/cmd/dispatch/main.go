@@ -14,7 +14,9 @@ package main
 import (
 	"flag"
 	"fmt"
+	"maps"
 	"os"
+	"slices"
 	"strings"
 
 	deep "github.com/brunoga/deep/v6"
@@ -94,7 +96,10 @@ func run(c *client.Client, args []string) error {
 			fmt.Printf(", assigned to %s", resp.Asset.Assignee)
 		}
 		fmt.Println()
-		for sensor, r := range resp.Asset.Readings {
+		// Sorted, not map order: two runs of the same command must not
+		// print the same asset differently.
+		for _, sensor := range slices.Sorted(maps.Keys(resp.Asset.Readings)) {
+			r := resp.Asset.Readings[sensor]
 			fmt.Printf("    %-8s %g %s (%s)\n", sensor, r.Value, r.Unit, r.By)
 		}
 		for _, ch := range resp.Asset.Checks {

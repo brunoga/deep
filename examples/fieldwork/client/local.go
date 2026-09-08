@@ -46,6 +46,11 @@ type entry struct {
 
 // Local is the on-device store.
 type Local struct {
+	// Damaged names records that could not be read at startup and were set
+	// aside (as <id>.json.corrupt) so the rest of the device still works.
+	// They come back on the next sync as ordinary downloads.
+	Damaged []string
+
 	mu      sync.Mutex
 	dir     string
 	entries map[string]*entry
@@ -62,23 +67,37 @@ func OpenLocal(dir string) (*Local, error) {
 		return nil, err
 	}
 	for _, f := range files {
+		id := strings.TrimSuffix(filepath.Base(f), ".json")
 		data, err := os.ReadFile(f)
 		if err != nil {
 			return nil, err
 		}
 		var e entry
-		if err := json.Unmarshal(data, &e); err != nil {
-			return nil, fmt.Errorf("reading %s: %w", f, err)
+		// A record this device cannot read is set aside rather than allowed
+		// to stop the whole device from starting: a technician with one
+		// damaged file still has every other asset. The file name is the
+		// authority on identity, so a record whose contents disagree with it
+		// is damaged too — storing it under the embedded id would leave the
+		// original file behind to reappear at the next start.
+		if err := json.Unmarshal(data, &e); err != nil || e.Working.ID != id {
+			quarantine := f + ".corrupt"
+			if renameErr := os.Rename(f, quarantine); renameErr != nil {
+				return nil, fmt.Errorf("unreadable record %s (and it could not be set aside: %w)", f, renameErr)
+			}
+			l.Damaged = append(l.Damaged, id)
+			continue
 		}
-		l.entries[e.Working.ID] = &e
+		l.entries[id] = &e
 	}
 	return l, nil
 }
 
 func (l *Local) path(id string) string { return filepath.Join(l.dir, id+".json") }
 
-// saveLocked writes one entry through a temp file and a rename, so a device
-// losing power mid-write keeps the previous state rather than a half one.
+// saveLocked writes one entry durably: a temp file, flushed to the device
+// before it is renamed into place, and the directory flushed after — so a
+// battery pulled at any moment leaves either the previous record or the new
+// one, never half of either. This is a field device; it will happen.
 func (l *Local) saveLocked(e *entry) error {
 	if !model.IDPattern.MatchString(e.Working.ID) {
 		return fmt.Errorf("refusing to store asset with id %q", e.Working.ID)
@@ -88,10 +107,30 @@ func (l *Local) saveLocked(e *entry) error {
 		return err
 	}
 	tmp := l.path(e.Working.ID) + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, l.path(e.Working.ID))
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, l.path(e.Working.ID)); err != nil {
+		return err
+	}
+	dir, err := os.Open(l.dir)
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	return dir.Sync()
 }
 
 // Adopt records an authoritative state from the server: shadow and working
@@ -101,8 +140,13 @@ func (l *Local) Adopt(a model.Asset, version int64) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	e := &entry{Shadow: deep.Clone(a), Working: deep.Clone(a), BaseVersion: version}
+	// Disk first: a failed write must not leave memory claiming a state the
+	// device would not have after a restart.
+	if err := l.saveLocked(e); err != nil {
+		return err
+	}
 	l.entries[a.ID] = e
-	return l.saveLocked(e)
+	return nil
 }
 
 // Get returns the working copy — what the technician is looking at.
@@ -146,8 +190,12 @@ func (l *Local) Edit(id string, fn func(*model.Asset)) error {
 	if work.ID != e.Working.ID {
 		return fmt.Errorf("an edit may not change an asset's id")
 	}
-	e.Working = work
-	return l.saveLocked(e)
+	next := &entry{Shadow: e.Shadow, Working: work, BaseVersion: e.BaseVersion}
+	if err := l.saveLocked(next); err != nil {
+		return err
+	}
+	*e = *next
+	return nil
 }
 
 // Pending is one asset's outstanding local work.
@@ -216,6 +264,10 @@ func (l *Local) Revert(id string) error {
 	if !ok {
 		return fmt.Errorf("%w: %q", ErrUnknownAsset, id)
 	}
-	e.Working = deep.Clone(e.Shadow)
-	return l.saveLocked(e)
+	next := &entry{Shadow: e.Shadow, Working: deep.Clone(e.Shadow), BaseVersion: e.BaseVersion}
+	if err := l.saveLocked(next); err != nil {
+		return err
+	}
+	*e = *next
+	return nil
 }

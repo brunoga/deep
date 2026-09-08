@@ -65,8 +65,8 @@ The policy is domain knowledge, and it is small:
 | Path | Winner | Because |
 | :--- | :--- | :--- |
 | `/readings/*` | the field | whoever stood at the asset measured it |
-| `/status` | the worse of the two | a fault seen by either side is a fault |
-| `/notes` | both, concatenated | nobody's field notes get thrown away |
+| `/status` | the worse of the two | a fault seen by either side is a fault — and an observed fault outranks telemetry that merely lost contact |
+| `/notes` | both additions, kept once | nobody's field notes get thrown away — and the text both sides started from is not duplicated |
 | everything else | the office | assignment and scheduling are dispatch's call |
 
 Every decision the resolver makes is recorded and returned, so the technician

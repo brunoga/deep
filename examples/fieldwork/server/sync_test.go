@@ -13,7 +13,7 @@ import (
 func seeded(t *testing.T) *Store {
 	t.Helper()
 	s := NewStore()
-	if err := s.Create(model.Asset{
+	if _, _, err := s.Create(model.Asset{
 		ID: "pump-7", Name: "Intake pump 7", Site: "riverside", Status: model.StatusOK,
 		Assignee: "ana",
 		Readings: map[string]model.Reading{"ph": {Value: 7.1, Unit: "pH"}},
@@ -75,7 +75,7 @@ func TestSyncMergeDisjoint(t *testing.T) {
 	base, version, _ := s.Get("pump-7")
 
 	// Office moves first (online, direct).
-	if _, err := s.Change("pump-7", "dispatch", diffFrom(t, base, func(a *model.Asset) {
+	if _, _, err := s.Change("pump-7", "dispatch", diffFrom(t, base, func(a *model.Asset) {
 		a.Assignee = "bruno"
 	})); err != nil {
 		t.Fatal(err)
@@ -102,7 +102,7 @@ func TestSyncPolicyConflicts(t *testing.T) {
 	base, version, _ := s.Get("pump-7")
 
 	// Office: status attention, same reading changed, a note, reassignment.
-	if _, err := s.Change("pump-7", "dispatch", diffFrom(t, base, func(a *model.Asset) {
+	if _, _, err := s.Change("pump-7", "dispatch", diffFrom(t, base, func(a *model.Asset) {
 		a.Status = model.StatusAttention
 		r := a.Readings["ph"]
 		r.Value, r.By = 7.5, "scada"
@@ -159,8 +159,8 @@ func TestSyncPolicyConflicts(t *testing.T) {
 func TestSyncStatusTheirsWins(t *testing.T) {
 	s := seeded(t)
 	base, version, _ := s.Get("pump-7")
-	if _, err := s.Change("pump-7", "dispatch", diffFrom(t, base, func(a *model.Asset) {
-		a.Status = model.StatusOffline
+	if _, _, err := s.Change("pump-7", "dispatch", diffFrom(t, base, func(a *model.Asset) {
+		a.Status = model.StatusFault
 	})); err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +168,7 @@ func TestSyncStatusTheirsWins(t *testing.T) {
 		a.Status = model.StatusAttention
 	})}
 	res := s.Sync("ana", []Push{push})[0]
-	if res.Asset.Status != model.StatusOffline {
+	if res.Asset.Status != model.StatusFault {
 		t.Fatalf("worse status lost: %+v", res.Asset)
 	}
 	if len(res.Conflicts) != 1 || res.Conflicts[0].Kept != "theirs" {
@@ -206,7 +206,7 @@ func TestVersionTravel(t *testing.T) {
 		func(a *model.Asset) { a.Assignee = "cyn" },
 	} {
 		cur, _, _ := s.Get("pump-7")
-		if _, err := s.Change("pump-7", "dispatch", diffFrom(t, cur, edit)); err != nil {
+		if _, _, err := s.Change("pump-7", "dispatch", diffFrom(t, cur, edit)); err != nil {
 			t.Fatalf("edit %d: %v", i, err)
 		}
 	}
@@ -229,5 +229,80 @@ func TestVersionTravel(t *testing.T) {
 
 	if _, err := s.ChangesSince("pump-7", curV+1); err == nil {
 		t.Fatal("future version accepted")
+	}
+}
+
+// Notes are appended to on both sides, so a merge must keep the shared text
+// once. Before the base-aware merge, every conflicting round re-duplicated
+// everything written so far.
+func TestNotesMergeDoesNotDuplicate(t *testing.T) {
+	s := seeded(t)
+	if _, _, err := s.Change("pump-7", "dispatch", func() deep.Patch[model.Asset] {
+		base, _, _ := s.Get("pump-7")
+		return diffFrom(t, base, func(a *model.Asset) { a.Notes = "installed 2024" })
+	}()); err != nil {
+		t.Fatal(err)
+	}
+
+	// Two rounds of "both sides append, then sync".
+	for _, round := range []struct{ office, field string }{
+		{"scada flagged drift", "seals leaking"},
+		{"parts ordered", "gasket replaced"},
+	} {
+		base, version, _ := s.Get("pump-7")
+		if _, _, err := s.Change("pump-7", "dispatch", diffFrom(t, base, func(a *model.Asset) {
+			a.Notes += "\n" + round.office
+		})); err != nil {
+			t.Fatal(err)
+		}
+		push := Push{ID: "pump-7", BaseVersion: version, Patch: diffFrom(t, base, func(a *model.Asset) {
+			a.Notes += "\n" + round.field
+		})}
+		if res := s.Sync("ana", []Push{push})[0]; res.Error != "" {
+			t.Fatalf("round %q: %s", round.office, res.Error)
+		}
+	}
+
+	final, _, _ := s.Get("pump-7")
+	for _, line := range []string{
+		"installed 2024", "scada flagged drift", "seals leaking",
+		"parts ordered", "gasket replaced",
+	} {
+		if n := strings.Count(final.Notes, line); n != 1 {
+			t.Errorf("%q appears %d times, want 1:\n%s", line, n, final.Notes)
+		}
+	}
+}
+
+// A structural collision — the office replacing a whole subtree while the
+// technician edits inside it — is one conflict, however many operations fell
+// inside it.
+func TestEnclosingConflictReportedOnce(t *testing.T) {
+	s := seeded(t)
+	base, version, _ := s.Get("pump-7")
+
+	// The office replaces the readings map wholesale.
+	if _, _, err := s.Change("pump-7", "dispatch", diffFrom(t, base, func(a *model.Asset) {
+		a.Readings = map[string]model.Reading{"temp": {Value: 20, Unit: "C", By: "scada"}}
+	})); err != nil {
+		t.Fatal(err)
+	}
+	// The technician edits three fields of a reading inside it.
+	push := Push{ID: "pump-7", BaseVersion: version, Patch: diffFrom(t, base, func(a *model.Asset) {
+		a.Readings["ph"] = model.Reading{Value: 6.4, Unit: "pH units", By: "ana"}
+	})}
+	res := s.Sync("ana", []Push{push})[0]
+	if res.Error != "" {
+		t.Fatalf("merge failed: %s", res.Error)
+	}
+
+	seen := map[string]int{}
+	for _, c := range res.Conflicts {
+		seen[c.Path]++
+	}
+	for path, n := range seen {
+		if n != 1 {
+			t.Errorf("conflict at %s reported %d times", path, n)
+		}
 	}
 }

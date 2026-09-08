@@ -3,6 +3,7 @@ package client
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -121,6 +122,12 @@ func (c *Client) Sync(local *Local) (SyncReport, error) {
 		return SyncReport{}, err
 	}
 
+	// Adoption failures are collected rather than returned at the first one:
+	// the server has already committed every push, so abandoning the loop
+	// would leave the remaining assets with stale shadows that re-push
+	// changes the office has long since applied.
+	var adoptErrs []error
+
 	var report SyncReport
 	for _, res := range resp.Results {
 		switch res.Outcome {
@@ -140,16 +147,17 @@ func (c *Client) Sync(local *Local) (SyncReport, error) {
 			report.Conflicts = append(report.Conflicts, res)
 		}
 		if err := local.Adopt(res.Asset, res.Version); err != nil {
-			return report, err
+			adoptErrs = append(adoptErrs, fmt.Errorf("storing %s: %w", res.ID, err))
 		}
 	}
 	for _, upd := range resp.Updated {
 		if err := local.Adopt(upd.Asset, upd.Version); err != nil {
-			return report, err
+			adoptErrs = append(adoptErrs, fmt.Errorf("storing %s: %w", upd.Asset.ID, err))
+			continue
 		}
 		report.Updated++
 	}
-	return report, nil
+	return report, errors.Join(adoptErrs...)
 }
 
 // Assets fetches the full inventory — how a fresh device gets started.

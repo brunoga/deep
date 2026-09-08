@@ -16,7 +16,7 @@ import (
 
 func TestTwoDevicesAndTheOffice(t *testing.T) {
 	store := server.NewStore()
-	if err := store.Create(model.Asset{
+	if _, _, err := store.Create(model.Asset{
 		ID: "pump-7", Name: "Intake pump 7", Site: "riverside", Status: model.StatusOK,
 		Readings: map[string]model.Reading{"ph": {Value: 7.1, Unit: "pH", By: "scada"}},
 		Checks: []model.Check{
@@ -74,7 +74,7 @@ func TestTwoDevicesAndTheOffice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Change("pump-7", "dispatch", officePatch); err != nil {
+	if _, _, err := store.Change("pump-7", "dispatch", officePatch); err != nil {
 		t.Fatal(err)
 	}
 

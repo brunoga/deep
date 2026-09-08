@@ -58,19 +58,20 @@ func NewStore() *Store {
 	return &Store{records: map[string]*record{}, now: time.Now}
 }
 
-// Create registers a new asset at version 1.
-func (s *Store) Create(a model.Asset) error {
+// Create registers a new asset at version 1, returning it with its version
+// so a caller never has to re-read (and race) for the pair.
+func (s *Store) Create(a model.Asset) (model.Asset, int64, error) {
 	if err := a.Validate(); err != nil {
-		return fmt.Errorf("%w: %w", ErrRejected, err)
+		return model.Asset{}, 0, fmt.Errorf("%w: %w", ErrRejected, err)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, ok := s.records[a.ID]; ok {
-		return fmt.Errorf("%w: asset %q already exists", ErrRejected, a.ID)
+		return model.Asset{}, 0, fmt.Errorf("%w: asset %q already exists", ErrRejected, a.ID)
 	}
 	clone := deep.Clone(a)
 	s.records[a.ID] = &record{asset: &clone, version: 1}
-	return nil
+	return deep.Clone(clone), 1, nil
 }
 
 // Get returns a copy of one asset and its version.
@@ -106,24 +107,32 @@ func (s *Store) History(id string) ([]VersionEntry, error) {
 	if !ok {
 		return nil, fmt.Errorf("%w: %q", ErrNotFound, id)
 	}
-	return slices.Clone(rec.log), nil
+	// Deep copy: a shallow clone would hand out the operation slices the
+	// authoritative log reverse-walks through, and a caller that edited one
+	// would corrupt every future version reconstruction.
+	return deep.Clone(rec.log), nil
 }
 
 // Change applies a patch directly — the online path dispatch uses. The patch
 // runs on a clone; only a validated outcome is stored, as a canonical diff
-// with a new version.
-func (s *Store) Change(id, author string, p deep.Patch[model.Asset]) (int64, error) {
+// with a new version. The stored asset comes back with the version it was
+// stored at, under the same lock, so the two always describe each other.
+func (s *Store) Change(id, author string, p deep.Patch[model.Asset]) (model.Asset, int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	rec, ok := s.records[id]
 	if !ok {
-		return 0, fmt.Errorf("%w: %q", ErrNotFound, id)
+		return model.Asset{}, 0, fmt.Errorf("%w: %q", ErrNotFound, id)
 	}
 	work := deep.Clone(*rec.asset)
 	if err := deep.Apply(&work, p, deep.WithAllowedPaths(editablePaths...)); err != nil {
-		return 0, fmt.Errorf("%w: %w", ErrRejected, err)
+		return model.Asset{}, 0, fmt.Errorf("%w: %w", ErrRejected, err)
 	}
-	return s.commitLocked(rec, author, work)
+	version, err := s.commitLocked(rec, author, work)
+	if err != nil {
+		return model.Asset{}, 0, err
+	}
+	return deep.Clone(*rec.asset), version, nil
 }
 
 // editablePaths: /id is identity and never patched.

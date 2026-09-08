@@ -21,8 +21,10 @@ package main
 import (
 	"flag"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -213,15 +215,25 @@ func run(c *client.Client, local *client.Local, args []string) error {
 		if len(rest) != 2 {
 			return fmt.Errorf("usage: check <id> <check-id>")
 		}
-		return local.Edit(rest[0], func(a *model.Asset) {
+		found := false
+		if err := local.Edit(rest[0], func(a *model.Asset) {
 			for i := range a.Checks {
 				if a.Checks[i].ID == rest[1] {
 					a.Checks[i].Done = true
 					a.Checks[i].By = c.Author()
+					found = true
 					return
 				}
 			}
-		})
+		}); err != nil {
+			return err
+		}
+		if !found {
+			// Without this the edit is a silent no-op and a mistyped id looks
+			// exactly like a completed check.
+			return fmt.Errorf("%s has no check %q", rest[0], rest[1])
+		}
+		return nil
 
 	case "revert":
 		if len(rest) != 1 {
@@ -333,14 +345,5 @@ func printAsset(a model.Asset) {
 }
 
 func sortedKeys[V any](m map[string]V) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	for i := 1; i < len(out); i++ {
-		for j := i; j > 0 && out[j] < out[j-1]; j-- {
-			out[j], out[j-1] = out[j-1], out[j]
-		}
-	}
-	return out
+	return slices.Sorted(maps.Keys(m))
 }

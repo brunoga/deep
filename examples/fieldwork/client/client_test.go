@@ -13,7 +13,7 @@ import (
 func fixture(t *testing.T) (*server.Store, *Client, *Local) {
 	t.Helper()
 	store := server.NewStore()
-	if err := store.Create(model.Asset{
+	if _, _, err := store.Create(model.Asset{
 		ID: "pump-7", Name: "Intake pump 7", Site: "riverside", Status: model.StatusOK,
 		Assignee: "ana",
 		Readings: map[string]model.Reading{"ph": {Value: 7.1, Unit: "pH"}},
@@ -21,7 +21,7 @@ func fixture(t *testing.T) (*server.Store, *Client, *Local) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Create(model.Asset{
+	if _, _, err := store.Create(model.Asset{
 		ID: "valve-2", Name: "Outflow valve", Site: "riverside", Status: model.StatusOK,
 	}); err != nil {
 		t.Fatal(err)
@@ -117,7 +117,7 @@ func TestOfflineRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Change("pump-7", "dispatch", officePatch); err != nil {
+	if _, _, err := store.Change("pump-7", "dispatch", officePatch); err != nil {
 		t.Fatal(err)
 	}
 
