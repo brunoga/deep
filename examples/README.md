@@ -76,16 +76,25 @@ If you are new to the library, these four cover the shape of everything else:
 | [`lww_fields`](lww_fields) | Per-field `LWW[T]` registers resolving a genuine write conflict |
 | [`text_sync`](text_sync) | Collaborative text: concurrent edits across a partition, merged with `MergeTextRuns` |
 
-## A complete system
+## Complete systems
 
-[`incident`](incident) is different from everything above: not a single-concept
-program but a working incident-management system — server, CLI, collaborative
-notes — built as its own module so its dependencies stay out of the core. It
-exists to show the whole library composed into one application: keyed
-collections, type families, conditional patches, the audit log as reversible
-patches, the CRDT text stack over websockets, and the protobuf companion, each
-carrying an actual responsibility. Its README maps every feature to the file
-that uses it.
+Two examples are working applications rather than single-concept programs,
+each its own module so its dependencies stay out of the core, each with a
+README mapping every feature to the file that uses it.
+
+[`incident`](incident) is an incident-management system — server, CLI,
+collaborative notes. It shows the whole library composed into one
+application: keyed collections, type families, conditional patches, the audit
+log as reversible patches, the CRDT text stack over websockets, and the
+protobuf companion, each carrying an actual responsibility.
+
+[`arena`](arena) is a multiplayer game — an authoritative server, terminal
+clients, bots, and a replay tool. It is the diff/patch story under load: the
+server diffs the world every tick and broadcasts only the patch (the
+generated fast path's reason to exist), player actions are conditional
+patches racing for the same gems, and the replay file is nothing but the
+patch stream — played forward with `Apply`, rewound with `Reverse`, compacted
+with `Merge`.
 
 ## Generated code
 

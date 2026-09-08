@@ -479,13 +479,48 @@ func diffFieldBody(f FieldInfo, p, g string, typeKeys map[string]string) string 
 				fmt.Fprintf(&b, "\t\t\t\tsub := oldV.diffShared(v, seen, at + \"/%s/\" + %sEscapePathKey(fmt.Sprintf(\"%%v\", k)))\n", f.JSONName, p)
 				b.WriteString("\t\t\t\tp.Operations = append(p.Operations, sub.Operations...)\n")
 				b.WriteString("\t\t\t}\n\t\t}\n\t}\n")
+			} else if f.ElemGenerated && f.ElemShared {
+				// A non-pointer value of a shared (possibly cyclic) type
+				// descends through diffShared, which threads the memo:
+				// pointers inside the copied entry can reach back into the
+				// object graph, and a memo-free descent would recurse forever
+				// on a cycle. diffShared emits absolute paths itself.
+				fmt.Fprintf(&b, "\t\t\toldV, ok := t.%s[k]\n", f.Name)
+				b.WriteString("\t\t\tswitch {\n")
+				b.WriteString("\t\t\tcase !ok:\n")
+				fmt.Fprintf(&b, "\t\t\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpAdd, Path: \"/%s/\" + %sEscapePathKey(fmt.Sprintf(\"%%v\", k)), New: v})\n", p, p, f.JSONName, p)
+				b.WriteString("\t\t\tcase !oldV.Equal(&v):\n")
+				fmt.Fprintf(&b, "\t\t\t\tsub := (&oldV).diffShared(&v, seen, at + \"/%s/\" + %sEscapePathKey(fmt.Sprintf(\"%%v\", k)))\n", f.JSONName, p)
+				b.WriteString("\t\t\t\tp.Operations = append(p.Operations, sub.Operations...)\n")
+				b.WriteString("\t\t\t}\n\t\t}\n\t}\n")
+			} else if f.ElemGenerated {
+				// A value of a generated, cycle-free type descends: a
+				// one-field change inside a map entry becomes one operation
+				// naming that field — matching what the reflection engine
+				// produces — rather than a whole-entry replace. Equal guards
+				// the descent, so unchanged entries cost a comparison and no
+				// allocation.
+				fmt.Fprintf(&b, "\t\t\toldV, ok := t.%s[k]\n", f.Name)
+				b.WriteString("\t\t\tswitch {\n")
+				b.WriteString("\t\t\tcase !ok:\n")
+				fmt.Fprintf(&b, "\t\t\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpAdd, Path: \"/%s/\" + %sEscapePathKey(fmt.Sprintf(\"%%v\", k)), New: v})\n", p, p, f.JSONName, p)
+				if ptrVal {
+					b.WriteString("\t\t\tcase (oldV == nil) != (v == nil):\n")
+					fmt.Fprintf(&b, "\t\t\t\tp.Operations = append(p.Operations, %sOperation{Kind: %sOpReplace, Path: \"/%s/\" + %sEscapePathKey(fmt.Sprintf(\"%%v\", k)), Old: oldV, New: v})\n", p, p, f.JSONName, p)
+					b.WriteString("\t\t\tcase oldV != nil && !oldV.Equal(v):\n")
+					b.WriteString("\t\t\t\tsub := oldV.Diff(v)\n")
+				} else {
+					b.WriteString("\t\t\tcase !oldV.Equal(&v):\n")
+					b.WriteString("\t\t\t\tsub := oldV.Diff(&v)\n")
+				}
+				fmt.Fprintf(&b, "\t\t\t\tprefix := \"/%s/\" + %sEscapePathKey(fmt.Sprintf(\"%%v\", k))\n", f.JSONName, p)
+				b.WriteString("\t\t\t\tfor _, op := range sub.Operations {\n")
+				b.WriteString("\t\t\t\t\tif op.Path == \"\" || op.Path == \"/\" { op.Path = prefix } else { op.Path = prefix + op.Path }\n")
+				b.WriteString("\t\t\t\t\tp.Operations = append(p.Operations, op)\n\t\t\t\t}\n")
+				b.WriteString("\t\t\t}\n\t\t}\n\t}\n")
 			} else {
 				fmt.Fprintf(&b, "\t\t\tif oldV, ok := t.%s[k]; !ok || ", f.Name)
 				switch {
-				case ptrVal && f.ElemGenerated:
-					b.WriteString("!oldV.Equal(v) {\n")
-				case f.ElemGenerated:
-					b.WriteString("!oldV.Equal(&v) {\n")
 				case f.ElemComparable:
 					b.WriteString("v != oldV {\n")
 				default:
