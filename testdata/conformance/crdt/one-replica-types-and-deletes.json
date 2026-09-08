@@ -1,0 +1,32 @@
+{
+  "name": "one replica types and deletes",
+  "nodes": [
+    "a"
+  ],
+  "steps": [
+    {
+      "node": "a",
+      "op": "insert",
+      "value": "hello world"
+    },
+    {
+      "node": "a",
+      "op": "delete",
+      "pos": 5,
+      "count": 6
+    }
+  ],
+  "exchanges": null,
+  "text": {
+    "a": "hello"
+  },
+  "full": {
+    "a": "0101016102040080897a000568656c6c6f05070000050620776f726c64000004060100000506"
+  },
+  "state_vectors": {
+    "a": "01010961403130303030303001000b"
+  },
+  "walls": {
+    "a": 1000000
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "name": "text outside the basic plane",
+  "nodes": [
+    "a"
+  ],
+  "steps": [
+    {
+      "node": "a",
+      "op": "insert",
+      "value": "aXb"
+    },
+    {
+      "node": "a",
+      "op": "insert",
+      "pos": 2,
+      "value": "Y"
+    },
+    {
+      "node": "a",
+      "op": "delete",
+      "count": 1
+    }
+  ],
+  "exchanges": null,
+  "text": {
+    "a": "XYb"
+  },
+  "full": {
+    "a": "0101016104060080897a000161010500000101580000000105000003015900000101050000020162000001010100000001"
+  },
+  "state_vectors": {
+    "a": "010109614031303030303030010004"
+  },
+  "walls": {
+    "a": 1000000
+  }
+}

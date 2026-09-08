@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"net/netip"
 	"reflect"
+	"regexp"
 	"time"
 
 	deep "github.com/brunoga/deep/v6"
@@ -68,6 +69,13 @@ type Task struct {
 	Owner string `json:"owner,omitempty"`
 	Done  bool   `json:"done,omitempty"`
 }
+
+// IDPattern constrains the identifiers that become path segments: an
+// incident id names a directory and a websocket room, and a task id becomes a
+// path token and travels back in error messages. Anything outside this
+// alphabet is a traversal risk or a way to smuggle markup into whatever
+// renders those messages.
+var IDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)
 
 // Incident is the record itself. Nobody ever sends one of these whole after
 // creation: every change is a deep.Patch[Incident] and the server replays the

@@ -35,6 +35,34 @@ change as a canonical diff, so the audit log is exact regardless of what the
 client sent — and `history` + `undo` fall out of `Patch.String()` and
 `Patch.Reverse()` rather than being features anyone had to build.
 
+## The browser client
+
+`go run ./cmd/incidentd` also serves a web client at `/app/`. It is the same
+system from a different language: the page builds **patches** — with the same
+paths and the same conditions the Go CLI builds — posts them to the same
+endpoint, and applies what comes back to its own copy. The server cannot tell
+the two apart.
+
+A pane on the right shows the exact JSON going out, which makes the
+conditional-write story visible rather than theoretical:
+
+- **claim a task** → applies, and the audit entry number comes back.
+- **escalate twice** → the second one reports *1 skipped — condition not met*,
+  because `if /severity > 1` met reality. A skip is not an error.
+- **close before resolving** → `409: patch guard not met`. The guard refuses
+  the whole patch rather than half-applying it.
+
+The notes pane is the other half of the library in the same window: a CRDT
+document the page joins as a *peer*, not as a reader. Type there and in
+`incident open` at once — the two converge without either asking permission,
+and each shows the other in its presence line.
+
+Claim a task in the browser and watch it appear in `incident show`; claim one
+from the CLI and watch the page pick it up. The JavaScript half is
+[`@brunoga/deep-patch`](../../js), and the wire format is
+[specified](../../docs/wire-patch.md) and
+[conformance-tested](../../testdata/conformance) against this implementation.
+
 ## Running it
 
 ```bash
@@ -87,6 +115,8 @@ generated types.
 | `crdt.Awareness` | `tui/` — the presence bar and cursor positions, heartbeat and expiry |
 | `deepws.Hub` (auth, eviction, liveness) | `server/notes.go` — token auth shared with HTTP, lazy seeding from disk on first join, persistence on eviction |
 | `deepws.Client` (sync, resume) | `tui/`; `e2e_test.go` — `Detach` + `WithDocument` carry offline edits across a reconnect |
+| Patches from another language | `web/` — the browser client builds the same conditional patches in JavaScript and posts them to the same endpoint |
+| CRDT from another language | `web/notes.js` — the notes pane is a peer of the Go clients on the same room, through the JavaScript port of the document, awareness and websocket protocol |
 | `deepproto` (proto family, keyed fields) | `cmd/statusbot` — snapshots diffed as protobuf messages through the proto runtime, tasks matched by `id` via `RegisterListKey` |
 | `wire.Patch` envelope | `server/proto.go` + `cmd/statusbot` — a patch built against generated proto types, carried as protobuf, applied to the Go model |
 
@@ -99,6 +129,7 @@ client/      typed HTTP client and the patch vocabulary
 tui/         the live view: record pane, CRDT notes editor, presence
 pb/          the protobuf schema and generated types
 cmd/         incidentd (server) · incident (CLI/TUI) · statusbot (consumer)
+web/         the browser client: same patches, same conditions, no Go
 e2e_test.go  the whole story against one real server
 ```
 

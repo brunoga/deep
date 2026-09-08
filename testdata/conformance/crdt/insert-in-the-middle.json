@@ -1,0 +1,32 @@
+{
+  "name": "insert in the middle",
+  "nodes": [
+    "a"
+  ],
+  "steps": [
+    {
+      "node": "a",
+      "op": "insert",
+      "value": "held"
+    },
+    {
+      "node": "a",
+      "op": "insert",
+      "pos": 3,
+      "value": "l"
+    }
+  ],
+  "exchanges": null,
+  "text": {
+    "a": "helld"
+  },
+  "full": {
+    "a": "0101016103040080897a000368656c0305000004016c000002010500000301640000020100"
+  },
+  "state_vectors": {
+    "a": "010109614031303030303030010005"
+  },
+  "walls": {
+    "a": 1000000
+  }
+}

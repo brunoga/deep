@@ -25,18 +25,7 @@
  * room.insert(0, 'typing');
  * ```
  */
-
-export type {
-  ApplyResult,
-  Condition,
-  KeySchema,
-  OpKind,
-  Operation,
-  Outcome,
-  OutcomeStatus,
-  Patch,
-} from './types.ts';
-
+export type { ApplyResult, Condition, KeySchema, OpKind, Operation, Outcome, OutcomeStatus, Patch, } from './types.ts';
 export { applyPatch, GuardNotMetError, PathNotAllowedError } from './apply.ts';
 export type { ApplyOptions } from './apply.ts';
 export { diff } from './diff.ts';
@@ -46,34 +35,13 @@ export { merge } from './merge.ts';
 export type { ConflictResolver } from './merge.ts';
 export { evaluate, checkType } from './conditions.ts';
 export { equal, clone } from './equal.ts';
-// The CRDT half: a collaborative document, presence, and the websocket
-// client that keeps them in step with a Go hub.
 export { Document } from './crdt/document.ts';
 export { Awareness } from './crdt/awareness.ts';
 export type { AwarenessEntry, AwarenessUpdate, AwarenessOptions } from './crdt/awareness.ts';
 export { Clock } from './crdt/hlc.ts';
 export type { HLC } from './crdt/hlc.ts';
 export type { DeletedRange, StateVector, TextRun, Update } from './crdt/types.ts';
-export {
-  decodeStateVector,
-  decodeUpdate,
-  encodeStateVector,
-  encodeUpdate,
-  fromHex,
-  toHex,
-} from './crdt/binary.ts';
+export { decodeStateVector, decodeUpdate, encodeStateVector, encodeUpdate, fromHex, toHex, } from './crdt/binary.ts';
 export { connect, Room } from './ws.ts';
 export type { ConnectOptions } from './ws.ts';
-
-export {
-  buildPath,
-  encloses,
-  escapeKey,
-  lastToken,
-  parentPath,
-  parsePath,
-  removeAt,
-  resolve,
-  setAt,
-  unescapeKey,
-} from './path.ts';
+export { buildPath, encloses, escapeKey, lastToken, parentPath, parsePath, removeAt, resolve, setAt, unescapeKey, } from './path.ts';

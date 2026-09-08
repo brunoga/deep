@@ -87,6 +87,22 @@ func NewClock(nodeID string) *Clock {
 	}
 }
 
+// NewClockAt returns a clock whose identifiers start from a chosen wall time
+// rather than the current one.
+//
+// It exists for runs that must be reproducible: a recorded scenario, a
+// simulation, a fixture whose bytes are compared against another
+// implementation's. Ordinary use wants [NewClock] — a clock pinned to the
+// past will keep issuing identifiers that sort before everyone else's until
+// real time catches up with it.
+func NewClockAt(nodeID string, wallTime int64) *Clock {
+	return &Clock{
+		NodeID: nodeID,
+		Latest: HLC{WallTime: wallTime, NodeID: nodeID},
+		seq:    HLC{WallTime: wallTime, NodeID: nodeID},
+	}
+}
+
 // SetLatest rehydrates the clock from a previously observed timestamp under
 // the clock's mutex, so it is safe to call alongside concurrent Now/Update.
 // Subsequent Now/Update calls advance from at least h.
