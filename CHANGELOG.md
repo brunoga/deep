@@ -6,6 +6,20 @@ All notable changes to this project are documented here, newest first.
 > version's entry before tagging, so the tag, the GitHub release notes, and this
 > file always agree.
 
+## deep/ws v1.2.2
+
+### Fixed
+
+- **A slow handshake could lose its own room.** v1.2.1 put every room on the
+  eviction clock from the moment it was created, which caught the room nobody
+  ever joins — and also caught the room a joiner had just created but not yet
+  handshaken into. A client slow to send its state vector (a phone on a bad
+  connection, a throttled tab) could therefore have its room evicted while it
+  was connected, and would then sync into a room the hub had already
+  forgotten: its edits reaching nobody, with no error on either side. A room
+  created by a joiner is now armed by that connection's departure, which
+  every connection reaches, rather than at creation.
+
 ## deep/ws v1.2.1
 
 ### Fixed

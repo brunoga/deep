@@ -406,6 +406,47 @@ func TestSnapshotsDoNotPostponeEvictionForever(t *testing.T) {
 	}
 }
 
+// A room created by a joiner belongs to that joiner from the moment it
+// exists, handshake or no handshake. A client that is slow to send its state
+// vector — a phone on a bad connection, a tab the browser has throttled —
+// would otherwise have its room evicted out from under it and end up syncing
+// into a room the hub had already forgotten.
+func TestSlowHandshakeKeepsItsRoom(t *testing.T) {
+	var mu sync.Mutex
+	evictions := 0
+	hub := deepws.NewHub(deepws.WithRoomEviction(80*time.Millisecond, func(string, *crdt.Document) {
+		mu.Lock()
+		defer mu.Unlock()
+		evictions++
+	}))
+	srv := httptest.NewServer(hub)
+	defer srv.Close()
+
+	sock, _, err := websocket.Dial(context.Background(),
+		"ws"+strings.TrimPrefix(srv.URL, "http")+"/?room=slow", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sock.CloseNow()
+
+	// The socket is up; the client has not sent its state vector yet.
+	time.Sleep(300 * time.Millisecond)
+	mu.Lock()
+	n := evictions
+	mu.Unlock()
+	if n != 0 {
+		t.Fatalf("the room was evicted %d times out from under a connected client", n)
+	}
+
+	// And once it does depart, the room is collected as usual.
+	sock.CloseNow()
+	waitFor(t, "the eviction after the real departure", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return evictions == 1
+	})
+}
+
 // A room can exist without anybody ever joining it: a host seeds one ahead of
 // time, or a request reaches the hub and never becomes a websocket. It is on
 // the same clock as any other, or a hub in front of an open endpoint grows

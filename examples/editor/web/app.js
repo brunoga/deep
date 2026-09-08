@@ -164,7 +164,12 @@ async function joinRoom(name, editor) {
 
   const announce = () => {
     if (stale) return;
-    room.announce({ name: el('who').value || nodeID, ...editor.presence() });
+    try {
+      room.announce({ name: el('who').value || nodeID, ...editor.presence() });
+    } catch {
+      // The socket went away between connecting and saying hello, or between
+      // heartbeats. onClose has already reported it; there is nobody to tell.
+    }
   };
   // Presence is also the heartbeat: a client that stops announcing stops
   // being drawn by everyone else.
@@ -183,6 +188,7 @@ async function joinRoom(name, editor) {
 
   return {
     room,
+    announce,
     leave() {
       stale = true;
       clearInterval(beat);
@@ -291,8 +297,11 @@ input.addEventListener('copy', (e) => {
 });
 
 el('who').addEventListener('input', () => {
-  // A rename is a presence change, not a document one.
+  // A rename is a presence change, not a document one — and one worth sending
+  // straight away rather than at the next heartbeat, since the point of
+  // typing your name is that other people see it.
   state.editor?.changed();
+  state.session?.announce();
 });
 
 // ── start ───────────────────────────────────────────────────────────────
