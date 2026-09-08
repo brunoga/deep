@@ -102,3 +102,15 @@ jobs:
       - name: Test arena example
         run: go test -race -v ./...
         working-directory: examples/arena
+
+      - name: Build fieldwork example
+        run: go build -v ./...
+        working-directory: examples/fieldwork
+
+      - name: Vet fieldwork example
+        run: go vet ./...
+        working-directory: examples/fieldwork
+
+      - name: Test fieldwork example
+        run: go test -race -v ./...
+        working-directory: examples/fieldwork

@@ -11,3 +11,16 @@ coverage.out
 
 # Compiled generator binary
 /deep-gen
+
+# Compiled example binaries. `go build ./cmd/x` from an example module drops
+# the binary in the module root, which is easy to commit by accident.
+/examples/*/arena
+/examples/*/arenabot
+/examples/*/arenad
+/examples/*/arenatape
+/examples/*/dispatch
+/examples/*/field
+/examples/*/fieldd
+/examples/*/incident
+/examples/*/incidentd
+/examples/*/statusbot
