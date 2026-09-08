@@ -113,7 +113,7 @@ generated types.
 | `crdt.Document` | `tui/` and `server/notes.go` — the shared timeline |
 | Binary encoding (`Update`, `StateVector`) | `server/notes.go` — notes persist to disk as one full-state update |
 | `crdt.Awareness` | `tui/` — the presence bar and cursor positions, heartbeat and expiry |
-| `deepws.Hub` (auth, eviction, liveness) | `server/notes.go` — token auth shared with HTTP, lazy seeding from disk on first join, persistence on eviction |
+| `deepws.Hub` (auth, eviction, liveness) | `server/notes.go` — token auth shared with HTTP, seeding from disk on *every* join (idempotent, so a room that raced an eviction gets its history back), persistence on eviction |
 | `deepws.Client` (sync, resume) | `tui/`; `e2e_test.go` — `Detach` + `WithDocument` carry offline edits across a reconnect |
 | Patches from another language | `web/` — the browser client builds the same conditional patches in JavaScript and posts them to the same endpoint |
 | CRDT from another language | `web/notes.js` — the notes pane is a peer of the Go clients on the same room, through the JavaScript port of the document, awareness and websocket protocol |
