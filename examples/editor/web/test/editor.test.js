@@ -171,3 +171,91 @@ test('only local changes are announced', () => {
 
   assert.ok(renders > announcements, 'but all of it is worth redrawing');
 });
+
+test("typing moves everybody else's caret, not just your own", () => {
+  const ed = editorWith('hello world', { anchor: 0, head: 0 });
+  ed.setPeer('ana', { name: 'Ana', selection: { anchor: 6, head: 11 } });
+
+  ed.type('>>> ');
+
+  // Ana announced her selection over "world" before this was typed; she has
+  // no idea it happened, so it is this editor that has to move her.
+  assert.deepEqual(ed.peers.get('ana').selection, { anchor: 10, head: 15 });
+  assert.equal(ed.text, '>>> hello world');
+
+  ed.selection = { anchor: 0, head: 0 };
+  ed.deleteForward();
+  assert.deepEqual(ed.peers.get('ana').selection, { anchor: 9, head: 14 });
+
+  ed.selection = { anchor: 3, head: 3 };
+  ed.backspace();
+  assert.deepEqual(ed.peers.get('ana').selection, { anchor: 8, head: 13 });
+});
+
+test('replacing text a peer is sitting in pins them to the end of it', () => {
+  const ed = editorWith('hello world', { anchor: 0, head: 5 });
+  ed.setPeer('bo', { name: 'Bo', selection: { anchor: 2, head: 4 } });
+  ed.type('goodbye');
+  assert.equal(ed.text, 'goodbye world');
+  assert.deepEqual(ed.peers.get('bo').selection, { anchor: 7, head: 7 }, 'what they pointed at is gone');
+});
+
+test('connecting carries text typed before the socket was up', () => {
+  const ed = editorWith('', { anchor: 0, head: 0 });
+  ed.type('first sentence');
+  ed.setPeer('ana', { name: 'Ana', selection: { anchor: 0, head: 0 } });
+
+  const room = new LocalDocument('');
+  ed.attach(room);
+
+  assert.equal(room.text, 'first sentence', 'the room got what was typed into the page');
+  assert.equal(ed.text, 'first sentence');
+  assert.deepEqual(ed.selection, { anchor: 14, head: 14 }, 'the caret stays after it');
+  assert.equal(ed.peers.size, 0, 'peers belong to the room that was left');
+
+  // And the baseline moved with it: a remote change is measured from here.
+  room.insert(0, 'X');
+  ed.remoteChanged();
+  assert.deepEqual(ed.selection, { anchor: 15, head: 15 });
+});
+
+test('connecting to a document that already has text leaves it alone', () => {
+  const ed = editorWith('', { anchor: 0, head: 0 });
+  const room = new LocalDocument('already here');
+  ed.attach(room);
+  assert.equal(ed.text, 'already here');
+  assert.deepEqual(ed.selection, { anchor: 0, head: 0 });
+});
+
+test("a repeated announcement does not drag a peer back to where they were", () => {
+  const ed = editorWith('hello world', { anchor: 0, head: 0 });
+  const announced = { anchor: 6, head: 11 };
+  ed.setPeer('ana', { name: 'Ana', selection: announced });
+
+  ed.type('>>> ');
+  assert.deepEqual(ed.peers.get('ana').selection, { anchor: 10, head: 15 });
+
+  // Ana's heartbeat repeats what she last said. She has not moved, so what
+  // she said has already been accounted for — re-applying it would undo the
+  // shift and put her highlight back over the wrong words.
+  ed.setPeer('ana', { name: 'Ana', selection: { ...announced } });
+  assert.deepEqual(ed.peers.get('ana').selection, { anchor: 10, head: 15 });
+
+  // A new announcement is believed, because it was measured against the
+  // document she has now.
+  ed.setPeer('ana', { name: 'Ana', selection: { anchor: 0, head: 3 } });
+  assert.deepEqual(ed.peers.get('ana').selection, { anchor: 0, head: 3 });
+});
+
+test('a repeated announcement that changes nothing does not redraw', () => {
+  const ed = editorWith('hello', { anchor: 0, head: 0 });
+  let notifications = 0;
+  ed.onChange(() => notifications++);
+
+  ed.setPeer('bo', { name: 'Bo', color: '#fff', selection: { anchor: 1, head: 2 } });
+  assert.equal(notifications, 1);
+  ed.setPeer('bo', { name: 'Bo', color: '#fff', selection: { anchor: 1, head: 2 } });
+  assert.equal(notifications, 1, 'the heartbeat alone is not news');
+  ed.setPeer('bo', { name: 'Bo Jones', color: '#fff', selection: { anchor: 1, head: 2 } });
+  assert.equal(notifications, 2, 'a rename is');
+});

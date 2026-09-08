@@ -81,7 +81,9 @@ If you are new to the library, these four cover the shape of everything else:
 Four examples are working applications rather than single-concept programs,
 each its own module so its dependencies stay out of the core, each with a
 README mapping every feature to the file that uses it. Together they give
-three different answers to "how do two people change the same data at once".
+four different answers to "how do two people change the same data at once":
+an authoritative server, a diff per tick, a three-way merge, and a document
+that needs no arbitration at all.
 
 [`incident`](incident) is an incident-management system — server, CLI,
 collaborative notes. It shows the whole library composed into one

@@ -153,11 +153,17 @@ export function lineSpan(lineIndex, line, selection) {
   const lineStart = info.start;
   const lineEnd = lineStart + pointLength(info.value);
   if (to < lineStart || from > lineEnd) return null;
-  return {
+  const span = {
     from: Math.max(from, lineStart) - lineStart,
     to: Math.min(to, lineEnd) - lineStart,
     // Whether the selection continues past this line, so the band can be
     // drawn through the newline rather than stopping at the last character.
     trailing: to > lineEnd,
   };
+  // A selection ending exactly where a line begins touches that line without
+  // covering any of it; returning a zero-width span there paints a sliver at
+  // its left edge. The trailing case is the one exception — a band drawn
+  // through a swallowed newline is meant to have no characters under it.
+  if (span.from === span.to && !span.trailing) return null;
+  return span;
 }

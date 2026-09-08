@@ -80,6 +80,12 @@ func WithPingInterval(d time.Duration) HubOption {
 // hub keeps every room it has ever served; with it, a room's state lives in
 // the host's store between sessions and the next joiner starts a fresh room
 // the host can seed from that store via [Hub.Room].
+//
+// Every room is on the clock, including one that no client ever joined —
+// seeded ahead of time, or created by a request that never became a
+// websocket. Reaching for a room through [Hub.Room] postpones its eviction
+// but cannot cancel it: a host that lists or snapshots its rooms is not
+// thereby keeping them alive forever.
 func WithRoomEviction(idle time.Duration, onEvict func(name string, doc *crdt.Document)) HubOption {
 	return func(h *Hub) {
 		h.evictAfter = idle
@@ -100,6 +106,13 @@ func NewHub(opts ...HubOption) *Hub {
 // the room if needed. It is how a host application seeds a room before the
 // first client arrives, or snapshots one for persistence — clients apply
 // updates to the same document concurrently, so access goes through here.
+//
+// Looking at a room does not keep it alive: being in one does. A host that
+// reads its rooms on a schedule — a document listing, a metrics sweep — would
+// otherwise postpone every eviction it touched. The consequence for seeding
+// is that a room seeded a moment before a client joins may be evicted in
+// between, and the client then finds an empty room; hosts seed on every join
+// for that reason, which the CRDT makes free.
 func (h *Hub) Room(name string, fn func(*crdt.Document)) {
 	r := h.room(name)
 	r.mu.Lock()
@@ -107,9 +120,17 @@ func (h *Hub) Room(name string, fn func(*crdt.Document)) {
 	fn(r.doc)
 }
 
+// room returns the named room, creating it if it does not exist. Looking at a
+// room does not postpone its eviction — see [Hub.Room].
 func (h *Hub) room(name string) *room {
+	r, _ := h.roomFor(name, false)
+	return r
+}
+
+// roomFor returns the named room. joining marks the caller as somebody about
+// to occupy it rather than merely look at it.
+func (h *Hub) roomFor(name string, joining bool) (*room, bool) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	r, ok := h.rooms[name]
 	if !ok {
 		r = &room{
@@ -118,16 +139,31 @@ func (h *Hub) room(name string) *room {
 			presence: make(map[*conn][]byte),
 		}
 		h.rooms[name] = r
-	} else {
-		// Handing the room out invalidates any armed eviction, even before
-		// the caller registers a connection: the eviction timer checks the
+		mark := r.emptySince
+		h.mu.Unlock()
+		// A room begins empty, so it begins on the eviction clock: one that
+		// is created and then never joined — seeded speculatively, or made by
+		// a request that never finished its upgrade — is collected like any
+		// other rather than held for the life of the process.
+		h.armEviction(name, r, mark)
+		return r, false
+	}
+	if joining {
+		// Handing the room to a joiner invalidates any armed eviction, before
+		// the connection is registered: the eviction timer checks the
 		// generation while holding both locks, so a room retrieved here can
 		// no longer be deleted out from under its new user.
+		//
+		// Only for a joiner. A host that looks at its rooms — to list them,
+		// to snapshot them — would otherwise postpone every eviction it
+		// touched, and a listing that runs often enough would postpone them
+		// all forever.
 		r.mu.Lock()
 		r.emptySince++
 		r.mu.Unlock()
 	}
-	return r
+	h.mu.Unlock()
+	return r, true
 }
 
 // ServeHTTP upgrades the connection and runs the sync protocol until the
@@ -151,7 +187,7 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	defer sock.Close(websocket.StatusInternalError, "hub closing")
 
-	r := h.room(roomName)
+	r, _ := h.roomFor(roomName, true)
 	c := &conn{send: make(chan []byte, 64)}
 
 	ctx, cancel := context.WithCancel(req.Context())
@@ -327,7 +363,16 @@ func (h *Hub) detach(name string, r *room, c *conn) {
 	}
 	r.mu.Unlock()
 
-	if !empty || h.evictAfter <= 0 {
+	if !empty {
+		return
+	}
+	h.armEviction(name, r, mark)
+}
+
+// armEviction schedules the check that drops a room which has sat empty since
+// generation mark.
+func (h *Hub) armEviction(name string, r *room, mark uint64) {
+	if h.evictAfter <= 0 {
 		return
 	}
 	time.AfterFunc(h.evictAfter, func() {
@@ -338,7 +383,11 @@ func (h *Hub) detach(name string, r *room, c *conn) {
 		// nobody is left holding a room the map no longer knows.
 		h.mu.Lock()
 		r.mu.Lock()
-		still := len(r.conns) == 0 && r.emptySince == mark
+		// current guards the second of two timers armed against the same
+		// room: the first evicted it, and this one must not evict it again —
+		// nor arm a third against a room the hub has already let go.
+		current := h.rooms[name] == r
+		still := current && len(r.conns) == 0 && r.emptySince == mark
 		doc := r.doc
 		if still {
 			delete(h.rooms, name)

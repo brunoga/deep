@@ -347,6 +347,95 @@ func TestRejoinCancelsEviction(t *testing.T) {
 	})
 }
 
+// A host that looks at a room — to list it, to snapshot it — postpones its
+// eviction, and must not be able to postpone it forever: an editor's document
+// listing runs on every page load, and a room nobody is in would otherwise
+// never be written out or freed.
+func TestSnapshotsDoNotPostponeEvictionForever(t *testing.T) {
+	var mu sync.Mutex
+	var evicted []string
+	hub := deepws.NewHub(deepws.WithRoomEviction(60*time.Millisecond, func(_ string, d *crdt.Document) {
+		mu.Lock()
+		defer mu.Unlock()
+		evicted = append(evicted, d.String())
+	}))
+	srv := httptest.NewServer(hub)
+	defer srv.Close()
+	ctx := context.Background()
+
+	c, err := deepws.Dial[cursor](ctx, "ws"+strings.TrimPrefix(srv.URL, "http")+"/?room=watched", "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Edit(func(d *crdt.Document) { d.Insert(0, "written despite the watching") })
+	if err := c.Publish(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the hub to hold the text", func() bool {
+		var s string
+		hub.Room("watched", func(d *crdt.Document) { s = d.String() })
+		return s == "written despite the watching"
+	})
+	c.Close(ctx)
+
+	// Peek at the room the way a listing would, right through the idle
+	// window. Each peek invalidates the armed eviction; the hub has to arm
+	// another one rather than leave the room lingering.
+	done := time.After(200 * time.Millisecond)
+	for peeking := true; peeking; {
+		select {
+		case <-done:
+			peeking = false
+		default:
+			hub.Room("watched", func(*crdt.Document) {})
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	waitFor(t, "the room to be evicted despite the peeking", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(evicted) >= 1
+	})
+	mu.Lock()
+	defer mu.Unlock()
+	// And the state went with it. (A peek after that recreates the room, and
+	// an empty room comes back around to eviction of its own accord; what
+	// matters is that the one holding the text was let go on time.)
+	if evicted[0] != "written despite the watching" {
+		t.Fatalf("evicted with %q, want the text the room held", evicted[0])
+	}
+}
+
+// A room can exist without anybody ever joining it: a host seeds one ahead of
+// time, or a request reaches the hub and never becomes a websocket. It is on
+// the same clock as any other, or a hub in front of an open endpoint grows
+// one room per name anybody names.
+func TestNeverJoinedRoomIsEvicted(t *testing.T) {
+	var mu sync.Mutex
+	var calls []string
+	hub := deepws.NewHub(deepws.WithRoomEviction(40*time.Millisecond, func(name string, d *crdt.Document) {
+		mu.Lock()
+		defer mu.Unlock()
+		calls = append(calls, name+": "+d.String())
+	}))
+
+	hub.Room("seeded", func(d *crdt.Document) { d.Insert(0, "waiting for nobody") })
+	// A peek postpones the eviction armed at creation; the room still goes.
+	hub.Room("seeded", func(*crdt.Document) {})
+
+	waitFor(t, "the unjoined room to be evicted", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(calls) > 0
+	})
+	time.Sleep(120 * time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(calls) != 1 || calls[0] != "seeded: waiting for nobody" {
+		t.Fatalf("eviction hook called with %q, want one call with the room's text", calls)
+	}
+}
+
 func TestHeartbeatKeepsAndDetects(t *testing.T) {
 	hub := deepws.NewHub(deepws.WithPingInterval(20 * time.Millisecond))
 	srv := httptest.NewServer(hub)

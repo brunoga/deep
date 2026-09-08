@@ -24,6 +24,11 @@ const state = {
   session: null,
   editor: null,
   view: null,
+  // Which document opening is the current one. Opening is asynchronous — a
+  // socket has to come up — and a click on another document while the first
+  // is still connecting must not end with two live sessions, one of them
+  // unreachable and still announcing into a room nobody is looking at.
+  generation: 0,
 };
 
 el('who').value = `guest-${nodeID.slice(0, 3)}`;
@@ -74,29 +79,43 @@ el('new-doc').onsubmit = async (e) => {
 // ── the editing session ─────────────────────────────────────────────────
 
 async function open(name) {
+  const generation = ++state.generation;
   state.session?.leave();
   state.session = null;
   state.name = name;
   el('doc-name').textContent = name;
+  el('status').textContent = 'connecting';
   history.replaceState(null, '', `?doc=${encodeURIComponent(name)}`);
 
   // The editor starts on a local document, so the page is usable — and
-  // visibly *not* connected — before the socket is up.
-  const local = new LocalDocument('');
-  state.editor = new Editor(local);
-  state.view = new View(el('editor'), state.editor);
+  // visibly *not* connected — before the socket is up. Whatever is typed in
+  // the meantime goes into the room when it arrives.
+  const editor = new Editor(new LocalDocument(''));
+  state.editor = editor;
+  state.view = new View(el('editor'), editor);
   state.view.measure();
-  state.editor.onChange(() => {
-    state.view.render();
-    state.view.revealCaret(state.editor.lineIndex);
-  });
-  state.view.render();
+  const view = state.view;
+  editor.onChange(() => view.render());
+  // Scrolling follows *your* caret only. Hanging it off every change would
+  // mean a peer's heartbeat yanking the page back while you read.
+  editor.onLocalChange(() => view.revealCaret(editor.lineIndex));
+  view.render();
 
+  let session = null;
   try {
-    state.session = await joinRoom(name, state.editor);
-    el('status').textContent = 'connected';
+    session = await joinRoom(name, editor);
   } catch (err) {
-    el('status').textContent = `offline: ${err.message}`;
+    if (generation === state.generation) el('status').textContent = `offline: ${err.message}`;
+  }
+  if (generation !== state.generation) {
+    // Another document was opened while this one was connecting. This
+    // session is nobody's now: close it rather than leave it announcing.
+    session?.leave();
+    return;
+  }
+  if (session) {
+    state.session = session;
+    el('status').textContent = 'connected';
   }
   await renderDocuments();
 }
@@ -111,12 +130,10 @@ async function joinRoom(name, editor) {
 
   let stale = false;
 
-  // The room becomes the editor's document. `insert` and `delete` publish as
-  // they go, so nothing else has to remember to send.
-  editor.doc = room;
-  editor.lastText = room.text;
-  editor.selection = { anchor: 0, head: 0 };
-  editor.changed();
+  // The room becomes the editor's document, carrying anything typed while it
+  // was connecting. `insert` and `delete` publish as they go, so nothing else
+  // has to remember to send.
+  editor.attach(room);
 
   room.onUpdate(() => {
     if (stale) return;
@@ -219,12 +236,44 @@ input.addEventListener('keydown', (e) => {
 
 // Ordinary typing arrives as input events rather than keydowns, which is what
 // makes composed characters and pasted text work without special cases.
-input.addEventListener('input', () => {
+//
+// Composition is the case that needs care. A Japanese IME, or dictation, or a
+// phone's autocorrect, fires an input event for every intermediate state of a
+// word that is still being composed; committing each of them types
+// half-formed text into the document *and* destroys the composition. So input
+// is ignored while one is in flight, and the finished text is taken when it
+// ends — Chrome and Safari deliver a trailing input event, Firefox does not,
+// which is why compositionend takes what is there rather than trusting one.
+let composing = false;
+
+input.addEventListener('compositionstart', () => {
+  composing = true;
+});
+
+input.addEventListener('compositionend', () => {
+  composing = false;
+  takeInput();
+});
+
+input.addEventListener('input', (e) => {
+  if (composing || e.isComposing) return;
+  takeInput(e.inputType);
+});
+
+function takeInput(inputType) {
   if (!state.editor) return;
   const typed = input.value;
   input.value = '';
-  if (typed !== '') state.editor.type(typed);
-});
+  if (typed !== '') {
+    state.editor.type(typed);
+    return;
+  }
+  // Some soft keyboards send deletions as input events with nothing in them
+  // rather than as key events; without this, backspace does nothing at all on
+  // an Android phone.
+  if (inputType === 'deleteContentBackward') state.editor.backspace();
+  else if (inputType === 'deleteContentForward') state.editor.deleteForward();
+}
 
 input.addEventListener('paste', (e) => {
   if (!state.editor) return;

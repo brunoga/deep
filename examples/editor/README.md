@@ -57,10 +57,10 @@ The browser is a peer of that client, not a viewer of a server's copy.
 | `web/src/positions.js` | The three coordinate systems — code points (what the CRDT counts), UTF-16 units (what JavaScript strings and DOM ranges use), and line/column (what a person sees) — and the conversions between them. Confusing them is the source of most editor bugs; an emoji is one of the first, two of the second. |
 | `web/src/editor.js` | Selection, commands, and `remoteChanged` — the caret transformation that makes somebody else's typing feel like typing rather than the document jumping. No DOM, so it is tested directly. |
 | `web/src/view.js` | Lines, gutter, carets and selection bands. Text is drawn by hand and everything else positioned over it, which is what lets a *peer's* caret appear inside the text — a textarea cannot do that at all. |
-| `web/app.js` | The wiring, including the two rules learned the hard way (below). |
-| `server/` | Rooms, the document listing, and a folder. Under 250 lines, because the interesting behaviour is not here. |
+| `web/app.js` | The wiring, including the rules learned the hard way (below). |
+| `server/` | Rooms, the document listing, and a folder. Small, because the interesting behaviour is not here — what it does contribute is durability, and the care that takes when a room can be evicted while somebody is joining it. |
 
-## Two things that only show up when you run it
+## Three things that only show up when you run it
 
 **Announce on local changes only.** Presence updates arrive, move a peer's
 caret, and notify the editor. If announcements hang off *every* editor change,
@@ -72,6 +72,14 @@ separate "I did something" from "something happened".
 timers in hidden tabs to roughly once a minute, so a peer reading in another
 window gets declared gone by a thirty-second timeout. The room uses ninety
 seconds and re-announces when a tab becomes visible again.
+
+**Your own typing moves everybody else's caret too.** The obvious reading is
+that `remoteChanged` handles other people and local edits handle themselves —
+but a peer announced their selection against the document as it was, and they
+have no idea you are typing. Type five characters above somebody's highlight
+without shifting them and their highlight sits over the wrong words until
+their next heartbeat, seconds later. Every local edit moves the peers as well
+as the caret.
 
 ## Where it would grow
 

@@ -155,9 +155,15 @@ export class View {
 
   /** Scrolls the local caret into view after a movement. */
   revealCaret(lineIndex) {
-    const { y } = this.positionOf(lineIndex, this.editor.selection.head);
     const view = this.root.querySelector('[data-scroll]');
     if (!view) return;
+    // positionOf measures from the top of the text; scrollTop measures from
+    // the top of the scrolling box, and there is padding between the two.
+    // Reading it rather than assuming it keeps this honest if the stylesheet
+    // changes.
+    const inset =
+      this.linesEl.getBoundingClientRect().top - view.getBoundingClientRect().top + view.scrollTop;
+    const y = inset + this.positionOf(lineIndex, this.editor.selection.head).y;
     const top = view.scrollTop;
     const height = view.clientHeight;
     if (y < top) view.scrollTop = y;

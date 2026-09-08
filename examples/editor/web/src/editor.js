@@ -73,22 +73,29 @@ export class Editor {
     for (const fn of this.listeners) fn();
   }
 
-  /** Notifies both channels: something local happened. */
+  /**
+   * Notifies both channels: something local happened.
+   *
+   * The general listeners run first, so that by the time the local ones do,
+   * anything that redraws has redrawn — scrolling the caret into view is a
+   * local listener, and it can only measure a view that is up to date.
+   */
   localChanged() {
-    for (const fn of this.localListeners) fn();
     this.changed();
+    for (const fn of this.localListeners) fn();
   }
 
   // ── editing ───────────────────────────────────────────────────────────
 
   /** Replaces the selection with value; an empty selection is an insertion. */
   type(value) {
+    const before = this.doc.text;
     const { from, to } = bounds(this.selection);
     if (to > from) this.doc.delete(from, to - from);
     if (value !== '') this.doc.insert(from, value);
     const at = from + pointLength(value);
     this.selection = { anchor: at, head: at };
-    this.lastText = this.doc.text;
+    this.shiftPeers(before);
     this.goalColumn = null;
     this.localChanged();
   }
@@ -101,9 +108,10 @@ export class Editor {
       return;
     }
     if (from === 0) return;
+    const before = this.doc.text;
     this.doc.delete(from - 1, 1);
     this.selection = { anchor: from - 1, head: from - 1 };
-    this.lastText = this.doc.text;
+    this.shiftPeers(before);
     this.goalColumn = null;
     this.localChanged();
   }
@@ -116,9 +124,10 @@ export class Editor {
       return;
     }
     if (from >= pointLength(this.doc.text)) return;
+    const before = this.doc.text;
     this.doc.delete(from, 1);
     this.selection = { anchor: from, head: from };
-    this.lastText = this.doc.text;
+    this.shiftPeers(before);
     this.goalColumn = null;
     this.localChanged();
   }
@@ -182,6 +191,25 @@ export class Editor {
   // ── other people ──────────────────────────────────────────────────────
 
   /**
+   * Moves every peer's caret across a change this editor just made, and
+   * records the new text as the baseline for the next one.
+   *
+   * A peer's position was measured against the document as it was when they
+   * announced it, and they have no idea you are typing. Skipping this leaves
+   * their highlight sitting over the wrong words until their next heartbeat —
+   * which is seconds away, and is the same reason [remoteChanged] moves them.
+   */
+  shiftPeers(before) {
+    const after = this.doc.text;
+    this.lastText = after;
+    if (before === after || this.peers.size === 0) return;
+    const change = changeBetween(before, after);
+    for (const peer of this.peers.values()) {
+      peer.selection = shiftSelection(peer.selection, change);
+    }
+  }
+
+  /**
    * Folds in a change made elsewhere.
    *
    * Everybody's caret has to move with the text: this editor's own, and every
@@ -203,14 +231,30 @@ export class Editor {
     this.changed();
   }
 
-  /** Records where a peer says they are. */
+  /**
+   * Records where a peer says they are.
+   *
+   * Presence arrives repeatedly — it is the room's heartbeat, so the same
+   * announcement lands every few seconds — and an announcement is a position
+   * in the document *as the peer had it*. Between two of them this editor has
+   * been moving that position through every edit, so re-applying the same
+   * announcement would drag the peer back to where they were and undo all of
+   * it. Hence the two positions: what they said, kept to recognise a repeat,
+   * and where that has since moved to, which is what gets drawn.
+   */
   setPeer(node, { name, color, selection }) {
     if (!selection) return;
-    this.peers.set(node, {
+    const known = this.peers.get(node);
+    const repeat =
+      known && known.announced.anchor === selection.anchor && known.announced.head === selection.head;
+    const peer = {
       name: name ?? node,
       color: color ?? colorFor(node),
-      selection,
-    });
+      selection: repeat ? known.selection : selection,
+      announced: selection,
+    };
+    if (repeat && known.name === peer.name && known.color === peer.color) return;
+    this.peers.set(node, peer);
     this.changed();
   }
 
@@ -224,6 +268,26 @@ export class Editor {
       }
     }
     if (changed) this.changed();
+  }
+
+  /**
+   * Swaps in another document — in the browser, the room, once its socket is
+   * up — carrying anything already typed into the new one.
+   *
+   * The editor is usable before it is connected, which means it can hold text
+   * that the room has never heard of. Dropping it on connect would lose
+   * somebody's first sentence silently, which is the worst way to lose it.
+   */
+  attach(doc) {
+    const pending = this.doc.text;
+    this.doc = doc;
+    this.peers.clear();
+    if (pending !== '') doc.insert(0, pending);
+    this.lastText = doc.text;
+    const at = pointLength(pending);
+    this.selection = { anchor: at, head: at };
+    this.goalColumn = null;
+    this.changed();
   }
 
   /** What to announce: where this editor's caret and selection are. */

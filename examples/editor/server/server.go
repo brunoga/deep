@@ -37,8 +37,12 @@ type Server struct {
 	hub *deepws.Hub
 	dir string
 
-	mu   sync.Mutex
-	live map[string]bool
+	mu sync.Mutex
+	// live maps a document to the room document currently holding it. The
+	// value is an identity, not a flag: an eviction hands back the document
+	// it evicted, and a room created since — by somebody who joined while the
+	// eviction was in flight — must not be marked dead by it.
+	live map[string]*crdt.Document
 }
 
 // New opens a server keeping its documents in dir. idle is how long a room
@@ -47,11 +51,20 @@ func New(dir string, idle time.Duration) (*Server, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
-	s := &Server{dir: dir, live: map[string]bool{}}
+	s := &Server{dir: dir, live: map[string]*crdt.Document{}}
 	s.hub = deepws.NewHub(
-		deepws.WithAuth(func(_ *http.Request, room string) error {
+		deepws.WithAuth(func(r *http.Request, room string) error {
 			if !NamePattern.MatchString(room) {
 				return fmt.Errorf("bad document name")
+			}
+			// Seeding has a side effect — it creates the room — and this hook
+			// runs before the upgrade, so a request that is not even trying
+			// to become a websocket is refused here rather than allowed to
+			// bring a document into being by asking for it. A determined
+			// client can still forge the headers; what this stops is every
+			// crawler, probe and mistyped URL doing it by accident.
+			if !isUpgrade(r) {
+				return fmt.Errorf("not a websocket request")
 			}
 			// Seeding from the auth hook runs before the upgrade, so a joining
 			// client's handshake already sees the file's contents. Applying an
@@ -88,22 +101,47 @@ func (s *Server) load(name string) (crdt.Update, bool) {
 	return u, true
 }
 
+// isUpgrade reports whether a request is asking to become a websocket.
+func isUpgrade(r *http.Request) bool {
+	for _, token := range strings.Split(r.Header.Get("Connection"), ",") {
+		if strings.EqualFold(strings.TrimSpace(token), "upgrade") {
+			return strings.EqualFold(r.Header.Get("Upgrade"), "websocket")
+		}
+	}
+	return false
+}
+
 func (s *Server) seed(name string) error {
 	u, ok := s.load(name)
-	s.mu.Lock()
-	s.live[name] = true
-	s.mu.Unlock()
-	if ok {
-		s.hub.Room(name, func(doc *crdt.Document) { doc.Apply(u) })
-	}
+	// The room is marked live from inside the callback, which runs with the
+	// room in hand: marking it before would leave an eviction finishing in
+	// the background free to mark it dead again a moment later.
+	s.hub.Room(name, func(doc *crdt.Document) {
+		if ok {
+			doc.Apply(u)
+		}
+		s.mu.Lock()
+		s.live[name] = doc
+		s.mu.Unlock()
+	})
 	return nil
 }
 
 func (s *Server) persist(name string, doc *crdt.Document) {
 	s.write(name, doc)
 	s.mu.Lock()
-	delete(s.live, name)
+	if s.live[name] == doc {
+		delete(s.live, name)
+	}
 	s.mu.Unlock()
+}
+
+// liveDoc reports the document a room is holding, or nil when nobody has the
+// document open.
+func (s *Server) liveDoc(name string) *crdt.Document {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.live[name]
 }
 
 // write saves a document, merged over whatever the file already holds and
@@ -116,17 +154,44 @@ func (s *Server) write(name string, doc *crdt.Document) {
 	}
 	merged.Apply(doc.Since(crdt.StateVector{}))
 
+	if merged.String() == "" {
+		if _, err := os.Stat(s.path(name)); err != nil {
+			// A room nobody typed into is not a document. Rooms are cheap to
+			// bring into being — anyone who can reach the websocket can name
+			// one — and writing a file for each would turn that into disk.
+			return
+		}
+	}
+
 	data, err := merged.Since(crdt.StateVector{}).MarshalBinary()
 	if err != nil {
 		slog.Error("encoding a document", "name", name, "err", err)
 		return
 	}
-	tmp := s.path(name) + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	// A unique temp file, not a fixed one: a shutdown and an eviction can
+	// write the same document at the same moment, and two writers sharing a
+	// path can rename a half-written file into place — exactly what the
+	// rename is meant to prevent.
+	tmp, err := os.CreateTemp(s.dir, name+".*.tmp")
+	if err != nil {
 		slog.Error("writing a document", "name", name, "err", err)
 		return
 	}
-	if err := os.Rename(tmp, s.path(name)); err != nil {
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		slog.Error("writing a document", "name", name, "err", err)
+		return
+	}
+	if err := tmp.Close(); err != nil {
+		slog.Error("writing a document", "name", name, "err", err)
+		return
+	}
+	if err := os.Chmod(tmp.Name(), 0o644); err != nil {
+		slog.Error("writing a document", "name", name, "err", err)
+		return
+	}
+	if err := os.Rename(tmp.Name(), s.path(name)); err != nil {
 		slog.Error("writing a document", "name", name, "err", err)
 	}
 }
@@ -183,17 +248,21 @@ func (s *Server) List() []Document {
 }
 
 func (s *Server) describe(name string) Document {
-	s.mu.Lock()
-	live := s.live[name]
-	s.mu.Unlock()
+	live := s.liveDoc(name) != nil
 
 	var text string
 	if live {
 		s.hub.Room(name, func(doc *crdt.Document) { text = doc.String() })
-	} else if u, ok := s.load(name); ok {
-		doc := crdt.NewDocument(hlc.NewClock("reader"))
-		doc.Apply(u)
-		text = doc.String()
+	}
+	if text == "" {
+		// Either the document is not open, or the room was evicted between
+		// the check and the read and what came back was a fresh empty one.
+		// The file is the answer in both cases.
+		if u, ok := s.load(name); ok {
+			doc := crdt.NewDocument(hlc.NewClock("reader"))
+			doc.Apply(u)
+			text = doc.String()
+		}
 	}
 	return Document{
 		Name:  name,

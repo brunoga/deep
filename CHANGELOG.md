@@ -6,6 +6,38 @@ All notable changes to this project are documented here, newest first.
 > version's entry before tagging, so the tag, the GitHub release notes, and this
 > file always agree.
 
+## deep/ws v1.2.1
+
+### Fixed
+
+- **Looking at a room postponed its eviction, so a host that looked often
+  enough postponed it forever.** Handing a room out invalidated the eviction
+  armed against it — which is what keeps a joiner from having the room
+  deleted underneath them — and nothing armed another. A host that lists or
+  snapshots its rooms (an editor's document listing runs on every page load)
+  therefore pinned every empty room in memory for the life of the process,
+  and the documents in them were never written out. Only a joiner postpones
+  an eviction now: being in a room keeps it alive, looking at one does not.
+
+  The consequence for `Hub.Room`, whose other job is seeding, is that a room
+  seeded just before a client joins can be evicted in between, and that
+  client finds it empty. Seeding on every join — which the CRDT makes free,
+  since applying an update a document already holds changes nothing — is what
+  covers it, and is what both examples here already did.
+
+- **A room nobody joined was kept forever.** Rooms were put on the eviction
+  clock only when a connection left one, so a room created any other way —
+  seeded ahead of time, or brought into being by a request that never
+  completed its upgrade — lingered until the process ended. Every room now
+  starts on the clock, and a second timer armed against the same room can no
+  longer evict it twice.
+
+Both came out of `examples/editor`, a collaborative text editor in the
+browser: several people in one document, each other's carets and selections
+visible, no server arbitration. It is the CRDT stack with a real interface on
+it, and it is where an eviction bug looks like a document that quietly stops
+being saved.
+
 ## v6.7.0
 
 ### Added

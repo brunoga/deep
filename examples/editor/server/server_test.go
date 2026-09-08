@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/brunoga/deep/v6/crdt"
+	"github.com/brunoga/deep/v6/crdt/hlc"
 	deepws "github.com/brunoga/deep/ws"
 )
 
@@ -251,5 +252,96 @@ func TestPersistWritesLiveDocuments(t *testing.T) {
 	srv.Persist()
 	if _, err := os.Stat(filepath.Join(dir, "open.doc")); err != nil {
 		t.Fatalf("Persist did not write the open document: %v", err)
+	}
+}
+
+// The websocket handler brings a document into being by being asked for it,
+// which is fine for a client and not fine for a crawler: anything that is not
+// trying to become a websocket is turned away before a room exists.
+func TestPlainRequestsDoNotCreateDocuments(t *testing.T) {
+	srv, base, dir := start(t, time.Hour)
+
+	res, err := http.Get(base + "/ws?room=junk")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode == http.StatusSwitchingProtocols {
+		t.Fatalf("a plain GET was upgraded")
+	}
+
+	for _, doc := range srv.List() {
+		if doc.Name == "junk" {
+			t.Errorf("a plain GET created a document: %+v", doc)
+		}
+	}
+	srv.Persist()
+	if _, err := os.Stat(filepath.Join(dir, "junk.doc")); err == nil {
+		t.Error("a plain GET left a file behind")
+	}
+}
+
+// Listing the documents reads every open room, which postpones its eviction.
+// It must not postpone it forever: the client lists on every page load, and a
+// document nobody is in has to reach disk anyway.
+func TestListingDoesNotKeepRoomsAlive(t *testing.T) {
+	srv, base, dir := start(t, 60*time.Millisecond)
+	ctx := context.Background()
+
+	client, err := deepws.Dial[cursor](ctx, wsURL(base, "watched"), "ana")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.Edit(func(d *crdt.Document) { d.Insert(0, "written despite the watching") })
+	if err := client.Publish(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the room to hold it", func() bool {
+		for _, doc := range srv.List() {
+			if doc.Name == "watched" && doc.Live {
+				return true
+			}
+		}
+		return false
+	})
+	client.Close(ctx)
+
+	// Keep listing right through the idle window, the way a browser sitting
+	// on the document list would.
+	done := time.After(200 * time.Millisecond)
+	for listing := true; listing; {
+		select {
+		case <-done:
+			listing = false
+		default:
+			srv.List()
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+
+	waitFor(t, "the document to reach disk anyway", func() bool {
+		_, err := os.Stat(filepath.Join(dir, "watched.doc"))
+		return err == nil
+	})
+	waitFor(t, "the room to be let go", func() bool { return srv.liveDoc("watched") == nil })
+}
+
+// An eviction and a rejoin can overlap: the room is dropped, and before the
+// eviction finishes writing it out somebody opens the document again. The
+// eviction is finishing with the old room, and must not report the new one
+// dead — a document marked dead is one that shutdown does not write.
+func TestEvictionDoesNotUnmarkTheRoomThatReplacedIt(t *testing.T) {
+	srv, _, _ := start(t, time.Hour)
+
+	replacement := crdt.NewDocument(hlc.NewClock("rejoin"))
+	srv.mu.Lock()
+	srv.live["raced"] = replacement
+	srv.mu.Unlock()
+
+	// The eviction hook, arriving late with the document it evicted.
+	srv.persist("raced", crdt.NewDocument(hlc.NewClock("evicted")))
+
+	if got := srv.liveDoc("raced"); got != replacement {
+		t.Fatalf("the room that replaced the evicted one is %v, want it still live", got)
 	}
 }
