@@ -107,6 +107,36 @@ descriptor naming the key field per array path; the TypeScript client takes one
 as an option. A patch that addresses keyed elements positionally will still
 *apply*, but it will conflict where a keyed one would not.
 
+## Two rules for models that cross the language boundary
+
+Both of these were found by running the conformance corpus against a second
+implementation, and both are invisible until you do.
+
+### Paths use JSON names only when the type has generated code
+
+The reflection engine names struct fields by their **Go** names:
+`Diff` on a type with no generated code emits `/Status`, `/Meta/Level`. The
+generated fast path names them by their **JSON** tags: `/status`,
+`/meta/level`. Both *apply* correctly in Go — the appliers accept either — but
+only the JSON form means anything to a receiver that holds the document as
+JSON.
+
+So: run `deep-gen` for the types you sync across languages, or name the Go
+fields exactly as the JSON does. The conformance corpus is generated through
+generated code for this reason.
+
+### Do not use `omitempty` on fields a patch addresses
+
+`json:"done,omitempty"` makes a zero value and an absent field the same bytes.
+A patch that sets such a field back to its zero then produces a document that
+a JavaScript receiver reconstructs as `{"done": false}` while Go marshals it
+as `{}` — the two replicas hold the same *value* and disagree about the
+*document*, having applied identical operations. Comparisons, hashes and
+further diffs then diverge.
+
+Leave `omitempty` off synced models. The cost is a few bytes; the alternative
+is a class of disagreement that only shows up between languages.
+
 ## Conditions
 
 ```json

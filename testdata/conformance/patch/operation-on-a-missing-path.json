@@ -1,0 +1,81 @@
+{
+  "name": "operation on a missing path",
+  "keys": {
+    "/items": "id"
+  },
+  "before": {
+    "title": "quarterly report",
+    "status": "open",
+    "score": 3,
+    "meta": {
+      "owner": "ana",
+      "level": 2
+    },
+    "items": [
+      {
+        "id": "a1",
+        "label": "draft",
+        "count": 1,
+        "done": false
+      },
+      {
+        "id": "b2",
+        "label": "review",
+        "count": 2,
+        "done": false
+      }
+    ],
+    "tags": [
+      "x",
+      "y"
+    ],
+    "fields": {
+      "odd/key~here": "yes",
+      "region": "north"
+    }
+  },
+  "patch": {
+    "ops": [
+      {
+        "k": "replace",
+        "p": "/fields/absent/deeper",
+        "n": "x"
+      }
+    ]
+  },
+  "after": {
+    "title": "quarterly report",
+    "status": "open",
+    "score": 3,
+    "meta": {
+      "owner": "ana",
+      "level": 2
+    },
+    "items": [
+      {
+        "id": "a1",
+        "label": "draft",
+        "count": 1,
+        "done": false
+      },
+      {
+        "id": "b2",
+        "label": "review",
+        "count": 2,
+        "done": false
+      }
+    ],
+    "tags": [
+      "x",
+      "y"
+    ],
+    "fields": {
+      "odd/key~here": "yes",
+      "region": "north"
+    }
+  },
+  "applied": 0,
+  "skipped": 0,
+  "failed": 1,
+  "reversible": false
+}
