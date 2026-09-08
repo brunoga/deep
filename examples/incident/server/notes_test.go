@@ -216,3 +216,59 @@ func TestNotesWriteMergesWithDisk(t *testing.T) {
 		return onDisk("first session")() && onDisk("second session")()
 	})
 }
+
+// An eviction and a rejoin can overlap: the room is dropped, and before the
+// eviction has finished writing it out somebody opens the incident again. The
+// eviction is finishing with the old room, and must not report the new one
+// dead — an incident marked dead is one that shutdown does not write.
+func TestEvictionDoesNotUnmarkTheRoomThatReplacedIt(t *testing.T) {
+	_, notes, _ := newNotesServer(t, time.Hour)
+
+	replacement := crdt.NewDocument(hlc.NewClock("rejoin"))
+	notes.mu.Lock()
+	notes.live["inc-1"] = replacement
+	notes.mu.Unlock()
+
+	// The eviction hook, arriving late with the document it evicted.
+	notes.persist("inc-1", crdt.NewDocument(hlc.NewClock("evicted")))
+
+	if got := notes.liveDoc("inc-1"); got != replacement {
+		t.Fatalf("the room that replaced the evicted one is %v, want it still live", got)
+	}
+}
+
+// Reading an incident's notes over HTTP touches its room, and the client's
+// timeline view does that on a schedule. Touching a room must not keep it
+// from ever being written out.
+func TestReadingNotesDoesNotKeepTheRoomAlive(t *testing.T) {
+	srv, notes, dir := newNotesServer(t, 60*time.Millisecond)
+	ctx := context.Background()
+
+	c, err := deepws.Dial[presence](ctx, wsURL(srv, "inc-1", "sekrit"), "ana")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Edit(func(d *crdt.Document) { d.Insert(0, "paged the on-call\n") })
+	if err := c.Publish(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the room to hold it", func() bool { return strings.Contains(notes.Text("inc-1"), "on-call") })
+	c.Close(ctx)
+
+	done := time.After(200 * time.Millisecond)
+	for reading := true; reading; {
+		select {
+		case <-done:
+			reading = false
+		default:
+			notes.Text("inc-1")
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+
+	waitFor(t, "the notes to reach disk anyway", func() bool {
+		_, err := os.Stat(filepath.Join(dir, "inc-1.notes.bin"))
+		return err == nil
+	})
+	waitFor(t, "the room to be let go", func() bool { return notes.liveDoc("inc-1") == nil })
+}

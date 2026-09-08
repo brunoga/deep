@@ -35,9 +35,12 @@ type Notes struct {
 	dir string
 
 	mu sync.Mutex
-	// live marks rooms with a session since the last eviction — which rooms
-	// Text reads from the hub and Persist snapshots on shutdown.
-	live map[string]bool
+	// live maps an incident to the room document currently holding its notes
+	// — which rooms Text reads from the hub and Persist snapshots on
+	// shutdown. The value is an identity, not a flag: an eviction hands back
+	// the document it evicted, and a room created since, by somebody who
+	// joined while the eviction was in flight, must not be marked dead by it.
+	live map[string]*crdt.Document
 }
 
 // NewNotes builds the notes hub. authorized gates each join (the API's token
@@ -48,7 +51,7 @@ func NewNotes(dir string, idle time.Duration, authorized func(*http.Request) boo
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
-	n := &Notes{dir: dir, live: map[string]bool{}}
+	n := &Notes{dir: dir, live: map[string]*crdt.Document{}}
 	n.hub = deepws.NewHub(
 		deepws.WithAuth(func(r *http.Request, room string) error {
 			if !authorized(r) {
@@ -95,12 +98,17 @@ func (n *Notes) load(id string) (crdt.Update, bool) {
 // nature, so it runs on every join.
 func (n *Notes) seed(id string) error {
 	u, ok := n.load(id)
-	n.mu.Lock()
-	n.live[id] = true
-	n.mu.Unlock()
-	if ok {
-		n.hub.Room(id, func(doc *crdt.Document) { doc.Apply(u) })
-	}
+	// The room is marked live from inside the callback, which runs with the
+	// room in hand: marking it before would leave an eviction finishing in
+	// the background free to mark it dead again a moment later.
+	n.hub.Room(id, func(doc *crdt.Document) {
+		if ok {
+			doc.Apply(u)
+		}
+		n.mu.Lock()
+		n.live[id] = doc
+		n.mu.Unlock()
+	})
 	return nil
 }
 
@@ -109,8 +117,18 @@ func (n *Notes) seed(id string) error {
 func (n *Notes) persist(id string, doc *crdt.Document) {
 	n.write(id, doc)
 	n.mu.Lock()
-	delete(n.live, id)
+	if n.live[id] == doc {
+		delete(n.live, id)
+	}
 	n.mu.Unlock()
+}
+
+// liveDoc reports the document a room is holding, or nil when nobody has the
+// incident's notes open.
+func (n *Notes) liveDoc(id string) *crdt.Document {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.live[id]
 }
 
 // write saves one document, merged over whatever the file already holds and
@@ -128,12 +146,30 @@ func (n *Notes) write(id string, doc *crdt.Document) {
 		slog.Error("encoding notes", "incident", id, "err", err)
 		return
 	}
-	tmp := n.path(id) + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	// A unique temp file, not a fixed one: a shutdown and an eviction can
+	// write the same incident at the same moment, and two writers sharing a
+	// path can rename a half-written file into place — exactly what the
+	// rename is meant to prevent.
+	tmp, err := os.CreateTemp(n.dir, id+".*.tmp")
+	if err != nil {
 		slog.Error("writing notes", "incident", id, "err", err)
 		return
 	}
-	if err := os.Rename(tmp, n.path(id)); err != nil {
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		slog.Error("writing notes", "incident", id, "err", err)
+		return
+	}
+	if err := tmp.Close(); err != nil {
+		slog.Error("writing notes", "incident", id, "err", err)
+		return
+	}
+	if err := os.Chmod(tmp.Name(), 0o644); err != nil {
+		slog.Error("writing notes", "incident", id, "err", err)
+		return
+	}
+	if err := os.Rename(tmp.Name(), n.path(id)); err != nil {
 		slog.Error("writing notes", "incident", id, "err", err)
 	}
 }
@@ -157,12 +193,9 @@ func (n *Notes) Persist() {
 // Text reads a room's current contents — for rendering an incident's
 // timeline over plain HTTP without joining the room.
 func (n *Notes) Text(id string) string {
-	n.mu.Lock()
-	isLive := n.live[id]
-	n.mu.Unlock()
-	if !isLive {
+	if n.liveDoc(id) == nil {
 		// Not live: the truth is on disk, and reading it there avoids
-		// creating a hub room the eviction timer is not watching.
+		// bringing a room into being just to look at it.
 		u, ok := n.load(id)
 		if !ok {
 			return ""
