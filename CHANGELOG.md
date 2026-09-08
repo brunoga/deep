@@ -6,6 +6,35 @@ All notable changes to this project are documented here, newest first.
 > version's entry before tagging, so the tag, the GitHub release notes, and this
 > file always agree.
 
+## v6.7.0
+
+### Added
+
+- **`hlc.NewClockAt`**: a clock whose identifiers start from a chosen wall
+  time rather than the current one. Ordinary use still wants `NewClock` — a
+  clock pinned to the past keeps issuing identifiers that sort before
+  everyone else's until real time catches up — but a recorded scenario, a
+  simulation, or a fixture whose bytes are compared against another
+  implementation's needs the run to be reproducible. The CRDT conformance
+  corpus is generated through it.
+
+- **The JavaScript port grew its CRDT half.** `@brunoga/deep-patch` now
+  carries `Document`, `Awareness` and a client for the `deep/ws` protocol
+  alongside the patch layer, so a browser is a *peer* of the Go clients
+  rather than a viewer of a server's copy. `examples/incident` serves a web
+  client demonstrating both halves: the record edited through conditional
+  patches, the notes through the CRDT, in one page.
+
+  Two corpora keep the implementations honest, and the CRDT one has to work
+  differently from the patch one. A patch either applies or it does not, so
+  its cases can be judged singly; two replicas that order text differently
+  produce no error at all — they simply hold different documents forever. So
+  the CRDT corpus records real exchanges (the exact bytes, the resulting
+  text, each replica's state vector) and the JavaScript suite replays them
+  with its clocks pinned where Go pinned them, asserting agreement down to
+  the encoded bytes. `ws/interop_test.go` then puts both implementations on
+  one websocket and watches them converge, presence included.
+
 ## v6.6.0
 
 ### Breaking
