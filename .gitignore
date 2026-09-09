@@ -25,5 +25,11 @@ coverage.out
 /examples/*/incidentd
 /examples/*/statusbot
 
+# Documents an editd run leaves behind. Its default -data is ./documents
+# relative to where it was started, which inside this checkout is the example
+# module — runtime state, not part of the example.
+/examples/editor/documents/
+/examples/*/editd
+
 # JavaScript package
 /js/node_modules
