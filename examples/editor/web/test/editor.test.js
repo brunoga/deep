@@ -259,3 +259,17 @@ test('a repeated announcement that changes nothing does not redraw', () => {
   ed.setPeer('bo', { name: 'Bo Jones', color: '#fff', selection: { anchor: 1, head: 2 } });
   assert.equal(notifications, 2, 'a rename is');
 });
+
+test("typing at the start of somebody's selection does not extend it", () => {
+  // The reported case: "test test", a peer has the second "test" selected,
+  // and you type in the gap in front of it. Their highlight has to stay on
+  // their four characters however many you add.
+  const ed = editorWith('test test', { anchor: 5, head: 5 });
+  ed.setPeer('bo', { name: 'Bo', selection: { anchor: 5, head: 9 } });
+
+  for (const ch of [...'abc']) ed.type(ch);
+
+  assert.equal(ed.text, 'test abctest');
+  const { anchor, head } = ed.peers.get('bo').selection;
+  assert.equal(ed.text.slice(anchor, head), 'test', 'the selection still covers their word');
+});

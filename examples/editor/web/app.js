@@ -58,6 +58,19 @@ async function renderDocuments() {
   );
 }
 
+/**
+ * The listing, as it changes.
+ *
+ * A document somebody else creates should appear here without a reload, and
+ * one that somebody opens should show as live. The stream carries no data —
+ * it says "look again" — so there is one path for what documents exist rather
+ * than two that can disagree. EventSource reconnects on its own.
+ */
+function watchDocuments() {
+  const events = new EventSource('/documents/events');
+  events.onmessage = () => renderDocuments();
+}
+
 el('new-doc').onsubmit = async (e) => {
   e.preventDefault();
   const name = el('new-name').value.trim();
@@ -308,4 +321,5 @@ el('who').addEventListener('input', () => {
 
 const wanted = new URLSearchParams(location.search).get('doc');
 await renderDocuments();
+watchDocuments();
 open(wanted && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(wanted) ? wanted : 'welcome');

@@ -126,3 +126,26 @@ test('a selection is drawn per line, and marks where it continues', () => {
   assert.equal(lineSpan(index, 0, { anchor: 5, head: 5 }), null, 'an empty selection spans nothing');
   assert.equal(lineSpan(index, 0, { anchor: 5, head: 6 }), null, 'a line outside it is untouched');
 });
+
+test("a selection's edges are sticky in opposite directions", () => {
+  // "test test", with the second "test" selected, and somebody typing at the
+  // exact position the selection starts at. Their text is not part of the
+  // selection, so the selection moves rather than growing.
+  const typedAtTheStart = changeBetween('test test', 'test Xtest');
+  assert.deepEqual(shiftSelection({ anchor: 5, head: 9 }, typedAtTheStart), { anchor: 6, head: 10 });
+  assert.deepEqual(
+    shiftSelection({ anchor: 9, head: 5 }, typedAtTheStart),
+    { anchor: 10, head: 6 },
+    'and a selection made right to left covers the same characters',
+  );
+
+  // At the other end the rule reads the same way and comes out the other way
+  // round: text typed where the selection ends is also outside it, so the end
+  // stays where it is.
+  const typedAtTheEnd = changeBetween('test test', 'testX test');
+  assert.deepEqual(shiftSelection({ anchor: 0, head: 4 }, typedAtTheEnd), { anchor: 0, head: 4 });
+
+  // A caret has one edge and keeps its old behaviour: somebody typing at it
+  // does not drag it along.
+  assert.deepEqual(shiftSelection({ anchor: 5, head: 5 }, typedAtTheStart), { anchor: 5, head: 5 });
+});

@@ -11,6 +11,7 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"maps"
 	"net/http"
@@ -38,6 +39,10 @@ type Server struct {
 	dir string
 
 	mu sync.Mutex
+	// watchers are listeners on the document listing — the browser's sidebar,
+	// which would otherwise learn about a document somebody else created only
+	// when its page is reloaded.
+	watchers map[chan struct{}]struct{}
 	// live maps a document to the room document currently holding it. The
 	// value is an identity, not a flag: an eviction hands back the document
 	// it evicted, and a room created since — by somebody who joined while the
@@ -51,7 +56,11 @@ func New(dir string, idle time.Duration) (*Server, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
-	s := &Server{dir: dir, live: map[string]*crdt.Document{}}
+	s := &Server{
+		dir:      dir,
+		live:     map[string]*crdt.Document{},
+		watchers: map[chan struct{}]struct{}{},
+	}
 	s.hub = deepws.NewHub(
 		deepws.WithAuth(func(r *http.Request, room string) error {
 			if !NamePattern.MatchString(room) {
@@ -121,8 +130,12 @@ func (s *Server) seed(name string) error {
 			doc.Apply(u)
 		}
 		s.mu.Lock()
+		fresh := s.live[name] != doc
 		s.live[name] = doc
 		s.mu.Unlock()
+		if fresh {
+			s.listingChanged()
+		}
 	})
 	return nil
 }
@@ -130,10 +143,14 @@ func (s *Server) seed(name string) error {
 func (s *Server) persist(name string, doc *crdt.Document) {
 	s.write(name, doc)
 	s.mu.Lock()
-	if s.live[name] == doc {
+	dropped := s.live[name] == doc
+	if dropped {
 		delete(s.live, name)
 	}
 	s.mu.Unlock()
+	if dropped {
+		s.listingChanged()
+	}
 }
 
 // liveDoc reports the document a room is holding, or nil when nobody has the
@@ -208,6 +225,35 @@ func (s *Server) Persist() {
 	}
 }
 
+// watch returns a channel that carries a signal whenever the listing changes,
+// and a function to stop listening.
+func (s *Server) watch() (<-chan struct{}, func()) {
+	ch := make(chan struct{}, 1)
+	s.mu.Lock()
+	s.watchers[ch] = struct{}{}
+	s.mu.Unlock()
+	return ch, func() {
+		s.mu.Lock()
+		delete(s.watchers, ch)
+		s.mu.Unlock()
+	}
+}
+
+// listingChanged tells every watcher that the listing is worth re-reading: a
+// document was created, or one became live or stopped being live. The signal
+// carries nothing — a watcher re-reads the listing rather than being told what
+// changed, which means a signal lost to a full channel costs nothing.
+func (s *Server) listingChanged() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for ch := range s.watchers {
+		select {
+		case ch <- struct{}{}:
+		default:
+		}
+	}
+}
+
 // Document is one file in the listing.
 type Document struct {
 	Name  string `json:"name"`
@@ -278,10 +324,25 @@ func (s *Server) Create(name string) error {
 	if !NamePattern.MatchString(name) {
 		return fmt.Errorf("bad document name %q", name)
 	}
-	if _, err := os.Stat(s.path(name)); err == nil {
-		return fmt.Errorf("document %q already exists", name)
+	// O_EXCL rather than a stat and a write: two people naming the same new
+	// document at the same moment is exactly the case this refuses, and a
+	// check followed by a write does not refuse it.
+	f, err := os.OpenFile(s.path(name), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		if os.IsExist(err) {
+			return fmt.Errorf("document %q already exists", name)
+		}
+		return err
 	}
-	return os.WriteFile(s.path(name), mustEncodeEmpty(), 0o644)
+	if _, err := f.Write(mustEncodeEmpty()); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	s.listingChanged()
+	return nil
 }
 
 func mustEncodeEmpty() []byte {
@@ -292,11 +353,50 @@ func mustEncodeEmpty() []byte {
 	return data
 }
 
-// API serves the document listing.
+// API serves the document listing and its event stream. It answers
+// "/documents" and "/documents/events", so mount it at both — an exact
+// pattern alone never sees the stream.
 func (s *Server) API() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /documents", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, s.List())
+	})
+	// The listing as it changes, so a document somebody else creates appears
+	// in every other window rather than waiting for a reload. The events carry
+	// no data: a client re-reads the listing, which keeps one path for "what
+	// documents are there" instead of two that can disagree.
+	mux.HandleFunc("GET /documents/events", func(w http.ResponseWriter, r *http.Request) {
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+			return
+		}
+		changed, stop := s.watch()
+		defer stop()
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, "retry: 2000\n\n")
+		flusher.Flush()
+
+		// A comment now and then, so an idle stream is not mistaken for a
+		// dead one by anything between here and the browser.
+		beat := time.NewTicker(25 * time.Second)
+		defer beat.Stop()
+		for {
+			select {
+			case <-r.Context().Done():
+				return
+			case <-changed:
+				_, _ = io.WriteString(w, "data: changed\n\n")
+				flusher.Flush()
+			case <-beat.C:
+				_, _ = io.WriteString(w, ": still here\n\n")
+				flusher.Flush()
+			}
+		}
 	})
 	mux.HandleFunc("POST /documents", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {

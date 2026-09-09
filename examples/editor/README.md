@@ -58,9 +58,9 @@ The browser is a peer of that client, not a viewer of a server's copy.
 | `web/src/editor.js` | Selection, commands, and `remoteChanged` — the caret transformation that makes somebody else's typing feel like typing rather than the document jumping. No DOM, so it is tested directly. |
 | `web/src/view.js` | Lines, gutter, carets and selection bands. Text is drawn by hand and everything else positioned over it, which is what lets a *peer's* caret appear inside the text — a textarea cannot do that at all. |
 | `web/app.js` | The wiring, including the rules learned the hard way (below). |
-| `server/` | Rooms, the document listing, and a folder. Small, because the interesting behaviour is not here — what it does contribute is durability, and the care that takes when a room can be evicted while somebody is joining it. |
+| `server/` | Rooms, the document listing (and its event stream, so a document somebody else creates appears without a reload), and a folder. Small, because the interesting behaviour is not here — what it does contribute is durability, and the care that takes when a room can be evicted while somebody is joining it. |
 
-## Three things that only show up when you run it
+## Four things that only show up when you run it
 
 **Announce on local changes only.** Presence updates arrive, move a peer's
 caret, and notify the editor. If announcements hang off *every* editor change,
@@ -80,6 +80,14 @@ have no idea you are typing. Type five characters above somebody's highlight
 without shifting them and their highlight sits over the wrong words until
 their next heartbeat, seconds later. Every local edit moves the peers as well
 as the caret.
+
+**A selection has two edges, and they are sticky in opposite directions.** Type
+at the exact offset where somebody's selection starts and the obvious rule —
+move every position the same way — quietly extends their selection over your
+typing, one character at a time. Their selection covers *their* four
+characters: text arriving at its start belongs outside it, so the start moves;
+text arriving at its end also belongs outside, so the end stays. A caret has
+one edge and needs neither rule.
 
 ## Where it would grow
 
