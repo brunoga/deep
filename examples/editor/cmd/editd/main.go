@@ -41,6 +41,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.Handle("/ws", srv.Hub())
 	mux.Handle("/documents", srv.API())
+	mux.Handle("/documents/", srv.API()) // /documents/events, the listing as it changes
 	mux.Handle("/deep-patch/", http.StripPrefix("/deep-patch/", http.FileServer(http.Dir(*pkgDir))))
 	mux.Handle("/", http.FileServer(http.Dir(*webDir)))
 

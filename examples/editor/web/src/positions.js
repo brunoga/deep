@@ -125,9 +125,38 @@ export function shift(offset, change) {
   return change.at + inserted;
 }
 
-/** Moves a selection across a change. */
+/**
+ * Moves a selection across a change.
+ *
+ * A selection's two edges need opposite stickiness, which a caret does not
+ * need at all. Text inserted exactly where a selection *starts* belongs
+ * outside it — somebody typing in front of your selection is not adding to
+ * it — so the start moves along. Text inserted exactly where it *ends* also
+ * belongs outside, which means the end stays put. Give both edges the same
+ * rule and typing at one of them silently extends the selection a character
+ * at a time, which is what a selection covering somebody else's typing looks
+ * like from the outside.
+ */
 export function shiftSelection(selection, change) {
-  return { anchor: shift(selection.anchor, change), head: shift(selection.head, change) };
+  if (selection.anchor === selection.head) {
+    const at = shift(selection.anchor, change);
+    return { anchor: at, head: at };
+  }
+  const forward = selection.anchor < selection.head;
+  const low = shiftStart(forward ? selection.anchor : selection.head, change);
+  const high = shift(forward ? selection.head : selection.anchor, change);
+  return forward ? { anchor: low, head: high } : { anchor: high, head: low };
+}
+
+/**
+ * Moves the low edge of a selection, which an insertion at exactly that
+ * offset pushes along rather than reaching over.
+ */
+function shiftStart(offset, change) {
+  if (offset < change.at) return offset;
+  const inserted = pointLength(change.insert);
+  if (offset >= change.at + change.remove) return offset - change.remove + inserted;
+  return change.at + inserted;
 }
 
 /** A selection's bounds, low first — a selection may run backwards. */

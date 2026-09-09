@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -34,6 +35,7 @@ func start(t *testing.T, idle time.Duration) (*Server, string, string) {
 	mux := http.NewServeMux()
 	mux.Handle("/ws", srv.Hub())
 	mux.Handle("/documents", srv.API())
+	mux.Handle("/documents/", srv.API())
 	http := httptest.NewServer(mux)
 	t.Cleanup(http.Close)
 	return srv, http.URL, dir
@@ -343,5 +345,65 @@ func TestEvictionDoesNotUnmarkTheRoomThatReplacedIt(t *testing.T) {
 
 	if got := srv.liveDoc("raced"); got != replacement {
 		t.Fatalf("the room that replaced the evicted one is %v, want it still live", got)
+	}
+}
+
+// The sidebar has to hear about a document somebody else created without
+// being reloaded, and about one becoming live or going quiet.
+func TestListingEventsReachOtherClients(t *testing.T) {
+	srv, base, _ := start(t, time.Hour)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/documents/events", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if got := res.Header.Get("Content-Type"); got != "text/event-stream" {
+		t.Fatalf("content type %q", got)
+	}
+
+	events := make(chan string, 8)
+	go func() {
+		scanner := bufio.NewScanner(res.Body)
+		for scanner.Scan() {
+			if line := scanner.Text(); strings.HasPrefix(line, "data: ") {
+				events <- strings.TrimPrefix(line, "data: ")
+			}
+		}
+		close(events)
+	}()
+
+	// Somebody else creates a document.
+	if err := srv.Create("from-elsewhere"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case ev, ok := <-events:
+		if !ok || ev != "changed" {
+			t.Fatalf("stream gave %q (open: %t) when a document was created", ev, ok)
+		}
+	case <-ctx.Done():
+		t.Fatal("no event when a document was created")
+	}
+
+	// And somebody opening one is a change to the listing too: it goes live.
+	client, err := deepws.Dial[cursor](ctx, wsURL(base, "from-elsewhere"), "ana")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close(ctx)
+	select {
+	case ev, ok := <-events:
+		if !ok || ev != "changed" {
+			t.Fatalf("stream gave %q (open: %t) when a document went live", ev, ok)
+		}
+	case <-ctx.Done():
+		t.Fatal("no event when a document went live")
 	}
 }
